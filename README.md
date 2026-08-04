@@ -5,7 +5,6 @@
 [![Downloads](https://img.shields.io/github/downloads/zi-ek/AutoSlide/total?cacheSeconds=86400)](https://github.com/zi-ek/AutoSlide/releases)
 [![Latest Downloads](https://img.shields.io/github/downloads/zi-ek/AutoSlide/latest/total?cacheSeconds=86400)](https://github.com/zi-ek/AutoSlide/releases/latest)
 
-[简体中文](README.md) 
 
 一款适用于自动化测试与内容浏览的安卓自动滑动工具
 
