@@ -514,5 +514,27 @@
             android:layout_marginTop="@dimen/margin_small"
             android:text="@string/check_update"
             android:textColor="@color/text_secondary" />
+
+        <!--微信打赏二维码-->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/margin_medium"
+            android:text="@string/donate_tip"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <ImageView
+            android:id="@+id/wxImageView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/margin_small"
+            android:adjustViewBounds="true"
+            android:contentDescription="@string/donate_qr_desc"
+            android:maxHeight="220dp"
+            android:maxWidth="220dp"
+            android:src="@mipmap/wx" />
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>

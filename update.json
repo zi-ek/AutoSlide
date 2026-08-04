@@ -1,6 +1,6 @@
 {
-  "versionCode": 18,
-  "versionName": "2.5.2",
-  "downloadUrl": "https://github.com/tianxing-ovo/AutoSlide/releases/download/v2.5.2/AutoSlide-v2.5.2.apk",
-  "updateLog": "1. 新增四方向自定义滑动轨迹录制与回放\n2. 长按悬浮窗方向键可录制或管理轨迹，有轨迹时方向键高亮提示\n3. 优化悬浮窗视觉样式，图标与主应用配色统一"
+  "versionCode": 19,
+  "versionName": "2.6.0",
+  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.6.0/AutoSlide-v2.6.0.apk",
+  "updateLog": "1. 新增关键词检测模式：OCR 识别屏幕文字，命中关键词后自动滑动\n2. 新增悬浮窗贴边吸附与右下角默认位置\n3. 优化主界面布局与代码注释"
 }

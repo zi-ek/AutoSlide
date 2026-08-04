@@ -1,9 +1,9 @@
 # Android Auto-Slide App [AutoSlide]
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Version](https://img.shields.io/github/v/release/tianxing-ovo/AutoSlide?label=Version)](https://github.com/tianxing-ovo/AutoSlide/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/tianxing-ovo/AutoSlide/total?cacheSeconds=86400)](https://github.com/tianxing-ovo/AutoSlide/releases)
-[![Latest Downloads](https://img.shields.io/github/downloads/tianxing-ovo/AutoSlide/latest/total?cacheSeconds=86400)](https://github.com/tianxing-ovo/AutoSlide/releases/latest)
+[![Version](https://img.shields.io/github/v/release/zi-ek/AutoSlide?label=Version)](https://github.com/zi-ek/AutoSlide/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/zi-ek/AutoSlide/total?cacheSeconds=86400)](https://github.com/zi-ek/AutoSlide/releases)
+[![Latest Downloads](https://img.shields.io/github/downloads/zi-ek/AutoSlide/latest/total?cacheSeconds=86400)](https://github.com/zi-ek/AutoSlide/releases/latest)
 
 [简体中文](README.md) | [English](README.en.md)
 
@@ -33,7 +33,7 @@ An Android auto-slide tool for automated testing and content browsing
 
 ### Installation
 
-1. Download the latest APK file from the [Releases Page](https://github.com/tianxing-ovo/AutoSlide/releases/)
+1. Download the latest APK file from the [Releases Page](https://github.com/zi-ek/AutoSlide/releases/)
 2. Open the downloaded APK file and follow the on-screen instructions to install the application
 3. Launch the app and grant the necessary permissions for proper functionality
 

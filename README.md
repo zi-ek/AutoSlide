@@ -1,9 +1,9 @@
 # 安卓自动滑动器APP [AutoSlide]
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Version](https://img.shields.io/github/v/release/tianxing-ovo/AutoSlide?label=Version)](https://github.com/tianxing-ovo/AutoSlide/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/tianxing-ovo/AutoSlide/total?cacheSeconds=86400)](https://github.com/tianxing-ovo/AutoSlide/releases)
-[![Latest Downloads](https://img.shields.io/github/downloads/tianxing-ovo/AutoSlide/latest/total?cacheSeconds=86400)](https://github.com/tianxing-ovo/AutoSlide/releases/latest)
+[![Version](https://img.shields.io/github/v/release/zi-ek/AutoSlide?label=Version)](https://github.com/zi-ek/AutoSlide/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/zi-ek/AutoSlide/total?cacheSeconds=86400)](https://github.com/zi-ek/AutoSlide/releases)
+[![Latest Downloads](https://img.shields.io/github/downloads/zi-ek/AutoSlide/latest/total?cacheSeconds=86400)](https://github.com/zi-ek/AutoSlide/releases/latest)
 
 [简体中文](README.md) | [English](README.en.md)
 
@@ -33,7 +33,7 @@
 
 ### 安装步骤
 
-1. 从[发布页面](https://github.com/tianxing-ovo/AutoSlide/releases/)下载最新的APK文件
+1. 从[发布页面](https://github.com/zi-ek/AutoSlide/releases/)下载最新的APK文件
 2. 打开下载的APK文件并按照屏幕上的指示安装应用程序
 3. 启动应用并授予必要的权限以确保其正常运行
 

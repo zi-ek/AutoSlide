@@ -57,9 +57,9 @@ object UpdateChecker {
         val versionName: String, val updateLog: String, val downloadUrl: String
     )
 
-    // 远端版本信息 JSON 的地址（原始 GitHub 地址，可能被代理加速）
+    // 远端版本信息 JSON 的地址（本仓库地址，可能被代理加速）
     private const val UPDATE_INFO_URL =
-        "https://raw.githubusercontent.com/tianxing-ovo/AutoSlide/master/update.json"
+        "https://raw.githubusercontent.com/zi-ek/AutoSlide/master/update.json"
 
     // 用于加速下载的GitHub代理前缀
     private const val GITHUB_PROXY_PREFIX = "https://ghproxy.net/"

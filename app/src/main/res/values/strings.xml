@@ -82,4 +82,6 @@
     <string name="keyword_empty_warning">请先输入至少一个关键词</string>
     <string name="keyword_need_android_11">关键词检测需要 Android 11 及以上版本，或已授权的 Shizuku</string>
     <string name="keyword_ocr_failed">OCR 识别失败，请检查 Google Play 服务是否可用</string>
+    <string name="donate_tip">打赏个5毛钱吧</string>
+    <string name="donate_qr_desc">微信打赏二维码</string>
 </resources>
