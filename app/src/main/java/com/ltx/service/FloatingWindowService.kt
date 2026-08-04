@@ -23,6 +23,8 @@ import android.view.ContextThemeWrapper
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -118,11 +120,9 @@ class FloatingWindowService : Service() {
                 return@post
             }
             val displayMetrics = resources.displayMetrics
-            // 距离屏幕边缘的边距（24dp）
-            val margin = (24 * displayMetrics.density).toInt()
             // 计算右下角坐标，并保证不小于 0
-            layoutParams.x = (displayMetrics.widthPixels - rootView.width - margin).coerceAtLeast(0)
-            layoutParams.y = (displayMetrics.heightPixels - rootView.height - margin).coerceAtLeast(0)
+            layoutParams.x = (displayMetrics.widthPixels - rootView.width + currentRightInset()).coerceAtLeast(0)
+            layoutParams.y = (displayMetrics.heightPixels - rootView.height).coerceAtLeast(0)
             runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
         }
         // 监听自动滑动服务事件
@@ -243,19 +243,42 @@ class FloatingWindowService : Service() {
                 return@post
             }
             val displayMetrics = resources.displayMetrics
-            // 距屏幕边缘的边距（16dp）
-            val margin = (16 * displayMetrics.density).toInt()
             // 用悬浮窗中心点判断离哪条边更近
             val centerX = layoutParams.x + rootView.width / 2f
             layoutParams.x = if (centerX < displayMetrics.widthPixels / 2f) {
                 // 离左边近：贴左边缘
-                margin
+                -currentLeftInset()
             } else {
                 // 离右边近：贴右边缘
-                (displayMetrics.widthPixels - rootView.width - margin).coerceAtLeast(0)
+                displayMetrics.widthPixels - rootView.width + currentRightInset()
             }
             runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
         }
+    }
+
+    /**
+     * 当前可见内容距窗口右边缘的内部间距（根布局内边距 + 小球的右边距）
+     * 吸附时把这段间距“让出去”，让可见图标真正贴住屏幕边缘
+     */
+    private fun currentRightInset(): Int {
+        val marginRight = if (expandButton.visibility == View.VISIBLE) {
+            (expandButton.layoutParams as? ViewGroup.MarginLayoutParams)?.rightMargin ?: 0
+        } else {
+            0
+        }
+        return rootView.paddingRight + marginRight
+    }
+
+    /**
+     * 当前可见内容距窗口左边缘的内部间距（根布局内边距 + 小球的左边距）
+     */
+    private fun currentLeftInset(): Int {
+        val marginLeft = if (expandButton.visibility == View.VISIBLE) {
+            (expandButton.layoutParams as? ViewGroup.MarginLayoutParams)?.leftMargin ?: 0
+        } else {
+            0
+        }
+        return rootView.paddingLeft + marginLeft
     }
 
     /* 绑定所有控制按钮事件 */
@@ -526,18 +549,27 @@ class FloatingWindowService : Service() {
     private fun minimize() {
         controlPanel.visibility = View.GONE
         expandButton.visibility = View.VISIBLE
+        // 收起时去掉根布局内边距和小球外边距，让窗口尺寸正好等于小球，实现真正贴边
+        rootView.setPadding(0, 0, 0, 0)
+        (expandButton.layoutParams as? ViewGroup.MarginLayoutParams)?.setMargins(0, 0, 0, 0)
+        rootView.requestLayout()
         windowManager.updateViewLayout(rootView, layoutParams)
-        // 收起后把缩小图标吸附到屏幕最右边（垂直位置保持不动）
-        rootView.post {
-            if (!::rootView.isInitialized || !::layoutParams.isInitialized) {
-                return@post
+        snapToRightAfterLayout()
+    }
+
+    /* 等收起后的布局完成，再把悬浮窗右边缘贴到屏幕右边缘 */
+    private fun snapToRightAfterLayout() {
+        rootView.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                rootView.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                if (!::rootView.isInitialized || !::layoutParams.isInitialized) {
+                    return
+                }
+                val displayMetrics = resources.displayMetrics
+                layoutParams.x = displayMetrics.widthPixels - rootView.width
+                runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
             }
-            val displayMetrics = resources.displayMetrics
-            // 距屏幕右边留 24dp 边距
-            val margin = (24 * displayMetrics.density).toInt()
-            layoutParams.x = (displayMetrics.widthPixels - rootView.width - margin).coerceAtLeast(0)
-            runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
-        }
+        })
     }
 
     /**
@@ -548,6 +580,13 @@ class FloatingWindowService : Service() {
     private fun expand(stopSlide: Boolean = true) {
         controlPanel.visibility = View.VISIBLE
         expandButton.visibility = View.GONE
+        // 恢复根布局内边距和小球外边距
+        val density = resources.displayMetrics.density
+        val padding = (6 * density).toInt()
+        rootView.setPadding(padding, padding, padding, padding)
+        val margin = (3 * density).toInt()
+        (expandButton.layoutParams as? ViewGroup.MarginLayoutParams)?.setMargins(margin, margin, margin, margin)
+        rootView.requestLayout()
         windowManager.updateViewLayout(rootView, layoutParams)
         if (stopSlide) {
             AutoSlideService.getInstance()?.stopSlide()

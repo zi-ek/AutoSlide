@@ -2,6 +2,4 @@
 plugins {
     // Android 应用插件（在 app 模块中使用，这里仅声明版本）
     alias(libs.plugins.android.application) apply false
-    // Kotlin Android 插件（在 app 模块中使用，这里仅声明版本）
-    alias(libs.plugins.kotlin.android) apply false
 }

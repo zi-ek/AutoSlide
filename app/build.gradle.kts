@@ -1,12 +1,14 @@
-import com.android.build.gradle.internal.api.BaseVariantOutputImpl
+import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 
 // ==================== App 模块构建脚本 ====================
 // 本文件配置应用模块的 SDK 版本、构建类型、签名、混淆和依赖
 
+// 版本名称（APK 输出文件名也使用它）
+val appVersionName = "2.6.2"
+
 // AGP
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
 }
 
 android {
@@ -22,9 +24,9 @@ android {
         // 目标设备的SDK版本
         targetSdk = 37
         // 版本号
-        versionCode = 20
+        versionCode = 21
         // 版本名称
-        versionName = "2.6.1"
+        versionName = appVersionName
         // 单元测试
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -39,13 +41,6 @@ android {
             )
         }
     }
-    // 自定义APK输出名称
-    applicationVariants.all {
-        outputs.all {
-            (this as BaseVariantOutputImpl).outputFileName =
-                "AutoSlide-v${defaultConfig.versionName}.apk"
-        }
-    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -53,6 +48,15 @@ android {
     buildFeatures {
         // 启用视图绑定
         viewBinding = true
+    }
+}
+
+// 自定义 APK 输出名称（AGP 9 新版变体 API）
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("AutoSlide-v$appVersionName.apk")
+        }
     }
 }
 

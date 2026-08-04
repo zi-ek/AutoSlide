@@ -3,7 +3,7 @@
     <string name="app_name">自动滑动器</string>
     <string name="accessibility_service_description">自动滑动器需要无障碍服务权限来执行屏幕滑动操作</string>
     <string name="start">开始</string>
-    <string name="pause_time">停顿时间（秒）：</string>
+    <string name="pause_time">停顿时间（秒）点击可修改 ：</string>
     <string name="custom_pause_time">自定义停顿时间（秒）</string>
     <string name="invalid_input_number">请输入有效数字</string>
     <string name="permission_required">需要权限</string>
@@ -82,6 +82,9 @@
     <string name="keyword_empty_warning">请先输入至少一个关键词</string>
     <string name="keyword_need_android_11">关键词检测需要 Android 11 及以上版本，或已授权的 Shizuku</string>
     <string name="keyword_ocr_failed">OCR 识别失败，请检查 Google Play 服务是否可用</string>
+    <string name="douyin_auto_play">抖音开启自动连播</string>
+    <string name="douyin_auto_play_switch">抖音自动连播开关</string>
+    <string name="douyin_auto_play_need_accessibility">开启抖音自动连播需要先开启无障碍服务权限</string>
     <string name="donate_tip">打赏个5毛钱吧</string>
     <string name="donate_qr_desc">微信打赏二维码</string>
 </resources>

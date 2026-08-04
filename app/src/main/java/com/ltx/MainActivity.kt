@@ -168,6 +168,13 @@ class MainActivity : AppCompatActivity() {
         setupKeywordControls()
         binding.accessibilityServicePermissionSwitch.setOnCheckedChangeListener(accessibilitySwitchListener)
         binding.overlayPermissionSwitch.setOnCheckedChangeListener(overlaySwitchListener)
+        binding.douyinAutoPlaySwitch.setOnCheckedChangeListener { _, isChecked ->
+            preferences.edit { putBoolean(KEY_DOUYIN_AUTOPLAY, isChecked) }
+            if (isChecked && !isAccessibilityServicePermissionEnabled()) {
+                Toast.makeText(this, R.string.douyin_auto_play_need_accessibility, Toast.LENGTH_LONG).show()
+            }
+            AutoSlideService.getInstance()?.setDouyinAutoPlayEnabled(isChecked)
+        }
         setupStartButton()
         setupUpdateButton()
         // 注册Shizuku监听器
@@ -195,6 +202,10 @@ class MainActivity : AppCompatActivity() {
                 if (!isFinishing && !isDestroyed) {
                     updateAccessibilitySwitchState(finalAccessibilityEnabled)
                     updateOverlaySwitchState(finalCanDrawOverlays)
+                    // 每次打开 App 时重新允许抖音连播检测（关闭则停止轮询）
+                    AutoSlideService.getInstance()?.setDouyinAutoPlayEnabled(
+                        preferences.getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
+                    )
                 }
             }
         }
@@ -254,6 +265,9 @@ class MainActivity : AppCompatActivity() {
         binding.keywordIntervalSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
         binding.keywordCooldownSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
         binding.keywordMaxTriggerSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
+        // 恢复抖音自动连播开关
+        binding.douyinAutoPlaySwitch.isChecked =
+            preferences.getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
     }
 
     /* 绑定停顿相关控件事件并持久化用户设置 */

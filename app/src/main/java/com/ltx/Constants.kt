@@ -23,6 +23,7 @@ const val KEY_KEYWORD_INTERVAL = "keywordIntervalMs"    // 关键词检测间隔
 const val KEY_KEYWORD_COOLDOWN = "keywordCooldownMs"    // 关键词触发后的冷却时间（毫秒）
 const val KEY_KEYWORD_MAX_TRIGGERS = "keywordMaxTriggers" // 同一画面最多连续触发次数
 const val KEY_KEYWORD_DIRECTION = "keywordDirection"    // 关键词触发时的滑动方向
+const val KEY_DOUYIN_AUTOPLAY = "douyinAutoPlay"        // 是否自动打开抖音连播开关（检测到抖音后触发）
 
 // ==================== 默认值 ====================
 const val DEFAULT_SPEED = 50                        // 默认滑动速度（中等）
@@ -30,11 +31,12 @@ const val DEFAULT_PAUSE_TIME = 1                    // 默认固定停顿 1 秒
 const val DEFAULT_MIN_PAUSE_TIME = 1                // 默认随机停顿下限 1 秒
 const val DEFAULT_MAX_PAUSE_TIME = 3                // 默认随机停顿上限 3 秒
 // 默认关键词（每行一个，供第一次打开应用时预填）
-const val DEFAULT_KEYWORDS = "上滑继续\n查看详情\n官方官号"
+const val DEFAULT_KEYWORDS = "上滑继续\n查看详情\n官方官号\n点击进入\n限时抢购\n购物"
 const val DEFAULT_KEYWORD_IGNORE_CASE = true        // 默认忽略大小写
 const val DEFAULT_KEYWORD_INTERVAL_MS = 1000        // 默认每 1000ms 检测一次
 const val DEFAULT_KEYWORD_COOLDOWN_MS = 500         // 默认触发后冷却 500ms
 const val DEFAULT_KEYWORD_MAX_TRIGGERS = 3          // 默认同一画面最多触发 3 次
+const val DEFAULT_DOUYIN_AUTOPLAY = false           // 默认关闭抖音自动连播
 
 // ==================== 滑动模式编号 ====================
 // 主界面四个选项对应的模式值，服务端根据该值决定走哪套滑动逻辑

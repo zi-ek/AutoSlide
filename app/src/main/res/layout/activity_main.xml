@@ -18,6 +18,8 @@
         android:paddingBottom="@dimen/margin_large">
 
         <!--顶部工具栏-->
+
+        <!--权限设置卡片-->
         <androidx.appcompat.widget.Toolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
@@ -29,7 +31,6 @@
             android:elevation="0dp"
             app:titleTextColor="@color/text_primary" />
 
-        <!--权限设置卡片-->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/permissionCard"
             android:layout_width="match_parent"
@@ -101,6 +102,30 @@
                         app:thumbTint="@color/switch_thumb_color"
                         app:trackTint="@color/switch_track_color" />
                 </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_small"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/douyin_auto_play"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="@dimen/text_size_body" />
+                <!--抖音自动连播开关-->
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/douyinAutoPlaySwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="@string/douyin_auto_play_switch"
+                        app:thumbTint="@color/switch_thumb_color"
+                        app:trackTint="@color/switch_track_color" />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -165,6 +190,7 @@
                         android:textColor="@color/toggle_btn_text"
                         tools:ignore="VisualLintButtonSize" />
                 <!--固定时间-->
+                    <!--随机时间-->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnFixedPause"
                         style="?attr/materialButtonOutlinedStyle"
@@ -173,10 +199,10 @@
                         android:layout_weight="1"
                         android:paddingHorizontal="0dp"
                         android:text="@string/pause_mode_fixed"
-                        app:backgroundTint="@color/toggle_btn_bg"
                         android:textColor="@color/toggle_btn_text"
+                        app:backgroundTint="@color/toggle_btn_bg"
                         tools:ignore="VisualLintButtonSize" />
-                <!--随机时间-->
+
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnRandomPause"
                         style="?attr/materialButtonOutlinedStyle"

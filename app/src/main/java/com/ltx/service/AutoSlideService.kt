@@ -32,6 +32,7 @@ import android.util.Log
 import android.view.Display
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -40,6 +41,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
+import com.ltx.DEFAULT_DOUYIN_AUTOPLAY
 import com.ltx.DEFAULT_KEYWORD_COOLDOWN_MS
 import com.ltx.DEFAULT_KEYWORD_DIRECTION
 import com.ltx.DEFAULT_KEYWORD_IGNORE_CASE
@@ -60,6 +62,7 @@ import com.ltx.KEY_KEYWORD_IGNORE_CASE
 import com.ltx.KEY_KEYWORD_INTERVAL
 import com.ltx.KEY_KEYWORD_MAX_TRIGGERS
 import com.ltx.KEY_KEYWORDS
+import com.ltx.KEY_DOUYIN_AUTOPLAY
 import com.ltx.KEY_MAX_PAUSE_TIME
 import com.ltx.KEY_MIN_PAUSE_TIME
 import com.ltx.KEY_PAUSE_MODE
@@ -84,6 +87,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -123,11 +127,18 @@ class AutoSlideService : AccessibilityService() {
     private var ocrFailureNotified = false // 是否已提示过 OCR 失败（避免反复弹提示）
     private var textRecognizer: TextRecognizer? = null // ML Kit 中文文字识别器
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 截图/OCR 协程作用域
+    /* 抖音自动连播状态 */
+    private var douyinAutoPlayInProgress = false // 是否正在执行抖音连播开启流程（防止重复触发）
+    private var lastDouyinAutoPlayAt = 0L // 上次执行抖音连播流程的时间（用于冷却）
+    private var douyinSessionDone = false // 本次进入抖音是否已执行过连播流程（离开抖音后重置）
+    private var douyinAutoPlayCompleted = false // 已成功打开连播后不再工作，直到下次启动 App 才重置
 
     /* 关键词检测循环 */
     private val keywordCheckRunnable = Runnable { runKeywordCheck() }
     /* 定时滑动循环 */
     private val slideRunnable = Runnable { runSlide() }
+    /* 抖音前台检测轮询 */
+    private val douyinWatchRunnable = Runnable { checkDouyinForeground() }
 
     /* 执行一次定时滑动 */
     private fun runSlide() {
@@ -157,6 +168,12 @@ class AutoSlideService : AccessibilityService() {
         private const val MAX_KEYWORD_INTERVAL_MS = 60_000
         private const val MIN_KEYWORD_COOLDOWN_MS = 500
         private const val MAX_KEYWORD_COOLDOWN_MS = 120_000
+        /* 抖音自动连播相关常量 */
+        private const val DOUYIN_PACKAGE = "com.ss.android.ugc.aweme"
+        private const val DOUYIN_AUTOPLAY_TEXT = "自动连播"
+        private const val DOUYIN_AUTOPLAY_COOLDOWN_MS = 5_000L
+        private const val DOUYIN_WATCH_INTERVAL_MS = 10_000L
+        private const val DOUYIN_MAX_ATTEMPTS = 3
         private var instanceRef: WeakReference<AutoSlideService>? = null
 
         /**
@@ -295,12 +312,16 @@ class AutoSlideService : AccessibilityService() {
         registerScreenOffReceiver()
         loadKeywordConfig()
         loadKeywordDirection()
+        douyinAutoPlayCompleted = false
+        douyinSessionDone = false
+        startDouyinWatchIfEnabled()
     }
 
     /* 服务销毁时停止滑动并释放单例 */
     override fun onDestroy() {
         unregisterScreenOffReceiver()
         stopSlide()
+        handler.removeCallbacks(douyinWatchRunnable)
         serviceScope.cancel()
         runCatching { textRecognizer?.close() }
         textRecognizer = null
@@ -321,8 +342,16 @@ class AutoSlideService : AccessibilityService() {
         handler.removeCallbacks(keywordCheckRunnable)
     }
 
-    // 无障碍事件回调：本应用不依赖事件内容，滑动全部由内部定时/关键词循环驱动
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    /**
+     * 无障碍事件回调：抖音连播由定时轮询驱动
+     * 这里只在离开抖音时重置失败重试标记（成功完成后不再工作，直到下次启动 App）
+     */
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        val packageName = event?.packageName?.toString() ?: return
+        if (packageName != DOUYIN_PACKAGE) {
+            douyinSessionDone = false
+        }
+    }
 
     // 无障碍服务被系统中断时回调：无需额外处理
     override fun onInterrupt() = Unit
@@ -604,6 +633,217 @@ class AutoSlideService : AccessibilityService() {
         if (!success) {
             isGestureActive = false
             continueAfterGesture(currentGen)
+        }
+    }
+
+    /* ===== 抖音自动连播 ===== */
+
+    /**
+     * 处理抖音自动连播：长按打开菜单 -> 上滑露出「自动连播」-> 找到并打开开关
+     */
+    private suspend fun handleDouyinAutoPlay() {
+        var attempt = 0
+        while (attempt < DOUYIN_MAX_ATTEMPTS) {
+            // 已能在界面中找到「自动连播」时直接点击开关
+            if (tryToggleDouyinAutoplaySwitch()) {
+                Log.i(TAG, "Douyin autoplay switch handled")
+                douyinAutoPlayCompleted = true
+                stopDouyinWatch()
+                // 等开关动画结束后，关闭抖音弹出的菜单窗口
+                delay(400)
+                runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
+                break
+            }
+            attempt++
+            if (attempt >= DOUYIN_MAX_ATTEMPTS) break
+            // 长按屏幕打开抖音的更多菜单
+            dispatchLongPress()
+            delay(550)
+            // 向上滑动屏幕下半部分，露出「自动连播」选项
+            dispatchSwipeUpLowerHalf()
+            delay(550)
+        }
+        lastDouyinAutoPlayAt = SystemClock.elapsedRealtime()
+        Log.i(TAG, "Douyin autoplay flow finished (attempts=$attempt)")
+    }
+
+    /**
+     * 在无障碍节点树中查找「自动连播」，读取开关真实状态后决定是否点击
+     * 只点击开关节点本身，绝不点击整行，避免把已开启的开关误关
+     *
+     * @return true 表示已找到并处理（含本来已开启）；false 表示未找到，需要继续尝试
+     */
+    private fun tryToggleDouyinAutoplaySwitch(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val nodes = root.findAccessibilityNodeInfosByText(DOUYIN_AUTOPLAY_TEXT)
+        if (nodes.isEmpty()) return false
+        val textNode = nodes.firstOrNull {
+            it.text?.toString()?.contains(DOUYIN_AUTOPLAY_TEXT) == true
+        } ?: nodes.first()
+        val result = try {
+            val switchNode = findSwitchNodeInRow(textNode)
+            when {
+                switchNode == null -> false // 找不到开关节点，无法判断状态，不盲目点击
+                switchNode.isChecked -> true // 开关已经是开启状态，无需操作
+                else -> switchNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            }
+        } finally {
+            nodes.forEach { runCatching { it.recycle() } }
+        }
+        return result
+    }
+
+    /**
+     * 在「自动连播」文本节点所在行内查找真正的开关节点
+     * 向上最多找 4 层父节点，每层搜索整棵子树中的 Switch/CheckBox
+     *
+     * @param node 文本节点
+     * @return 找到的开关节点，未找到返回 null
+     */
+    private fun findSwitchNodeInRow(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        var current = node
+        repeat(4) {
+            val found = findSwitchNode(current)
+            if (found != null) return found
+            current = current?.parent
+        }
+        return null
+    }
+
+    /**
+     * 递归查找节点或其子节点中的 Switch/CheckBox 开关
+     *
+     * @param node 起始节点
+     * @return 找到的开关节点，未找到返回 null
+     */
+    private fun findSwitchNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        val className = node.className?.toString()?.lowercase() ?: ""
+        if (node.isCheckable || className.contains("switch") || className.contains("checkbox") ||
+            className.contains("toggle")
+        ) {
+            return node
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findSwitchNode(child)
+            if (found != null) return found
+        }
+        return null
+    }
+
+    /* 长按屏幕中央偏下位置（触发抖音的更多菜单） */
+    private suspend fun dispatchLongPress() {
+        val metrics = resources.displayMetrics
+        val x = metrics.widthPixels / 2f
+        val y = metrics.heightPixels * 0.55f
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 500L))
+            .build()
+        dispatchGestureAwait(gesture)
+    }
+
+    /* 向上滑动屏幕下半部分（把菜单里的「自动连播」划出来） */
+    private suspend fun dispatchSwipeUpLowerHalf() {
+        val metrics = resources.displayMetrics
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
+        val path = Path().apply {
+            moveTo(width * 0.5f, height * 0.75f)
+            lineTo(width * 0.5f, height * 0.45f)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 300L))
+            .build()
+        dispatchGestureAwait(gesture)
+    }
+
+    /* 分发手势并等待手势执行完成 */
+    private suspend fun dispatchGestureAwait(gesture: GestureDescription): Boolean =
+        suspendCancellableCoroutine { continuation ->
+            val success = dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) continuation.resumeWith(Result.success(true))
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) continuation.resumeWith(Result.success(false))
+                }
+            }, handler)
+            if (!success && continuation.isActive) {
+                continuation.resumeWith(Result.success(false))
+            }
+        }
+
+    /* 开关打开且本次会话未完成时，开始定时轮询抖音前台检测 */
+    private fun startDouyinWatchIfEnabled() {
+        val enabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
+        if (!enabled || douyinAutoPlayCompleted) {
+            stopDouyinWatch()
+            return
+        }
+        handler.removeCallbacks(douyinWatchRunnable)
+        handler.postDelayed(douyinWatchRunnable, DOUYIN_WATCH_INTERVAL_MS)
+    }
+
+    /* 停止抖音检测轮询 */
+    private fun stopDouyinWatch() {
+        handler.removeCallbacks(douyinWatchRunnable)
+    }
+
+    /* 安排下一次轮询 */
+    private fun scheduleNextDouyinWatch() {
+        handler.postDelayed(douyinWatchRunnable, DOUYIN_WATCH_INTERVAL_MS)
+    }
+
+    /**
+     * 检查当前前台应用是否为抖音；是且本次会话未执行过时启动连播流程
+     */
+    private fun checkDouyinForeground() {
+        val enabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
+        if (!enabled || douyinAutoPlayCompleted) {
+            stopDouyinWatch()
+            return
+        }
+        val packageName = rootInActiveWindow?.packageName?.toString()
+        if (packageName != DOUYIN_PACKAGE) {
+            douyinSessionDone = false
+            scheduleNextDouyinWatch()
+            return
+        }
+        if (!douyinSessionDone && !douyinAutoPlayInProgress) {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastDouyinAutoPlayAt >= DOUYIN_AUTOPLAY_COOLDOWN_MS) {
+                douyinSessionDone = true
+                douyinAutoPlayInProgress = true
+                serviceScope.launch {
+                    try {
+                        handleDouyinAutoPlay()
+                    } finally {
+                        douyinAutoPlayInProgress = false
+                    }
+                }
+            }
+        }
+        scheduleNextDouyinWatch()
+    }
+
+    /**
+     * 由主界面开关调用：打开时开始轮询并允许重新执行，关闭时停止轮询
+     *
+     * @param enabled 抖音自动连播开关状态
+     */
+    fun setDouyinAutoPlayEnabled(enabled: Boolean) {
+        douyinAutoPlayCompleted = false
+        douyinSessionDone = false
+        douyinAutoPlayInProgress = false
+        if (enabled) {
+            startDouyinWatchIfEnabled()
+        } else {
+            stopDouyinWatch()
         }
     }
 
