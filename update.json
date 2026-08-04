@@ -1,6 +1,6 @@
 {
-  "versionCode": 19,
-  "versionName": "2.6.0",
-  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.6.0/AutoSlide-v2.6.0.apk",
-  "updateLog": "1. 新增关键词检测模式：OCR 识别屏幕文字，命中关键词后自动滑动\n2. 新增悬浮窗贴边吸附与右下角默认位置\n3. 优化主界面布局与代码注释"
+  "versionCode": 20,
+  "versionName": "2.6.1",
+  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.6.1/AutoSlide-v2.6.1.apk",
+  "updateLog": "1. 更新默认关键词：上滑继续、查看详情、官方官号\n2. 版本升级至 2.6.1"
 }

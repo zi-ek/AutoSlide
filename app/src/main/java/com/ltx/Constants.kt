@@ -30,7 +30,7 @@ const val DEFAULT_PAUSE_TIME = 1                    // 默认固定停顿 1 秒
 const val DEFAULT_MIN_PAUSE_TIME = 1                // 默认随机停顿下限 1 秒
 const val DEFAULT_MAX_PAUSE_TIME = 3                // 默认随机停顿上限 3 秒
 // 默认关键词（每行一个，供第一次打开应用时预填）
-const val DEFAULT_KEYWORDS = "上滑继续\n继续观看\n下一章\n广告结束"
+const val DEFAULT_KEYWORDS = "上滑继续\n查看详情\n官方官号"
 const val DEFAULT_KEYWORD_IGNORE_CASE = true        // 默认忽略大小写
 const val DEFAULT_KEYWORD_INTERVAL_MS = 1000        // 默认每 1000ms 检测一次
 const val DEFAULT_KEYWORD_COOLDOWN_MS = 500         // 默认触发后冷却 500ms
