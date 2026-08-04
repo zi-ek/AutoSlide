@@ -1,5 +1,12 @@
 package com.ltx.service
 
+/**
+ * 可拖拽线性布局
+ *
+ * 悬浮窗根布局使用的自定义 View：
+ * 识别手指按下/拖动/抬起，把拖动回调交给宿主（FloatingWindowService）来移动悬浮窗。
+ */
+
 import android.content.Context
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -18,11 +25,11 @@ class DraggableLinearLayout @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : LinearLayout(context, attrs, defStyleAttr) {
 
-    private var initialTouchX = 0f
-    private var initialTouchY = 0f
-    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
-    private var isDragging = false
-    private var onDragListener: OnDragListener? = null
+    private var initialTouchX = 0f                 // 按下时的原始 X 坐标
+    private var initialTouchY = 0f                 // 按下时的原始 Y 坐标
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop // 系统触摸滑动阈值（px）
+    private var isDragging = false                 // 当前是否处于拖拽状态
+    private var onDragListener: OnDragListener? = null // 拖拽事件回调
 
     /**
      * 拖拽监听接口
@@ -43,6 +50,14 @@ class DraggableLinearLayout @JvmOverloads constructor(
          * @param rawY 拖拽移动时Y坐标
          */
         fun onDragMove(rawX: Float, rawY: Float)
+
+        /**
+         * 拖拽结束事件（手指抬起或取消）
+         *
+         * @param rawX 结束时的X坐标
+         * @param rawY 结束时的Y坐标
+         */
+        fun onDragEnd(rawX: Float, rawY: Float)
     }
 
     /**
@@ -117,13 +132,17 @@ class DraggableLinearLayout @JvmOverloads constructor(
             MotionEvent.ACTION_UP -> {
                 if (isDragging) {
                     isDragging = false
+                    onDragListener?.onDragEnd(ev.rawX, ev.rawY)
                 } else {
                     performClick()
                 }
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                isDragging = false
+                if (isDragging) {
+                    isDragging = false
+                    onDragListener?.onDragEnd(ev.rawX, ev.rawY)
+                }
                 return true
             }
         }

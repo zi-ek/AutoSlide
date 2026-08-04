@@ -16,3 +16,7 @@
 # 崩溃定位: 保留源文件及行号
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# ML Kit OCR
+-keep class com.google.mlkit.vision.text.** { *; }
+-keep class com.google.mlkit.vision.common.** { *; }

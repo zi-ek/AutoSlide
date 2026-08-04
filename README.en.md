@@ -11,7 +11,8 @@ An Android auto-slide tool for automated testing and content browsing
 
 ## Features
 
-- **Pause Modes**: Offers three modes ⌈No Pause / Fixed Time / Random Time⌋
+- **Slide Modes**: Offers four modes ⌈No Pause / Fixed Time / Random Time / Keyword Detection⌋
+- **Keyword Detection**: Detects keywords on screen via OCR and swipes automatically (supports multiple keywords, case-insensitive matching, cooldown and trigger limits)
 - **Slide Speed**: Multiple speed levels with a smooth gesture duration curve
 - **Slide Direction**: Supports up down left and right
 - **Custom Trajectory**: Long-press a direction button to record the swipe path for that direction and replay it during auto slide

@@ -1,5 +1,13 @@
 package com.ltx
 
+/**
+ * 应用主界面
+ *
+ * 权限设置（无障碍、悬浮窗）、滑动设置（模式/停顿时间/速度）、
+ * 关键词检测设置都在这里配置并保存到 SharedPreferences；
+ * 点击“开始”后启动悬浮窗服务并退到后台。
+ */
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlertDialog
@@ -14,7 +22,9 @@ import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.util.Log
 import android.util.TypedValue
 import android.widget.CompoundButton
@@ -49,10 +59,10 @@ import com.google.android.material.R as MaterialR
  */
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var binding: ActivityMainBinding
-    private lateinit var preferences: SharedPreferences
-    var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
-    var mainDispatcher: CoroutineDispatcher = Dispatchers.Main
+    private lateinit var binding: ActivityMainBinding // 视图绑定对象（访问布局控件）
+    private lateinit var preferences: SharedPreferences // 本地设置存储
+    var ioDispatcher: CoroutineDispatcher = Dispatchers.IO // IO 线程调度器（权限检查等耗时操作）
+    var mainDispatcher: CoroutineDispatcher = Dispatchers.Main // 主线程调度器（更新 UI）
 
     /* 全局常量 */
     companion object {
@@ -75,8 +85,9 @@ class MainActivity : AppCompatActivity() {
         val exitCode: Int, val stdout: String, val stderr: String
     )
 
-    /* Shizuku授权待执行的回调 */
+    /* Shizuku 授权成功后的待执行回调 */
     private var pendingShizukuOnGranted: (() -> Unit)? = null
+    /* Shizuku 授权失败后的待执行回调 */
     private var pendingShizukuOnFailed: (() -> Unit)? = null
 
     /* Shizuku权限请求监听器 */
@@ -154,6 +165,7 @@ class MainActivity : AppCompatActivity() {
         restoreSettings()
         setupPauseControls()
         setupSpeedControl()
+        setupKeywordControls()
         binding.accessibilityServicePermissionSwitch.setOnCheckedChangeListener(accessibilitySwitchListener)
         binding.overlayPermissionSwitch.setOnCheckedChangeListener(overlaySwitchListener)
         setupStartButton()
@@ -199,19 +211,20 @@ class MainActivity : AppCompatActivity() {
     private fun restoreSettings() {
         // 恢复滑动速度
         val speed = preferences.getInt(KEY_SPEED, DEFAULT_SPEED).coerceIn(1, 100)
+        binding.speedSlider.value = speed.toFloat()
+        binding.speedSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
         // 恢复停顿模式
-        val pauseMode = preferences.getInt(KEY_PAUSE_MODE, PAUSE_MODE_NONE)
+        val pauseMode = preferences.getInt(KEY_PAUSE_MODE, PAUSE_MODE_KEYWORD)
         // 恢复停顿时间
         val pauseTime = preferences.getInt(KEY_PAUSE_TIME, DEFAULT_PAUSE_TIME).coerceAtLeast(1)
         // 恢复随机停顿时间范围
         val minPauseTime = preferences.getInt(KEY_MIN_PAUSE_TIME, DEFAULT_MIN_PAUSE_TIME).coerceAtLeast(1)
         val maxPauseTime = preferences.getInt(KEY_MAX_PAUSE_TIME, DEFAULT_MAX_PAUSE_TIME).coerceAtLeast(1)
-        binding.speedSlider.value = speed.toFloat()
-        binding.speedSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
         when (pauseMode) {
             PAUSE_MODE_NONE -> binding.pauseModeToggleGroup.check(R.id.btnNoPause)
             PAUSE_MODE_FIXED -> binding.pauseModeToggleGroup.check(R.id.btnFixedPause)
             PAUSE_MODE_RANDOM -> binding.pauseModeToggleGroup.check(R.id.btnRandomPause)
+            PAUSE_MODE_KEYWORD -> binding.pauseModeToggleGroup.check(R.id.btnKeywordPause)
         }
         // 动态调整固定停顿时间滑块的最大值
         binding.pauseTimeSlider.valueTo = maxOf(10, pauseTime).toFloat()
@@ -222,6 +235,25 @@ class MainActivity : AppCompatActivity() {
         binding.pauseTimeSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
         binding.randomPauseTimeSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
         updatePauseTimeVisibility(pauseMode)
+        // 恢复关键词检测设置
+        binding.keywordEditText.setText(preferences.getString(KEY_KEYWORDS, DEFAULT_KEYWORDS))
+        binding.keywordIgnoreCaseSwitch.isChecked =
+            preferences.getBoolean(KEY_KEYWORD_IGNORE_CASE, DEFAULT_KEYWORD_IGNORE_CASE)
+        val keywordInterval = preferences.getInt(KEY_KEYWORD_INTERVAL, DEFAULT_KEYWORD_INTERVAL_MS)
+            .coerceIn(200, 5000)
+        binding.keywordIntervalSlider.value = keywordInterval.toFloat()
+        binding.keywordIntervalValueText.text = keywordInterval.toString()
+        val keywordCooldown = preferences.getInt(KEY_KEYWORD_COOLDOWN, DEFAULT_KEYWORD_COOLDOWN_MS)
+            .coerceIn(500, 10000)
+        binding.keywordCooldownSlider.value = keywordCooldown.toFloat()
+        binding.keywordCooldownValueText.text = keywordCooldown.toString()
+        val keywordMaxTriggers = preferences.getInt(KEY_KEYWORD_MAX_TRIGGERS, DEFAULT_KEYWORD_MAX_TRIGGERS)
+            .coerceIn(1, 10)
+        binding.keywordMaxTriggerSlider.value = keywordMaxTriggers.toFloat()
+        binding.keywordMaxTriggerValueText.text = keywordMaxTriggers.toString()
+        binding.keywordIntervalSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
+        binding.keywordCooldownSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
+        binding.keywordMaxTriggerSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
     }
 
     /* 绑定停顿相关控件事件并持久化用户设置 */
@@ -233,6 +265,7 @@ class MainActivity : AppCompatActivity() {
                     R.id.btnNoPause -> PAUSE_MODE_NONE
                     R.id.btnFixedPause -> PAUSE_MODE_FIXED
                     R.id.btnRandomPause -> PAUSE_MODE_RANDOM
+                    R.id.btnKeywordPause -> PAUSE_MODE_KEYWORD
                     else -> PAUSE_MODE_NONE
                 }
                 updatePauseTimeVisibility(pauseMode)
@@ -249,7 +282,7 @@ class MainActivity : AppCompatActivity() {
         // 停顿时间文本绑定点击事件
         binding.pauseTimeValueText.setOnClickListener {
             if (preferences.getInt(
-                    KEY_PAUSE_MODE, PAUSE_MODE_NONE
+                    KEY_PAUSE_MODE, PAUSE_MODE_KEYWORD
                 ) != PAUSE_MODE_FIXED
             ) return@setOnClickListener
             showCustomPauseTimeDialog()
@@ -283,7 +316,7 @@ class MainActivity : AppCompatActivity() {
             override fun onStartTrackingTouch(slider: Slider) = Unit
             override fun onStopTrackingTouch(slider: Slider) {
                 AutoSlideService.getInstance()?.updatePauseConfig(
-                    preferences.getInt(KEY_PAUSE_MODE, PAUSE_MODE_NONE),
+                    preferences.getInt(KEY_PAUSE_MODE, PAUSE_MODE_KEYWORD),
                     slider.value.toInt(),
                     preferences.getInt(KEY_MIN_PAUSE_TIME, DEFAULT_MIN_PAUSE_TIME),
                     preferences.getInt(KEY_MAX_PAUSE_TIME, DEFAULT_MAX_PAUSE_TIME)
@@ -298,7 +331,9 @@ class MainActivity : AppCompatActivity() {
                 val min = values[0].toInt()
                 val max = values[1].toInt()
                 AutoSlideService.getInstance()?.updatePauseConfig(
-                    preferences.getInt(KEY_PAUSE_MODE, PAUSE_MODE_NONE), preferences.getInt(KEY_PAUSE_TIME, DEFAULT_PAUSE_TIME), min, max
+                    preferences.getInt(KEY_PAUSE_MODE, PAUSE_MODE_KEYWORD),
+                    preferences.getInt(KEY_PAUSE_TIME, DEFAULT_PAUSE_TIME),
+                    min, max
                 )
             }
         })
@@ -333,7 +368,7 @@ class MainActivity : AppCompatActivity() {
                     binding.pauseTimeValueText.text = value.toString()
                     // 更新停顿配置
                     AutoSlideService.getInstance()?.updatePauseConfig(
-                        preferences.getInt(KEY_PAUSE_MODE, PAUSE_MODE_NONE),
+                        preferences.getInt(KEY_PAUSE_MODE, PAUSE_MODE_KEYWORD),
                         value,
                         preferences.getInt(KEY_MIN_PAUSE_TIME, DEFAULT_MIN_PAUSE_TIME),
                         preferences.getInt(KEY_MAX_PAUSE_TIME, DEFAULT_MAX_PAUSE_TIME)
@@ -364,6 +399,51 @@ class MainActivity : AppCompatActivity() {
                 AutoSlideService.getInstance()?.updateSpeed(slider.value.toInt())
             }
         })
+    }
+
+    /* 绑定关键词检测控件事件并持久化用户设置 */
+    @SuppressLint("SetTextI18n")
+    private fun setupKeywordControls() {
+        binding.keywordIgnoreCaseSwitch.setOnCheckedChangeListener { _, isChecked ->
+            preferences.edit { putBoolean(KEY_KEYWORD_IGNORE_CASE, isChecked) }
+        }
+        // 关键词输入框：输入即保存
+        binding.keywordEditText.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+
+            override fun afterTextChanged(s: Editable?) {
+                preferences.edit { putString(KEY_KEYWORDS, s?.toString() ?: "") }
+            }
+        })
+        // 检测间隔
+        binding.keywordIntervalSlider.setLabelFormatter { value -> value.toInt().toString() }
+        binding.keywordIntervalSlider.addOnChangeListener { _, value, fromUser ->
+            val progress = value.toInt()
+            binding.keywordIntervalValueText.text = progress.toString()
+            if (fromUser) {
+                preferences.edit { putInt(KEY_KEYWORD_INTERVAL, progress) }
+            }
+        }
+        // 冷却时间
+        binding.keywordCooldownSlider.setLabelFormatter { value -> value.toInt().toString() }
+        binding.keywordCooldownSlider.addOnChangeListener { _, value, fromUser ->
+            val progress = value.toInt()
+            binding.keywordCooldownValueText.text = progress.toString()
+            if (fromUser) {
+                preferences.edit { putInt(KEY_KEYWORD_COOLDOWN, progress) }
+            }
+        }
+        // 同一画面最大触发次数
+        binding.keywordMaxTriggerSlider.setLabelFormatter { value -> value.toInt().toString() }
+        binding.keywordMaxTriggerSlider.addOnChangeListener { _, value, fromUser ->
+            val progress = value.toInt()
+            binding.keywordMaxTriggerValueText.text = progress.toString()
+            if (fromUser) {
+                preferences.edit { putInt(KEY_KEYWORD_MAX_TRIGGERS, progress) }
+            }
+        }
     }
 
     /* 处理⌈无障碍服务权限⌋开关打开动作 */
@@ -736,13 +816,21 @@ class MainActivity : AppCompatActivity() {
      */
     @SuppressLint("SetTextI18n")
     private fun updatePauseTimeVisibility(pauseMode: Int) {
-        binding.pauseTimeContainer.isVisible = pauseMode != PAUSE_MODE_NONE
+        // 关键词检测卡片只在选中“关键词检测”模式时显示
+        binding.keywordCard.isVisible = pauseMode == PAUSE_MODE_KEYWORD
+        // 滑动速度属于定时滑动模式，关键词检测模式下隐藏
+        val showSpeed = pauseMode != PAUSE_MODE_KEYWORD
+        binding.speedTitle.isVisible = showSpeed
+        binding.speedContainer.isVisible = showSpeed
+        binding.pauseTimeContainer.isVisible =
+            pauseMode == PAUSE_MODE_FIXED || pauseMode == PAUSE_MODE_RANDOM
         if (pauseMode == PAUSE_MODE_FIXED) {
             binding.pauseTimeLabel.setText(R.string.pause_time)
             binding.pauseTimeSlider.isVisible = true
             binding.randomPauseTimeSlider.isVisible = false
             // 启用下划线及点击事件
-            binding.pauseTimeValueText.paintFlags = binding.pauseTimeValueText.paintFlags or Paint.UNDERLINE_TEXT_FLAG
+            binding.pauseTimeValueText.paintFlags =
+                binding.pauseTimeValueText.paintFlags or Paint.UNDERLINE_TEXT_FLAG
             binding.pauseTimeValueText.isClickable = true
             binding.pauseTimeValueText.text = binding.pauseTimeSlider.value.toInt().toString()
         } else if (pauseMode == PAUSE_MODE_RANDOM) {
@@ -761,4 +849,5 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
 }

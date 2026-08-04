@@ -1,5 +1,12 @@
 package com.ltx.service
 
+/**
+ * 轨迹录制视图
+ *
+ * 悬浮窗长按方向键后显示的全屏半透明遮罩：
+ * 用户手指在屏幕上划出的路径会被记录为一串坐标点，松开后回调给悬浮窗保存。
+ */
+
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
@@ -24,8 +31,9 @@ class TrajectoryRecordView(
     private val onCancel: () -> Unit
 ) : View(context) {
 
-    private val points = mutableListOf<PointF>()
-    private val path = Path()
+    private val points = mutableListOf<PointF>()   // 录制到的原始坐标点列表
+    private val path = Path()                      // 根据坐标点构建的绘制路径
+    /* 绘制轨迹线条的画笔：红色圆头粗线 */
     private val paint = Paint().apply {
         color = Color.RED
         style = Paint.Style.STROKE
@@ -35,6 +43,7 @@ class TrajectoryRecordView(
         strokeCap = Paint.Cap.ROUND
     }
 
+    /* 绘制提示文字的画笔：白字带黑色阴影 */
     private val textPaint = Paint().apply {
         color = Color.WHITE
         textSize = 60f
@@ -44,6 +53,7 @@ class TrajectoryRecordView(
     }
 
     init {
+        // 半透明黑色背景，既能看清屏幕又能区分录制模式
         setBackgroundColor("#44000000".toColorInt())
     }
 
@@ -115,6 +125,7 @@ class TrajectoryRecordView(
     }
 
     companion object {
+        // 相邻两个采样点之间的最小像素距离（过滤手指微抖产生的密集点）
         private const val MIN_POINT_DISTANCE_PX = 5f
         private const val MIN_POINT_DISTANCE_SQ = MIN_POINT_DISTANCE_PX * MIN_POINT_DISTANCE_PX
     }

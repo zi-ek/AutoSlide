@@ -1,5 +1,13 @@
 package com.ltx.service
 
+/**
+ * 悬浮窗服务
+ *
+ * 在所有应用上层显示一个可拖动的悬浮控制面板：
+ * 四个方向按钮启动对应方向的滑动，长按可录制/管理自定义轨迹；
+ * 设置按钮返回主界面，关闭按钮停止服务。
+ */
+
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.app.Service
@@ -20,6 +28,7 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.ltx.DEFAULT_KEYWORDS
 import com.ltx.DEFAULT_MAX_PAUSE_TIME
 import com.ltx.DEFAULT_MIN_PAUSE_TIME
 import com.ltx.DEFAULT_PAUSE_TIME
@@ -32,12 +41,14 @@ import com.ltx.KEY_CUSTOM_TRAJECTORY_DOWN
 import com.ltx.KEY_CUSTOM_TRAJECTORY_LEFT
 import com.ltx.KEY_CUSTOM_TRAJECTORY_RIGHT
 import com.ltx.KEY_CUSTOM_TRAJECTORY_UP
+import com.ltx.KEY_KEYWORDS
 import com.ltx.KEY_MAX_PAUSE_TIME
 import com.ltx.KEY_MIN_PAUSE_TIME
 import com.ltx.KEY_PAUSE_MODE
 import com.ltx.KEY_PAUSE_TIME
 import com.ltx.KEY_SPEED
 import com.ltx.MainActivity
+import com.ltx.PAUSE_MODE_KEYWORD
 import com.ltx.PAUSE_MODE_NONE
 import com.ltx.PREFS_NAME
 import com.ltx.R
@@ -58,17 +69,17 @@ import kotlin.math.abs
  */
 class FloatingWindowService : Service() {
 
-    private lateinit var windowManager: WindowManager
-    private lateinit var layoutParams: WindowManager.LayoutParams
-    private lateinit var rootView: View
-    private lateinit var controlPanel: View
-    private lateinit var expandButton: View
-    private var initialX = 0f
-    private var initialY = 0f
-    private var initialTouchX = 0f
-    private var initialTouchY = 0f
-    private var recordOverlayView: View? = null
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private lateinit var windowManager: WindowManager // 窗口管理器（添加/更新悬浮窗）
+    private lateinit var layoutParams: WindowManager.LayoutParams // 悬浮窗位置参数
+    private lateinit var rootView: View      // 悬浮窗根布局（可拖拽）
+    private lateinit var controlPanel: View  // 展开后的控制面板
+    private lateinit var expandButton: View  // 收起后的小圆球（点击展开）
+    private var initialX = 0f                // 拖拽开始时悬浮窗的 X 位置
+    private var initialY = 0f                // 拖拽开始时悬浮窗的 Y 位置
+    private var initialTouchX = 0f           // 按下时手指的 X 坐标
+    private var initialTouchY = 0f           // 按下时手指的 Y 坐标
+    private var recordOverlayView: View? = null // 轨迹录制遮罩视图
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 主线程协程作用域
 
     /* 绑定服务 */
     override fun onBind(intent: Intent?): IBinder? = null
@@ -100,6 +111,19 @@ class FloatingWindowService : Service() {
             AutoSlideTileService.requestUpdate(this)
             stopSelf()
             return
+        }
+        // 悬浮窗默认停靠在屏幕右下角（等布局完成拿到实际宽高后设置位置）
+        rootView.post {
+            if (!::rootView.isInitialized || !::layoutParams.isInitialized) {
+                return@post
+            }
+            val displayMetrics = resources.displayMetrics
+            // 距离屏幕边缘的边距（24dp）
+            val margin = (24 * displayMetrics.density).toInt()
+            // 计算右下角坐标，并保证不小于 0
+            layoutParams.x = (displayMetrics.widthPixels - rootView.width - margin).coerceAtLeast(0)
+            layoutParams.y = (displayMetrics.heightPixels - rootView.height - margin).coerceAtLeast(0)
+            runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
         }
         // 监听自动滑动服务事件
         serviceScope.launch {
@@ -204,7 +228,34 @@ class FloatingWindowService : Service() {
                 // 更新悬浮窗位置
                 windowManager.updateViewLayout(rootView, layoutParams)
             }
+
+            override fun onDragEnd(rawX: Float, rawY: Float) {
+                // 松手后自动吸附到最近的屏幕边缘
+                snapToNearestEdge()
+            }
         })
+    }
+
+    /* 将悬浮窗吸附到最近的左/右屏幕边缘（垂直位置保持不变） */
+    private fun snapToNearestEdge() {
+        rootView.post {
+            if (!::rootView.isInitialized || !::layoutParams.isInitialized) {
+                return@post
+            }
+            val displayMetrics = resources.displayMetrics
+            // 距屏幕边缘的边距（16dp）
+            val margin = (16 * displayMetrics.density).toInt()
+            // 用悬浮窗中心点判断离哪条边更近
+            val centerX = layoutParams.x + rootView.width / 2f
+            layoutParams.x = if (centerX < displayMetrics.widthPixels / 2f) {
+                // 离左边近：贴左边缘
+                margin
+            } else {
+                // 离右边近：贴右边缘
+                (displayMetrics.widthPixels - rootView.width - margin).coerceAtLeast(0)
+            }
+            runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
+        }
     }
 
     /* 绑定所有控制按钮事件 */
@@ -476,6 +527,17 @@ class FloatingWindowService : Service() {
         controlPanel.visibility = View.GONE
         expandButton.visibility = View.VISIBLE
         windowManager.updateViewLayout(rootView, layoutParams)
+        // 收起后把缩小图标吸附到屏幕最右边（垂直位置保持不动）
+        rootView.post {
+            if (!::rootView.isInitialized || !::layoutParams.isInitialized) {
+                return@post
+            }
+            val displayMetrics = resources.displayMetrics
+            // 距屏幕右边留 24dp 边距
+            val margin = (24 * displayMetrics.density).toInt()
+            layoutParams.x = (displayMetrics.widthPixels - rootView.width - margin).coerceAtLeast(0)
+            runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
+        }
     }
 
     /**
@@ -497,9 +559,20 @@ class FloatingWindowService : Service() {
         minimize()
         // 从本地配置文件读取当前设置
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val pauseMode = prefs.getInt(KEY_PAUSE_MODE, PAUSE_MODE_KEYWORD)
+        if (pauseMode == PAUSE_MODE_KEYWORD) {
+            val hasKeyword = (prefs.getString(KEY_KEYWORDS, DEFAULT_KEYWORDS) ?: DEFAULT_KEYWORDS)
+                .lines()
+                .any { it.isNotBlank() }
+            if (!hasKeyword) {
+                Toast.makeText(this, R.string.keyword_empty_warning, Toast.LENGTH_LONG).show()
+                expand()
+                return
+            }
+        }
         AutoSlideService.getInstance()?.startSlideWithConfig(
             speedVal = prefs.getInt(KEY_SPEED, DEFAULT_SPEED),
-            pauseModeVal = prefs.getInt(KEY_PAUSE_MODE, PAUSE_MODE_NONE),
+            pauseModeVal = pauseMode,
             pauseTimeVal = prefs.getInt(KEY_PAUSE_TIME, DEFAULT_PAUSE_TIME),
             minPauseVal = prefs.getInt(KEY_MIN_PAUSE_TIME, DEFAULT_MIN_PAUSE_TIME),
             maxPauseVal = prefs.getInt(KEY_MAX_PAUSE_TIME, DEFAULT_MAX_PAUSE_TIME)
@@ -526,6 +599,7 @@ class FloatingWindowService : Service() {
     }
 
     companion object {
+        // 悬浮窗服务是否正在运行（供磁贴等模块查询）
         private var isServiceRunning = false
 
         /**

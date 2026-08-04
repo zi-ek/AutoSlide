@@ -1,21 +1,51 @@
 package com.ltx.service
 
+/**
+ * 自动滑动无障碍服务（核心服务）
+ *
+ * 通过无障碍服务执行屏幕滑动手势：
+ * - 定时滑动模式（不停顿/固定时间/随机时间）：按设定节奏循环滑动；
+ * - 关键词检测模式：定时截屏 + OCR 识别，命中关键词才滑动一次。
+ * 同时支持音量键强制停止、息屏自动停止、自定义轨迹回放等能力。
+ */
+
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
+import android.accessibilityservice.AccessibilityService.ScreenshotResult
+import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Path
 import android.graphics.PointF
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
+import android.view.Display
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import com.google.android.gms.tasks.Tasks
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
+import com.ltx.DEFAULT_KEYWORD_COOLDOWN_MS
+import com.ltx.DEFAULT_KEYWORD_DIRECTION
+import com.ltx.DEFAULT_KEYWORD_IGNORE_CASE
+import com.ltx.DEFAULT_KEYWORD_INTERVAL_MS
+import com.ltx.DEFAULT_KEYWORD_MAX_TRIGGERS
+import com.ltx.DEFAULT_KEYWORDS
 import com.ltx.DEFAULT_MAX_PAUSE_TIME
 import com.ltx.DEFAULT_MIN_PAUSE_TIME
 import com.ltx.DEFAULT_PAUSE_TIME
@@ -24,23 +54,41 @@ import com.ltx.DIRECTION_DOWN
 import com.ltx.DIRECTION_LEFT
 import com.ltx.DIRECTION_RIGHT
 import com.ltx.DIRECTION_UP
+import com.ltx.KEY_KEYWORD_COOLDOWN
+import com.ltx.KEY_KEYWORD_DIRECTION
+import com.ltx.KEY_KEYWORD_IGNORE_CASE
+import com.ltx.KEY_KEYWORD_INTERVAL
+import com.ltx.KEY_KEYWORD_MAX_TRIGGERS
+import com.ltx.KEY_KEYWORDS
 import com.ltx.KEY_MAX_PAUSE_TIME
 import com.ltx.KEY_MIN_PAUSE_TIME
 import com.ltx.KEY_PAUSE_MODE
 import com.ltx.KEY_PAUSE_TIME
 import com.ltx.KEY_SPEED
 import com.ltx.PAUSE_MODE_FIXED
+import com.ltx.PAUSE_MODE_KEYWORD
 import com.ltx.PAUSE_MODE_NONE
 import com.ltx.PAUSE_MODE_RANDOM
 import com.ltx.PREFS_NAME
+import com.ltx.R
 import com.ltx.SlideEvent
 import com.ltx.SlideEventHub
 import com.ltx.getTrajectoryKey
 import java.lang.ref.WeakReference
 import java.security.SecureRandom
+import java.util.concurrent.Executors
 import kotlin.math.ln
 import kotlin.math.roundToLong
 import kotlin.random.asKotlinRandom
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import rikka.shizuku.Shizuku
+import rikka.shizuku.ShizukuRemoteProcess
 
 /**
  * 自动滑动无障碍服务
@@ -50,31 +98,43 @@ import kotlin.random.asKotlinRandom
 @SuppressLint("AccessibilityPolicy")
 class AutoSlideService : AccessibilityService() {
 
-    private val secureRandom = SecureRandom().asKotlinRandom()
-    private val handler = Handler(Looper.getMainLooper())
-    private var runGeneration = 0
-    private var isScreenOffReceiverRegistered = false
-    private var speed = DEFAULT_SPEED
-    private var pauseMode = PAUSE_MODE_NONE
-    private var pauseTime = DEFAULT_PAUSE_TIME
-    private var minPauseTime = DEFAULT_MIN_PAUSE_TIME
-    private var maxPauseTime = DEFAULT_MAX_PAUSE_TIME
-    private var currentDirection = DIRECTION_LEFT
-    private var isRunning = false
-    private var isGestureActive = false
+    private val secureRandom = SecureRandom().asKotlinRandom() // 手势随机偏移用的随机数
+    private val handler = Handler(Looper.getMainLooper())      // 主线程 Handler，调度滑动/检测任务
+    private var runGeneration = 0        // 运行代数：每次启停自增，用于让旧任务失效
+    private var isScreenOffReceiverRegistered = false // 息屏广播是否已注册
+    private var speed = DEFAULT_SPEED    // 滑动速度（1~100，决定手势持续时间）
+    private var pauseMode = PAUSE_MODE_NONE // 当前滑动模式（不停顿/固定/随机/关键词）
+    private var pauseTime = DEFAULT_PAUSE_TIME   // 固定停顿时间（秒）
+    private var minPauseTime = DEFAULT_MIN_PAUSE_TIME // 随机停顿下限（秒）
+    private var maxPauseTime = DEFAULT_MAX_PAUSE_TIME // 随机停顿上限（秒）
+    private var currentDirection = DIRECTION_LEFT // 当前滑动方向（默认左滑）
+    private var isRunning = false        // 是否正在运行滑动/检测
+    private var isGestureActive = false  // 是否正在执行手势（防止手势期间重复调度）
+    /* 关键词检测（OCR）状态 */
+    private var keywordModeActive = false // 当前是否运行关键词检测模式
+    private var keywordList: List<String> = emptyList() // 用户填写的关键词列表
+    private var keywordIgnoreCase = DEFAULT_KEYWORD_IGNORE_CASE // 是否忽略大小写
+    private var keywordIntervalMs = DEFAULT_KEYWORD_INTERVAL_MS // 检测间隔（毫秒）
+    private var keywordCooldownMs = DEFAULT_KEYWORD_COOLDOWN_MS // 触发后冷却（毫秒）
+    private var keywordMaxTriggers = DEFAULT_KEYWORD_MAX_TRIGGERS // 同一画面最多触发次数
+    private var lastKeywordTriggerAt = 0L // 上次触发滑动的时间（用于冷却判断）
+    private var lastTriggeredTextHash: Int? = null // 上次触发时的识别文字哈希
+    private var keywordConsecutiveTriggers = 0 // 同一段文字连续触发计数
+    private var ocrFailureNotified = false // 是否已提示过 OCR 失败（避免反复弹提示）
+    private var textRecognizer: TextRecognizer? = null // ML Kit 中文文字识别器
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 截图/OCR 协程作用域
 
-    /* 自动滑动主循环 */
+    /* 关键词检测循环 */
+    private val keywordCheckRunnable = Runnable { runKeywordCheck() }
+    /* 定时滑动循环 */
     private val slideRunnable = Runnable { runSlide() }
 
-    /* 执行一次自动滑动 */
+    /* 执行一次定时滑动 */
     private fun runSlide() {
         if (!isRunning) {
             return
         }
-        // 计算手势持续时间
-        val gestureDurationMillis = calculateGestureDurationMillis()
-        // 执行滑动
-        performSlideByDirection(gestureDurationMillis)
+        performSlideByDirection(calculateGestureDurationMillis())
     }
 
     /* 息屏时强制停止滑动 */
@@ -88,10 +148,15 @@ class AutoSlideService : AccessibilityService() {
     }
 
     companion object {
+        private const val TAG = "AutoSlideService"
         private const val MIN_GESTURE_DURATION_MS = 100L
         private const val MAX_GESTURE_DURATION_MS = 900L
         private const val NO_PAUSE_GAP_MS = 80L
         private const val SPEED_CURVE_FACTOR = 0.7
+        private const val MIN_KEYWORD_INTERVAL_MS = 200
+        private const val MAX_KEYWORD_INTERVAL_MS = 60_000
+        private const val MIN_KEYWORD_COOLDOWN_MS = 500
+        private const val MAX_KEYWORD_COOLDOWN_MS = 120_000
         private var instanceRef: WeakReference<AutoSlideService>? = null
 
         /**
@@ -142,7 +207,16 @@ class AutoSlideService : AccessibilityService() {
     }
 
     /**
-     * 安排下一次滑动
+     * 更新滑动速度而不触发启动逻辑
+     *
+     * @param newSpeed 最新速度值
+     */
+    fun updateSpeed(newSpeed: Int) {
+        speed = newSpeed.coerceIn(1, 100)
+    }
+
+    /**
+     * 安排下一次定时滑动
      *
      * @param currentGen 当前运行代数
      */
@@ -150,15 +224,6 @@ class AutoSlideService : AccessibilityService() {
         if (isRunning && currentGen == runGeneration) {
             handler.postDelayed(slideRunnable, calculatePauseDelayMillis())
         }
-    }
-
-    /**
-     * 更新滑动速度而不触发启动逻辑
-     *
-     * @param newSpeed 最新速度值
-     */
-    fun updateSpeed(newSpeed: Int) {
-        speed = newSpeed.coerceIn(1, 100)
     }
 
     /**
@@ -174,7 +239,7 @@ class AutoSlideService : AccessibilityService() {
         pauseTime = time.coerceAtLeast(1)
         minPauseTime = min.coerceAtLeast(1)
         maxPauseTime = max.coerceAtLeast(1)
-        if (!isRunning || isGestureActive) {
+        if (!isRunning || isGestureActive || keywordModeActive) {
             return
         }
         // 移除当前滑动任务并重新调度新的停顿时间
@@ -215,6 +280,7 @@ class AutoSlideService : AccessibilityService() {
         pauseTime = pauseTimeVal.coerceAtLeast(1)
         minPauseTime = minPauseVal.coerceAtLeast(1)
         maxPauseTime = maxPauseVal.coerceAtLeast(1)
+        loadKeywordConfig()
         startAutoSlide()
     }
 
@@ -227,12 +293,17 @@ class AutoSlideService : AccessibilityService() {
             flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
         }
         registerScreenOffReceiver()
+        loadKeywordConfig()
+        loadKeywordDirection()
     }
 
     /* 服务销毁时停止滑动并释放单例 */
     override fun onDestroy() {
         unregisterScreenOffReceiver()
         stopSlide()
+        serviceScope.cancel()
+        runCatching { textRecognizer?.close() }
+        textRecognizer = null
         instanceRef = null
         super.onDestroy()
     }
@@ -244,12 +315,16 @@ class AutoSlideService : AccessibilityService() {
         }
         isRunning = false
         isGestureActive = false
+        keywordModeActive = false
         runGeneration++
         handler.removeCallbacks(slideRunnable)
+        handler.removeCallbacks(keywordCheckRunnable)
     }
 
+    // 无障碍事件回调：本应用不依赖事件内容，滑动全部由内部定时/关键词循环驱动
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
 
+    // 无障碍服务被系统中断时回调：无需额外处理
     override fun onInterrupt() = Unit
 
     /**
@@ -330,8 +405,8 @@ class AutoSlideService : AccessibilityService() {
      * @param intent 启动参数
      */
     private fun updateConfigFromIntent(intent: Intent) {
-        speed = intent.getIntExtra(KEY_SPEED, DEFAULT_SPEED)
-        pauseMode = intent.getIntExtra(KEY_PAUSE_MODE, PAUSE_MODE_NONE)
+        speed = intent.getIntExtra(KEY_SPEED, DEFAULT_SPEED).coerceIn(1, 100)
+        pauseMode = intent.getIntExtra(KEY_PAUSE_MODE, PAUSE_MODE_KEYWORD)
         pauseTime = intent.getIntExtra(KEY_PAUSE_TIME, DEFAULT_PAUSE_TIME).coerceAtLeast(1)
         minPauseTime = intent.getIntExtra(KEY_MIN_PAUSE_TIME, DEFAULT_MIN_PAUSE_TIME).coerceAtLeast(1)
         maxPauseTime = intent.getIntExtra(KEY_MAX_PAUSE_TIME, DEFAULT_MAX_PAUSE_TIME).coerceAtLeast(1)
@@ -341,13 +416,22 @@ class AutoSlideService : AccessibilityService() {
     private fun startAutoSlide() {
         isRunning = true
         isGestureActive = false
+        keywordModeActive = pauseMode == PAUSE_MODE_KEYWORD && keywordList.isNotEmpty()
+        lastKeywordTriggerAt = 0L
+        keywordConsecutiveTriggers = 0
+        lastTriggeredTextHash = null
         runGeneration++
         val currentGen = runGeneration
         handler.removeCallbacks(slideRunnable)
-        // 延迟300ms执行第一次滑动(等待悬浮窗完成最小化动画)(防止悬浮窗拦截手势)
+        handler.removeCallbacks(keywordCheckRunnable)
+        // 延迟300ms执行第一次滑动/检测(等待悬浮窗完成最小化动画)
         handler.postDelayed({
             if (currentGen == runGeneration && isRunning) {
-                runSlide()
+                if (keywordModeActive) {
+                    scheduleKeywordCheck(0L)
+                } else {
+                    runSlide()
+                }
             }
         }, 300L)
     }
@@ -382,7 +466,7 @@ class AutoSlideService : AccessibilityService() {
         // 不足两个点视为无效数据清除后跳过本次滑动
         if (pointsStr.size < 2) {
             clearCustomTrajectory(currentDirection)
-            scheduleNextSlide()
+            continueAfterGesture(runGeneration)
             return
         }
         // 解析轨迹点
@@ -397,7 +481,7 @@ class AutoSlideService : AccessibilityService() {
         // 解析后有效点不足两个视为无效数据清除后跳过本次滑动
         if (parsedPoints.size < 2) {
             clearCustomTrajectory(currentDirection)
-            scheduleNextSlide()
+            continueAfterGesture(runGeneration)
             return
         }
         // 根据轨迹点构建手势路径
@@ -438,7 +522,7 @@ class AutoSlideService : AccessibilityService() {
     }
 
     /**
-     * 计算两次滑动之间的停顿时间
+     * 计算两次定时滑动之间的停顿时间
      *
      * @return 停顿时间(毫秒)
      */
@@ -509,7 +593,7 @@ class AutoSlideService : AccessibilityService() {
         val success = dispatchGesture(gesture, object : GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
                 isGestureActive = false
-                scheduleNextSlide(currentGen)
+                continueAfterGesture(currentGen)
             }
 
             override fun onCancelled(gestureDescription: GestureDescription?) {
@@ -519,7 +603,258 @@ class AutoSlideService : AccessibilityService() {
         // 分发失败时手动复位并继续下一轮滑动
         if (!success) {
             isGestureActive = false
+            continueAfterGesture(currentGen)
+        }
+    }
+
+    /* ===== 关键词检测（OCR） ===== */
+
+    /**
+     * 从本地配置读取关键词检测参数
+     */
+    private fun loadKeywordConfig() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        keywordIgnoreCase = prefs.getBoolean(KEY_KEYWORD_IGNORE_CASE, DEFAULT_KEYWORD_IGNORE_CASE)
+        keywordIntervalMs = prefs.getInt(KEY_KEYWORD_INTERVAL, DEFAULT_KEYWORD_INTERVAL_MS)
+            .coerceIn(MIN_KEYWORD_INTERVAL_MS, MAX_KEYWORD_INTERVAL_MS)
+        keywordCooldownMs = prefs.getInt(KEY_KEYWORD_COOLDOWN, DEFAULT_KEYWORD_COOLDOWN_MS)
+            .coerceIn(MIN_KEYWORD_COOLDOWN_MS, MAX_KEYWORD_COOLDOWN_MS)
+        keywordMaxTriggers = prefs.getInt(KEY_KEYWORD_MAX_TRIGGERS, DEFAULT_KEYWORD_MAX_TRIGGERS)
+            .coerceIn(1, 50)
+        keywordList = (prefs.getString(KEY_KEYWORDS, DEFAULT_KEYWORDS) ?: DEFAULT_KEYWORDS)
+            .lines()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+    }
+
+    /**
+     * 读取关键词触发方向并应用到当前滑动方向
+     */
+    private fun loadKeywordDirection() {
+        val stored = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getString(KEY_KEYWORD_DIRECTION, DEFAULT_KEYWORD_DIRECTION)
+        val direction = when (stored) {
+            DIRECTION_UP, DIRECTION_DOWN, DIRECTION_LEFT, DIRECTION_RIGHT -> stored
+            else -> DEFAULT_KEYWORD_DIRECTION
+        }
+        currentDirection = direction
+    }
+
+    /**
+     * 安排下一次关键词检测
+     *
+     * @param delayMs 延迟毫秒数
+     */
+    private fun scheduleKeywordCheck(delayMs: Long) {
+        if (!isRunning || !keywordModeActive) {
+            return
+        }
+        handler.postDelayed(keywordCheckRunnable, delayMs.coerceAtLeast(50))
+    }
+
+    /**
+     * 手势结束后的继续逻辑：关键词模式等待冷却，其他模式进入下一轮定时滑动
+     *
+     * @param currentGen 当前运行代数
+     */
+    private fun continueAfterGesture(currentGen: Int) {
+        if (keywordModeActive) {
+            scheduleKeywordCheck(keywordCooldownMs.toLong())
+        } else {
             scheduleNextSlide(currentGen)
+        }
+    }
+
+    /**
+     * 执行一次关键词检测：截图 -> OCR -> 匹配
+     */
+    private fun runKeywordCheck() {
+        if (!isRunning) {
+            return
+        }
+        val currentGen = runGeneration
+        serviceScope.launch {
+            val bitmap = captureScreenBitmap()
+            if (currentGen != runGeneration || !isRunning) {
+                bitmap?.recycle()
+                return@launch
+            }
+            val text = if (bitmap != null) recognizeText(bitmap) else ""
+            bitmap?.recycle()
+            if (currentGen != runGeneration || !isRunning) {
+                return@launch
+            }
+            handleKeywordCheckResult(text)
+        }
+    }
+
+    /**
+     * 处理一次 OCR 识别结果并决定是否触发滑动
+     *
+     * @param text 识别出的屏幕文字
+     */
+    private fun handleKeywordCheckResult(text: String) {
+        Log.d(TAG, "OCR text: $text")
+        val now = SystemClock.elapsedRealtime()
+        val elapsedSinceTrigger = now - lastKeywordTriggerAt
+        // 冷却期内不再触发
+        if (elapsedSinceTrigger < keywordCooldownMs) {
+            scheduleKeywordCheck(keywordCooldownMs - elapsedSinceTrigger)
+            return
+        }
+        // 未命中关键词则重置连续触发计数
+        if (!matchesKeyword(text)) {
+            keywordConsecutiveTriggers = 0
+            lastTriggeredTextHash = null
+            scheduleKeywordCheck(keywordIntervalMs.toLong())
+            return
+        }
+        // 同一画面文字最多连续触发指定次数，防止疯狂滑动
+        val textHash = text.hashCode()
+        if (textHash != lastTriggeredTextHash) {
+            keywordConsecutiveTriggers = 0
+            lastTriggeredTextHash = textHash
+        }
+        if (keywordConsecutiveTriggers >= keywordMaxTriggers) {
+            scheduleKeywordCheck(keywordIntervalMs.toLong())
+            return
+        }
+        keywordConsecutiveTriggers++
+        lastKeywordTriggerAt = now
+        Log.i(TAG, "Keyword matched, swiping ($keywordConsecutiveTriggers/$keywordMaxTriggers)")
+        performSlideByDirection(calculateGestureDurationMillis())
+    }
+
+    /**
+     * 判断识别文字是否包含任一关键词
+     *
+     * @param text 识别出的屏幕文字
+     * @return 是否命中
+     */
+    private fun matchesKeyword(text: String): Boolean {
+        if (keywordList.isEmpty() || text.isBlank()) {
+            return false
+        }
+        val haystack = if (keywordIgnoreCase) text.lowercase() else text
+        return keywordList.any { keyword ->
+            val target = if (keywordIgnoreCase) keyword.lowercase() else keyword
+            target.isNotEmpty() && haystack.contains(target)
+        }
+    }
+
+    /**
+     * 截取当前屏幕
+     *
+     * @return 屏幕位图，失败时返回 null
+     */
+    private suspend fun captureScreenBitmap(): Bitmap? = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            captureScreenViaAccessibility()
+        } else {
+            captureScreenViaShizuku()
+        }
+    }
+
+    /**
+     * 通过无障碍服务截图（Android 11+）
+     *
+     * @return 屏幕位图，失败时返回 null
+     */
+    private suspend fun captureScreenViaAccessibility(): Bitmap? {
+        val executor = Executors.newSingleThreadExecutor()
+        return try {
+            suspendCancellableCoroutine { continuation ->
+                try {
+                    takeScreenshot(Display.DEFAULT_DISPLAY, executor, object : TakeScreenshotCallback {
+                        override fun onSuccess(screenshot: ScreenshotResult) {
+                            val bitmap = try {
+                                val buffer = screenshot.hardwareBuffer
+                                val result = Bitmap.wrapHardwareBuffer(buffer, null)
+                                buffer.close()
+                                result
+                            } catch (e: Exception) {
+                                Log.w(TAG, "HardwareBuffer to Bitmap failed", e)
+                                null
+                            }
+                            if (continuation.isActive) {
+                                continuation.resumeWith(Result.success(bitmap))
+                            } else {
+                                bitmap?.recycle()
+                            }
+                        }
+
+                        override fun onFailure(errorCode: Int) {
+                            Log.w(TAG, "Accessibility screenshot failed, code=$errorCode")
+                            if (continuation.isActive) {
+                                continuation.resumeWith(Result.success(null))
+                            }
+                        }
+                    })
+                } catch (e: Exception) {
+                    Log.w(TAG, "takeScreenshot error", e)
+                    if (continuation.isActive) {
+                        continuation.resumeWith(Result.success(null))
+                    }
+                }
+            }
+        } finally {
+            executor.shutdown()
+        }
+    }
+
+    /**
+     * 通过 Shizuku 执行 screencap 截图（Android 8-10 备用方案）
+     *
+     * @return 屏幕位图，失败时返回 null
+     */
+    private suspend fun captureScreenViaShizuku(): Bitmap? = withContext(Dispatchers.IO) {
+        val granted = runCatching {
+            Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        }.getOrDefault(false)
+        if (!granted) {
+            if (!ocrFailureNotified) {
+                ocrFailureNotified = true
+                Toast.makeText(this@AutoSlideService, R.string.keyword_need_android_11, Toast.LENGTH_LONG).show()
+            }
+            return@withContext null
+        }
+        runCatching {
+            val newProcessMethod = Shizuku::class.java.getDeclaredMethod(
+                "newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java
+            ).apply {
+                isAccessible = true
+            }
+            val process = newProcessMethod.invoke(
+                null, arrayOf("/system/bin/screencap", "-p"), null, null
+            ) as ShizukuRemoteProcess
+            val bytes = process.inputStream.use { it.readBytes() }
+            val exitCode = process.waitFor()
+            process.destroy()
+            if (exitCode == 0) BitmapFactory.decodeByteArray(bytes, 0, bytes.size) else null
+        }.getOrNull()
+    }
+
+    /**
+     * 使用 ML Kit 中文模型识别位图中的文字
+     *
+     * @param bitmap 屏幕位图
+     * @return 识别出的文字
+     */
+    private suspend fun recognizeText(bitmap: Bitmap): String = withContext(Dispatchers.IO) {
+        try {
+            val recognizer = textRecognizer ?: TextRecognition.getClient(
+                ChineseTextRecognizerOptions.Builder().build()
+            ).also { textRecognizer = it }
+            val image = InputImage.fromBitmap(bitmap, 0)
+            val result = Tasks.await(recognizer.process(image))
+            result.text
+        } catch (e: Exception) {
+            if (!ocrFailureNotified) {
+                ocrFailureNotified = true
+                Log.e(TAG, "OCR failed", e)
+                Toast.makeText(this@AutoSlideService, R.string.keyword_ocr_failed, Toast.LENGTH_LONG).show()
+            }
+            ""
         }
     }
 }

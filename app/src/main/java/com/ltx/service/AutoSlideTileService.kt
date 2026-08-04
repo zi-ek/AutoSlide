@@ -1,5 +1,11 @@
 package com.ltx.service
 
+/**
+ * 快捷设置磁贴（通知栏下拉里的“自动滑动”磁贴）
+ *
+ * 一键启动/停止悬浮窗服务，并在权限不足时引导用户打开主界面。
+ */
+
 import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.content.ComponentName

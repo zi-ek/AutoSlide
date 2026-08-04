@@ -1,5 +1,12 @@
 package com.ltx
 
+/**
+ * 应用更新检查
+ *
+ * 从 GitHub 上的 update.json 拉取最新版本信息，发现新版本时弹出更新对话框，
+ * 用户确认后使用系统 DownloadManager 下载 APK 并调起安装。
+ */
+
 import android.app.Activity
 import android.app.DownloadManager
 import android.content.BroadcastReceiver
@@ -50,18 +57,19 @@ object UpdateChecker {
         val versionName: String, val updateLog: String, val downloadUrl: String
     )
 
+    // 远端版本信息 JSON 的地址（原始 GitHub 地址，可能被代理加速）
     private const val UPDATE_INFO_URL =
         "https://raw.githubusercontent.com/tianxing-ovo/AutoSlide/master/update.json"
 
     // 用于加速下载的GitHub代理前缀
     private const val GITHUB_PROXY_PREFIX = "https://ghproxy.net/"
-    private const val TAG = "UpdateChecker"
-    var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var pendingUpdateInfo: UpdateInfo? = null
-    private var updateDialog: AlertDialog? = null
-    private var currentDownloadId: Long = -1
-    private var downloadReceiver: BroadcastReceiver? = null
+    private const val TAG = "UpdateChecker" // 日志标签
+    var ioDispatcher: CoroutineDispatcher = Dispatchers.IO // 网络请求使用的 IO 线程池
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 主线程协程作用域
+    private var pendingUpdateInfo: UpdateInfo? = null   // 待展示的更新信息（页面不可见时先暂存）
+    private var updateDialog: AlertDialog? = null       // 当前正在显示的更新对话框
+    private var currentDownloadId: Long = -1            // 当前下载任务的 ID
+    private var downloadReceiver: BroadcastReceiver? = null // 下载完成广播接收器
 
     /**
      * 代理加速GitHub URL
