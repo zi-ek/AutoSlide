@@ -49,6 +49,7 @@ android {
         // 启用视图绑定
         viewBinding = true
     }
+    buildToolsVersion = "36.0.0"
 }
 
 // 自定义 APK 输出名称（AGP 9 新版变体 API）

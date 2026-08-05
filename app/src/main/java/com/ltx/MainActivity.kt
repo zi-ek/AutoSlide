@@ -240,10 +240,10 @@ class MainActivity : AppCompatActivity() {
             PAUSE_MODE_KEYWORD -> binding.pauseModeToggleGroup.check(R.id.btnKeywordPause)
         }
         // 动态调整固定停顿时间滑块的最大值
-        binding.pauseTimeSlider.valueTo = maxOf(10, pauseTime).toFloat()
+        binding.pauseTimeSlider.valueTo = maxOf(50, pauseTime).toFloat()
         binding.pauseTimeSlider.value = pauseTime.toFloat()
         // 动态调整随机停顿范围滑块的最大值并排序赋值
-        binding.randomPauseTimeSlider.valueTo = maxOf(10, minPauseTime, maxPauseTime).toFloat()
+        binding.randomPauseTimeSlider.valueTo = maxOf(50, minPauseTime, maxPauseTime).toFloat()
         binding.randomPauseTimeSlider.values = listOf(minPauseTime.toFloat(), maxPauseTime.toFloat()).sorted()
         binding.pauseTimeSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
         binding.randomPauseTimeSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
@@ -379,7 +379,7 @@ class MainActivity : AppCompatActivity() {
                 val value = editText.text.toString().toIntOrNull()
                 if (value != null && value > 0) {
                     preferences.edit { putInt(KEY_PAUSE_TIME, value) }
-                    binding.pauseTimeSlider.valueTo = maxOf(10, value).toFloat()
+                    binding.pauseTimeSlider.valueTo = maxOf(50, value).toFloat()
                     binding.pauseTimeSlider.value = value.toFloat()
                     binding.pauseTimeValueText.text = value.toString()
                     // 更新停顿配置

@@ -23,7 +23,7 @@
         <androidx.appcompat.widget.Toolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
-            android:layout_height="48dp"
+            android:layout_height="20dp"
             android:layout_marginStart="@dimen/margin_medium"
             android:layout_marginTop="@dimen/margin_medium"
             android:layout_marginEnd="@dimen/margin_medium"
@@ -103,29 +103,6 @@
                         app:trackTint="@color/switch_track_color" />
                 </LinearLayout>
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/margin_small"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/douyin_auto_play"
-                        android:textColor="@color/text_secondary"
-                        android:textSize="@dimen/text_size_body" />
-                <!--抖音自动连播开关-->
-                    <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/douyinAutoPlaySwitch"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:contentDescription="@string/douyin_auto_play_switch"
-                        app:thumbTint="@color/switch_thumb_color"
-                        app:trackTint="@color/switch_track_color" />
-                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -165,7 +142,7 @@
                     app:checkedButton="@id/btnKeywordPause"
                     app:selectionRequired="true"
                     app:singleSelection="true">
-                <!--关键词检测（默认选中，排在第一）-->
+                    <!--关键词检测（默认选中，排在第一）-->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnKeywordPause"
                         style="?attr/materialButtonOutlinedStyle"
@@ -174,10 +151,10 @@
                         android:layout_weight="1"
                         android:paddingHorizontal="0dp"
                         android:text="@string/keyword_detection"
-                        app:backgroundTint="@color/toggle_btn_bg"
                         android:textColor="@color/toggle_btn_text"
+                        app:backgroundTint="@color/toggle_btn_bg"
                         tools:ignore="VisualLintButtonSize" />
-                <!--不停顿-->
+                    <!--不停顿-->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnNoPause"
                         style="?attr/materialButtonOutlinedStyle"
@@ -186,10 +163,10 @@
                         android:layout_weight="1"
                         android:paddingHorizontal="0dp"
                         android:text="@string/pause_mode_none"
-                        app:backgroundTint="@color/toggle_btn_bg"
                         android:textColor="@color/toggle_btn_text"
+                        app:backgroundTint="@color/toggle_btn_bg"
                         tools:ignore="VisualLintButtonSize" />
-                <!--固定时间-->
+                    <!--固定时间-->
                     <!--随机时间-->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnFixedPause"
@@ -211,12 +188,12 @@
                         android:layout_weight="1"
                         android:paddingHorizontal="0dp"
                         android:text="@string/pause_mode_random"
-                        app:backgroundTint="@color/toggle_btn_bg"
                         android:textColor="@color/toggle_btn_text"
+                        app:backgroundTint="@color/toggle_btn_bg"
                         tools:ignore="VisualLintButtonSize" />
                 </com.google.android.material.button.MaterialButtonToggleGroup>
 
-            <!--统一的停顿时间配置区域-->
+                <!--统一的停顿时间配置区域-->
                 <LinearLayout
                     android:id="@+id/pauseTimeContainer"
                     android:layout_width="match_parent"
@@ -249,13 +226,13 @@
                             tools:text="1" />
                     </LinearLayout>
 
-                <!--滑动选择区域-->
+                    <!--滑动选择区域-->
                     <FrameLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="@dimen/margin_small">
 
-                    <!-- 固定时间单向滑动条 -->
+                        <!-- 固定时间单向滑动条 -->
                         <com.google.android.material.slider.Slider
                             android:id="@+id/pauseTimeSlider"
                             android:layout_width="match_parent"
@@ -263,7 +240,7 @@
                             android:stepSize="1.0"
                             android:value="1.0"
                             android:valueFrom="1.0"
-                            android:valueTo="10.0"
+                            android:valueTo="50.0"
                             android:visibility="gone"
                             app:thumbColor="@color/primary"
                             app:tickColor="@android:color/transparent"
@@ -272,14 +249,14 @@
                             app:trackColorInactive="@color/switch_track_unchecked"
                             app:trackHeight="4dp" />
 
-                    <!-- 随机时间范围滑动条 -->
+                        <!-- 随机时间范围滑动条 -->
                         <com.google.android.material.slider.RangeSlider
                             android:id="@+id/randomPauseTimeSlider"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:stepSize="1.0"
                             android:valueFrom="1.0"
-                            android:valueTo="10.0"
+                            android:valueTo="50.0"
                             android:visibility="gone"
                             app:thumbColor="@color/primary"
                             app:tickColor="@android:color/transparent"
@@ -298,7 +275,7 @@
                     android:text="@string/setting_slide_speed"
                     android:textColor="@color/text_secondary"
                     android:textSize="@dimen/text_size_body" />
-            <!--滑动速度滑动条-->
+                <!--滑动速度滑动条-->
                 <LinearLayout
                     android:id="@+id/speedContainer"
                     android:layout_width="match_parent"
@@ -338,44 +315,43 @@
                         android:textSize="14sp" />
                 </LinearLayout>
 
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_small"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/douyin_auto_play"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="@dimen/text_size_body" />
+                    <!--抖音自动连播开关-->
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/douyinAutoPlaySwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        android:contentDescription="@string/douyin_auto_play_switch"
+                        app:thumbTint="@color/switch_thumb_color"
+                        app:trackTint="@color/switch_track_color" />
+                </LinearLayout>
+
                 <!--关键词检测设置（仅关键词检测模式显示）-->
                 <LinearLayout
                     android:id="@+id/keywordCard"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/margin_medium"
+                    android:layout_marginTop="0dp"
                     android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="@dimen/margin_medium"
-                        android:text="@string/keyword_detection"
-                        android:textColor="@color/text_primary"
-                        android:textSize="@dimen/text_size_subtitle"
-                        android:textStyle="bold" />
-
-                    <com.google.android.material.textfield.TextInputLayout
-                        android:id="@+id/keywordInputLayout"
-                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="@dimen/margin_small"
-                        android:hint="@string/keyword_hint">
-
-                        <com.google.android.material.textfield.TextInputEditText
-                            android:id="@+id/keywordEditText"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:gravity="top"
-                            android:inputType="textMultiLine|textCapSentences"
-                            android:minLines="3" />
-                    </com.google.android.material.textfield.TextInputLayout>
 
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="@dimen/margin_small"
+                        android:layout_marginTop="0dp"
                         android:gravity="center_vertical"
                         android:orientation="horizontal">
 
@@ -511,6 +487,32 @@
                         app:trackColorActive="@color/primary"
                         app:trackColorInactive="@color/switch_track_unchecked"
                         app:trackHeight="4dp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/margin_medium"
+                        android:text="@string/keyword_detection"
+                        android:textColor="@color/text_primary"
+                        android:textSize="@dimen/text_size_subtitle"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/keywordInputLayout"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/margin_small"
+                        android:hint="@string/keyword_hint">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/keywordEditText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="top"
+                            android:inputType="textMultiLine|textCapSentences"
+                            android:minLines="3" />
+                    </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
