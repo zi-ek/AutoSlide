@@ -4,7 +4,7 @@ import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 // 本文件配置应用模块的 SDK 版本、构建类型、签名、混淆和依赖
 
 // 版本名称（APK 输出文件名也使用它）
-val appVersionName = "2.6.3"
+val appVersionName = "2.6.4"
 
 // AGP
 plugins {
@@ -24,11 +24,9 @@ android {
         // 目标设备的SDK版本
         targetSdk = 37
         // 版本号
-        versionCode = 22
+        versionCode = 23
         // 版本名称
         versionName = appVersionName
-        // 单元测试
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
         release {
@@ -71,8 +69,6 @@ dependencies {
     // ---- UI 基础 ----
     implementation(libs.appcompat)
     implementation(libs.material)
-    implementation(libs.activity)
-    implementation(libs.constraintlayout)
     // ---- Shizuku：授权写入安全设置 / 低版本系统截图 ----
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
@@ -81,8 +77,4 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     // ---- OCR：ML Kit 中文文字识别（关键词检测功能使用）----
     implementation(libs.mlkit.text.recognition.chinese)
-    // ---- 测试 ----
-    testImplementation(libs.junit)
-    androidTestImplementation(libs.ext.junit)
-    androidTestImplementation(libs.espresso.core)
 }

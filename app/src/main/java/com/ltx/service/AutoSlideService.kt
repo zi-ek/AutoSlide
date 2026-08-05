@@ -24,6 +24,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Path
 import android.graphics.PointF
+import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -80,6 +81,7 @@ import com.ltx.getTrajectoryKey
 import java.lang.ref.WeakReference
 import java.security.SecureRandom
 import java.util.concurrent.Executors
+import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.roundToLong
 import kotlin.random.asKotlinRandom
@@ -173,7 +175,6 @@ class AutoSlideService : AccessibilityService() {
         private const val DOUYIN_AUTOPLAY_TEXT = "自动连播"
         private const val DOUYIN_AUTOPLAY_COOLDOWN_MS = 5_000L
         private const val DOUYIN_WATCH_INTERVAL_MS = 10_000L
-        private const val DOUYIN_MAX_ATTEMPTS = 3
         private var instanceRef: WeakReference<AutoSlideService>? = null
 
         /**
@@ -639,32 +640,40 @@ class AutoSlideService : AccessibilityService() {
     /* ===== 抖音自动连播 ===== */
 
     /**
-     * 处理抖音自动连播：长按打开菜单 -> 上滑露出「自动连播」-> 找到并打开开关
+     * 处理抖音自动连播：先看界面里有没有「自动连播」
+     * 没有就长按呼出菜单并上滑一次；如果还是没有，立即停止，绝不乱点其它按钮
      */
     private suspend fun handleDouyinAutoPlay() {
-        var attempt = 0
-        while (attempt < DOUYIN_MAX_ATTEMPTS) {
-            // 已能在界面中找到「自动连播」时直接点击开关
-            if (tryToggleDouyinAutoplaySwitch()) {
-                Log.i(TAG, "Douyin autoplay switch handled")
-                douyinAutoPlayCompleted = true
-                stopDouyinWatch()
-                // 等开关动画结束后，关闭抖音弹出的菜单窗口
-                delay(400)
-                runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
-                break
-            }
-            attempt++
-            if (attempt >= DOUYIN_MAX_ATTEMPTS) break
-            // 长按屏幕打开抖音的更多菜单
-            dispatchLongPress()
-            delay(550)
-            // 向上滑动屏幕下半部分，露出「自动连播」选项
-            dispatchSwipeUpLowerHalf()
-            delay(550)
+        // 1. 当前界面已能直接找到「自动连播」时，直接处理
+        if (tryToggleDouyinAutoplaySwitch()) {
+            finishDouyinAutoPlaySuccess()
+            return
+        }
+        // 2. 长按呼出菜单 + 向上滑动露出「自动连播」
+        dispatchLongPress()
+        delay(550)
+        dispatchSwipeUpLowerHalf()
+        delay(550)
+        // 3. 菜单弹出后再找一次；找不到就结束，不做任何多余点击
+        if (tryToggleDouyinAutoplaySwitch()) {
+            finishDouyinAutoPlaySuccess()
+        } else {
+            Log.w(TAG, "未找到「自动连播」开关，放弃操作，不乱点其它按钮")
+            // 等菜单稳定后按返回键关闭菜单，避免菜单留在屏幕上
+            delay(400)
+            runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
         }
         lastDouyinAutoPlayAt = SystemClock.elapsedRealtime()
-        Log.i(TAG, "Douyin autoplay flow finished (attempts=$attempt)")
+    }
+
+    /* 成功处理完「自动连播」后的收尾：标记完成、停止轮询、关闭菜单 */
+    private suspend fun finishDouyinAutoPlaySuccess() {
+        Log.i(TAG, "Douyin autoplay switch handled")
+        douyinAutoPlayCompleted = true
+        stopDouyinWatch()
+        // 等开关动画结束后，关闭抖音弹出的菜单窗口
+        delay(400)
+        runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
     }
 
     /**
@@ -678,7 +687,7 @@ class AutoSlideService : AccessibilityService() {
         val nodes = root.findAccessibilityNodeInfosByText(DOUYIN_AUTOPLAY_TEXT)
         if (nodes.isEmpty()) return false
         val textNode = nodes.firstOrNull {
-            it.text?.toString()?.contains(DOUYIN_AUTOPLAY_TEXT) == true
+            it.text?.toString()?.trim() == DOUYIN_AUTOPLAY_TEXT
         } ?: nodes.first()
         val result = try {
             val switchNode = findSwitchNodeInRow(textNode)
@@ -695,41 +704,58 @@ class AutoSlideService : AccessibilityService() {
 
     /**
      * 在「自动连播」文本节点所在行内查找真正的开关节点
-     * 向上最多找 4 层父节点，每层搜索整棵子树中的 Switch/CheckBox
+     * 只在文本节点所在的那一行里找，绝不向上扩展到整个菜单容器，
+     * 并且要求开关和文字在同一水平行内，避免误点其它行的开关（如「定时关闭」）
      *
      * @param node 文本节点
      * @return 找到的开关节点，未找到返回 null
      */
     private fun findSwitchNodeInRow(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
-        var current = node
-        repeat(4) {
-            val found = findSwitchNode(current)
+        if (node == null) return null
+        val row = node.parent ?: return null
+        if (isSwitchNode(node)) return node
+        val candidate = findSwitchInChildren(row, depth = 2) ?: return null
+        // 安全校验：开关必须和「自动连播」文字位于同一水平行
+        val textRect = Rect()
+        node.getBoundsInScreen(textRect)
+        val switchRect = Rect()
+        candidate.getBoundsInScreen(switchRect)
+        val maxVerticalGap = maxOf(textRect.height(), switchRect.height()) * 1.2f
+        return if (abs(switchRect.exactCenterY() - textRect.exactCenterY()) <= maxVerticalGap) {
+            candidate
+        } else {
+            null
+        }
+    }
+
+    /**
+     * 在限定深度内查找子节点中的开关（只查这一行的两三层，不会扩散到其它行）
+     *
+     * @param node 起始节点
+     * @param depth 剩余查找深度
+     * @return 找到的开关节点，未找到返回 null
+     */
+    private fun findSwitchInChildren(node: AccessibilityNodeInfo?, depth: Int): AccessibilityNodeInfo? {
+        if (node == null || depth <= 0) return null
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            if (isSwitchNode(child)) return child
+            val found = findSwitchInChildren(child, depth - 1)
             if (found != null) return found
-            current = current?.parent
         }
         return null
     }
 
     /**
-     * 递归查找节点或其子节点中的 Switch/CheckBox 开关
+     * 判断节点是否为 Switch/CheckBox 开关
      *
-     * @param node 起始节点
-     * @return 找到的开关节点，未找到返回 null
+     * @param node 节点
+     * @return 是否为开关节点
      */
-    private fun findSwitchNode(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
-        if (node == null) return null
+    private fun isSwitchNode(node: AccessibilityNodeInfo): Boolean {
         val className = node.className?.toString()?.lowercase() ?: ""
-        if (node.isCheckable || className.contains("switch") || className.contains("checkbox") ||
+        return node.isCheckable || className.contains("switch") || className.contains("checkbox") ||
             className.contains("toggle")
-        ) {
-            return node
-        }
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            val found = findSwitchNode(child)
-            if (found != null) return found
-        }
-        return null
     }
 
     /* 长按屏幕中央偏下位置（触发抖音的更多菜单） */

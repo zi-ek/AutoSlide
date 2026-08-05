@@ -1,6 +1,6 @@
 {
-  "versionCode": 22,
-  "versionName": "2.6.3",
-  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.6.3/AutoSlide-v2.6.3.apk",
-  "updateLog": "1. 新增主动更新：打开 App 自动检查新版本并弹窗提示\n2. 优化悬浮球贴边与抖音自动连播体验"
+  "versionCode": 23,
+  "versionName": "2.6.4",
+  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.6.4/AutoSlide-v2.6.4.apk",
+  "updateLog": "1. 修复抖音自动连播误点其它按钮的问题\n2. 找不到自动连播开关时自动收起菜单\n3. 清理无用依赖，优化构建"
 }
