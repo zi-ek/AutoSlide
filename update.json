@@ -1,6 +1,6 @@
 {
-  "versionCode": 23,
-  "versionName": "2.6.4",
-  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.6.4/AutoSlide-v2.6.4.apk",
-  "updateLog": "1. 修复抖音自动连播误点其它按钮的问题\n2. 找不到自动连播开关时自动收起菜单\n3. 清理无用依赖，优化构建"
+  "versionCode": 24,
+  "versionName": "2.6.5",
+  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.6.5/AutoSlide-v2.6.5.apk",
+  "updateLog": "1. 关键词为空时自动恢复默认关键词\n2. 横竖屏切换悬浮球自动吸附屏幕边缘\n3. 方向键无服务时弹出提示\n4. 悬浮球支持应用图标样式"
 }
