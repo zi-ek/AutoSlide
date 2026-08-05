@@ -61,8 +61,14 @@ object UpdateChecker {
     private const val UPDATE_INFO_URL =
         "https://raw.githubusercontent.com/zi-ek/AutoSlide/master/update.json"
 
-    // 用于加速下载的GitHub代理前缀
-    private const val GITHUB_PROXY_PREFIX = "https://ghproxy.net/"
+    // 用于加速下载的 GitHub 代理前缀（按顺序尝试，哪个能用用哪个；最后直连）
+    private val GITHUB_PROXY_PREFIXES = listOf(
+        "https://gh-proxy.org/",
+        "https://v4.gh-proxy.org/",
+        "https://v6.gh-proxy.org/",
+        "https://cdn.gh-proxy.org/",
+        "https://ghproxy.net/"
+    )
     private const val TAG = "UpdateChecker" // 日志标签
     private const val KEY_LAST_AUTO_CHECK = "lastAutoCheckTime" // 上次自动检查更新的时间戳
     private const val AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000L // 自动检查间隔：24 小时
@@ -72,20 +78,6 @@ object UpdateChecker {
     private var updateDialog: AlertDialog? = null       // 当前正在显示的更新对话框
     private var currentDownloadId: Long = -1            // 当前下载任务的 ID
     private var downloadReceiver: BroadcastReceiver? = null // 下载完成广播接收器
-
-    /**
-     * 代理加速GitHub URL
-     *
-     * @param url 原始url
-     * @return 代理加速后的url
-     */
-    private fun proxyGitHubUrl(url: String): String {
-        return if (url.startsWith("https://github.com/") || url.startsWith("https://raw.githubusercontent.com/")) {
-            GITHUB_PROXY_PREFIX + url
-        } else {
-            url
-        }
-    }
 
     /**
      * 开始检查更新
@@ -162,32 +154,55 @@ object UpdateChecker {
      */
     private suspend fun fetchUpdateInfo(context: Context): Result<UpdateInfo?> = withContext(ioDispatcher) {
         runCatching {
-            val url = URI.create(proxyGitHubUrl(UPDATE_INFO_URL)).toURL()
-            val connection = url.openConnection() as HttpURLConnection
-            try {
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 5000
-                connection.readTimeout = 5000
-                connection.setRequestProperty("User-Agent", "AutoSlide-App")
-                check(connection.responseCode == HttpURLConnection.HTTP_OK) {
-                    "HTTP ${connection.responseCode}"
+            // 依次尝试各个加速代理，全部失败再试直连
+            val candidates = GITHUB_PROXY_PREFIXES.map { it to (it + UPDATE_INFO_URL) } +
+                ("" to UPDATE_INFO_URL)
+            var lastError: Exception? = null
+            for ((prefix, candidateUrl) in candidates) {
+                try {
+                    val info = fetchUpdateInfoFromUrl(candidateUrl, context)
+                    if (info != null) {
+                        // 下载地址也使用同一个可用的加速前缀
+                        return@withContext Result.success(
+                            info.copy(downloadUrl = prefix + info.downloadUrl)
+                        )
+                    }
+                    return@withContext Result.success(null)
+                } catch (e: Exception) {
+                    lastError = e
+                    Log.w(TAG, "更新源不可用: $candidateUrl", e)
                 }
-                val responseStr = connection.inputStream.bufferedReader().use { it.readText() }
-                val json = JSONObject(responseStr)
-                val remoteVersionCode = json.optInt("versionCode", 0)
-                val localVersionCode = getLocalVersionCode(context)
-                if (remoteVersionCode > localVersionCode) {
-                    UpdateInfo(
-                        versionName = json.optString("versionName", ""),
-                        updateLog = json.optString("updateLog", ""),
-                        downloadUrl = proxyGitHubUrl(json.optString("downloadUrl", ""))
-                    )
-                } else {
-                    null
-                }
-            } finally {
-                connection.disconnect()
             }
+            throw lastError ?: IllegalStateException("所有更新源均不可用")
+        }
+    }
+
+    /* 从指定 URL 读取更新信息（单个源） */
+    private fun fetchUpdateInfoFromUrl(url: String, context: Context): UpdateInfo? {
+        val connection = URI.create(url).toURL().openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
+            connection.setRequestProperty("User-Agent", "AutoSlide-App")
+            check(connection.responseCode == HttpURLConnection.HTTP_OK) {
+                "HTTP ${connection.responseCode}"
+            }
+            val responseStr = connection.inputStream.bufferedReader().use { it.readText() }
+            val json = JSONObject(responseStr)
+            val remoteVersionCode = json.optInt("versionCode", 0)
+            val localVersionCode = getLocalVersionCode(context)
+            return if (remoteVersionCode > localVersionCode) {
+                UpdateInfo(
+                    versionName = json.optString("versionName", ""),
+                    updateLog = json.optString("updateLog", ""),
+                    downloadUrl = json.optString("downloadUrl", "")
+                )
+            } else {
+                null
+            }
+        } finally {
+            connection.disconnect()
         }
     }
 
