@@ -899,10 +899,13 @@ class AutoSlideService : AccessibilityService() {
             .coerceIn(MIN_KEYWORD_COOLDOWN_MS, MAX_KEYWORD_COOLDOWN_MS)
         keywordMaxTriggers = prefs.getInt(KEY_KEYWORD_MAX_TRIGGERS, DEFAULT_KEYWORD_MAX_TRIGGERS)
             .coerceIn(1, 50)
-        keywordList = (prefs.getString(KEY_KEYWORDS, DEFAULT_KEYWORDS) ?: DEFAULT_KEYWORDS)
-            .lines()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+        var keywordText = prefs.getString(KEY_KEYWORDS, DEFAULT_KEYWORDS) ?: DEFAULT_KEYWORDS
+        if (keywordText.isBlank()) {
+            // 关键词为空时自动恢复默认关键词
+            keywordText = DEFAULT_KEYWORDS
+            prefs.edit { putString(KEY_KEYWORDS, DEFAULT_KEYWORDS) }
+        }
+        keywordList = keywordText.lines().map { it.trim() }.filter { it.isNotBlank() }
     }
 
     /**

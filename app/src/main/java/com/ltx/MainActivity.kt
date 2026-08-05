@@ -249,7 +249,13 @@ class MainActivity : AppCompatActivity() {
         binding.randomPauseTimeSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
         updatePauseTimeVisibility(pauseMode)
         // 恢复关键词检测设置
-        binding.keywordEditText.setText(preferences.getString(KEY_KEYWORDS, DEFAULT_KEYWORDS))
+        var keywordText = preferences.getString(KEY_KEYWORDS, DEFAULT_KEYWORDS) ?: DEFAULT_KEYWORDS
+        if (keywordText.isBlank()) {
+            // 关键词为空时自动恢复默认关键词
+            keywordText = DEFAULT_KEYWORDS
+            preferences.edit { putString(KEY_KEYWORDS, DEFAULT_KEYWORDS) }
+        }
+        binding.keywordEditText.setText(keywordText)
         binding.keywordIgnoreCaseSwitch.isChecked =
             preferences.getBoolean(KEY_KEYWORD_IGNORE_CASE, DEFAULT_KEYWORD_IGNORE_CASE)
         // 检测间隔（秒）

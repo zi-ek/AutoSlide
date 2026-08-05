@@ -82,6 +82,7 @@ class FloatingWindowService : Service() {
     private var initialTouchY = 0f           // 按下时手指的 Y 坐标
     private var recordOverlayView: View? = null // 轨迹录制遮罩视图
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 主线程协程作用域
+    private var lastScreenWidth = 0 // 上次记录的屏幕宽度（旋转后用于判断保持左/右同一侧）
 
     /* 绑定服务 */
     override fun onBind(intent: Intent?): IBinder? = null
@@ -97,6 +98,7 @@ class FloatingWindowService : Service() {
         controlPanel = rootView.findViewById(R.id.control_panel)
         expandButton = rootView.findViewById(R.id.floating_expand_button)
         layoutParams = createLayoutParams()
+        lastScreenWidth = resources.displayMetrics.widthPixels
         // 注册拖拽事件处理
         setupDragging()
         setupControlButtons()
@@ -155,18 +157,29 @@ class FloatingWindowService : Service() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (::rootView.isInitialized && ::layoutParams.isInitialized) {
+            // 根据旋转前的位置判断悬浮球在左半边还是右半边，旋转后保持同一侧
+            val oldScreenWidth = lastScreenWidth
+            val oldCenterX = layoutParams.x + rootView.width / 2f
+            val keepLeft = oldScreenWidth == 0 || oldCenterX < oldScreenWidth / 2f
             rootView.post {
                 if (::rootView.isInitialized && ::layoutParams.isInitialized) {
                     val displayMetrics = resources.displayMetrics
                     val screenWidth = displayMetrics.widthPixels
                     val screenHeight = displayMetrics.heightPixels
-                    val viewWidth = rootView.width
                     val viewHeight = rootView.height
-                    layoutParams.x = layoutParams.x.coerceIn(0, (screenWidth - viewWidth).coerceAtLeast(0))
+                    // 垂直位置限制在屏幕内
                     layoutParams.y = layoutParams.y.coerceIn(0, (screenHeight - viewHeight).coerceAtLeast(0))
+                    // 旋转后自动吸附到同一侧的屏幕边缘，避免停在屏幕中间
+                    layoutParams.x = if (keepLeft) {
+                        -currentLeftInset()
+                    } else {
+                        screenWidth - rootView.width + currentRightInset()
+                    }
                     windowManager.updateViewLayout(rootView, layoutParams)
                 }
             }
+            // 记录最新的屏幕宽度，供下次旋转判断使用
+            lastScreenWidth = resources.displayMetrics.widthPixels
         }
     }
 
@@ -527,7 +540,13 @@ class FloatingWindowService : Service() {
         val button = rootView.findViewById<View>(viewId)
         // 方向按钮⌈点击⌋事件绑定
         button.setOnClickListener {
-            val service = AutoSlideService.getInstance() ?: return@setOnClickListener
+            val service = AutoSlideService.getInstance()
+            if (service == null) {
+                // 无障碍服务未连接时给出提示，避免点击后毫无反应
+                Log.w("FloatingWindowService", "方向键点击时无障碍服务未连接")
+                Toast.makeText(this, R.string.accessibility_service_disabled, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
             service.setDirection(direction)
             startSlide()
         }
@@ -600,11 +619,14 @@ class FloatingWindowService : Service() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val pauseMode = prefs.getInt(KEY_PAUSE_MODE, PAUSE_MODE_KEYWORD)
         if (pauseMode == PAUSE_MODE_KEYWORD) {
-            val hasKeyword = (prefs.getString(KEY_KEYWORDS, DEFAULT_KEYWORDS) ?: DEFAULT_KEYWORDS)
-                .lines()
-                .any { it.isNotBlank() }
+            var keywordText = prefs.getString(KEY_KEYWORDS, DEFAULT_KEYWORDS) ?: DEFAULT_KEYWORDS
+            if (keywordText.isBlank()) {
+                // 关键词为空时自动恢复默认关键词，保证方向键始终可用
+                keywordText = DEFAULT_KEYWORDS
+                prefs.edit { putString(KEY_KEYWORDS, DEFAULT_KEYWORDS) }
+            }
+            val hasKeyword = keywordText.lines().any { it.isNotBlank() }
             if (!hasKeyword) {
-                Toast.makeText(this, R.string.keyword_empty_warning, Toast.LENGTH_LONG).show()
                 expand()
                 return
             }

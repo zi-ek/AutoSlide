@@ -119,19 +119,15 @@
     </LinearLayout>
 
     <!-- 收起状态下的小圆球，点击展开控制面板 -->
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
+    <ImageView
         android:id="@+id/floating_expand_button"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
         android:layout_gravity="center"
-        android:layout_margin="3dp"
         android:contentDescription="@string/desc_expand"
-        android:src="@drawable/ic_floating_expand"
+        android:scaleType="fitCenter"
+        android:src="@mipmap/auto_slide"
         android:visibility="gone"
-        app:backgroundTint="@color/floating_btn_bg"
-        app:elevation="6dp"
-        app:fabSize="mini"
-        app:tint="@color/floating_btn_icon"
-        tools:ignore="ClassNameCheck" />
+        tools:ignore="ContentDescription" />
 
 </com.ltx.service.DraggableLinearLayout>

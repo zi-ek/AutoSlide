@@ -1,4 +1,4 @@
-# 安卓自动滑动器APP [AutoSlide]
+# 安卓自动滑屏器APP [AutoSlide]
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Version](https://img.shields.io/github/v/release/zi-ek/AutoSlide?label=Version)](https://github.com/zi-ek/AutoSlide/releases/latest)
