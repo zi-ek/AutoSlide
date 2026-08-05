@@ -76,8 +76,8 @@
     <string name="keyword_detection">关键词检测</string>
     <string name="keyword_hint">关键词（每行一个）</string>
     <string name="keyword_ignore_case">忽略大小写</string>
-    <string name="keyword_interval">检测间隔（毫秒）</string>
-    <string name="keyword_cooldown">触发后冷却（毫秒）</string>
+    <string name="keyword_interval">检测间隔（秒）</string>
+    <string name="keyword_cooldown">触发后冷却（秒）</string>
     <string name="keyword_max_triggers">同一画面最多触发次数</string>
     <string name="keyword_empty_warning">请先输入至少一个关键词</string>
     <string name="keyword_need_android_11">关键词检测需要 Android 11 及以上版本，或已授权的 Shizuku</string>

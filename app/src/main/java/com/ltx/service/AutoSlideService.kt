@@ -43,10 +43,10 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.ltx.DEFAULT_DOUYIN_AUTOPLAY
-import com.ltx.DEFAULT_KEYWORD_COOLDOWN_MS
+import com.ltx.DEFAULT_KEYWORD_COOLDOWN
 import com.ltx.DEFAULT_KEYWORD_DIRECTION
 import com.ltx.DEFAULT_KEYWORD_IGNORE_CASE
-import com.ltx.DEFAULT_KEYWORD_INTERVAL_MS
+import com.ltx.DEFAULT_KEYWORD_INTERVAL
 import com.ltx.DEFAULT_KEYWORD_MAX_TRIGGERS
 import com.ltx.DEFAULT_KEYWORDS
 import com.ltx.DEFAULT_MAX_PAUSE_TIME
@@ -120,8 +120,8 @@ class AutoSlideService : AccessibilityService() {
     private var keywordModeActive = false // 当前是否运行关键词检测模式
     private var keywordList: List<String> = emptyList() // 用户填写的关键词列表
     private var keywordIgnoreCase = DEFAULT_KEYWORD_IGNORE_CASE // 是否忽略大小写
-    private var keywordIntervalMs = DEFAULT_KEYWORD_INTERVAL_MS // 检测间隔（毫秒）
-    private var keywordCooldownMs = DEFAULT_KEYWORD_COOLDOWN_MS // 触发后冷却（毫秒）
+    private var keywordIntervalMs = DEFAULT_KEYWORD_INTERVAL * 1000 // 检测间隔（毫秒，由秒换算）
+    private var keywordCooldownMs = DEFAULT_KEYWORD_COOLDOWN * 1000 // 触发后冷却（毫秒，由秒换算）
     private var keywordMaxTriggers = DEFAULT_KEYWORD_MAX_TRIGGERS // 同一画面最多触发次数
     private var lastKeywordTriggerAt = 0L // 上次触发滑动的时间（用于冷却判断）
     private var lastTriggeredTextHash: Int? = null // 上次触发时的识别文字哈希
@@ -263,6 +263,18 @@ class AutoSlideService : AccessibilityService() {
         // 移除当前滑动任务并重新调度新的停顿时间
         handler.removeCallbacks(slideRunnable)
         handler.postDelayed(slideRunnable, calculatePauseDelayMillis())
+    }
+
+    /**
+     * 实时更新关键词检测配置
+     *
+     * @param interval 检测间隔
+     * @param cooldown 冷却时间
+     */
+    fun updateKeywordConfig(interval: Int, cooldown: Int) {
+        keywordIntervalMs = interval.coerceIn(MIN_KEYWORD_INTERVAL_MS, MAX_KEYWORD_INTERVAL_MS)
+        keywordCooldownMs = cooldown.coerceIn(MIN_KEYWORD_COOLDOWN_MS, MAX_KEYWORD_COOLDOWN_MS)
+        Log.i(TAG, "Keyword config updated: interval=${keywordIntervalMs}ms, cooldown=${keywordCooldownMs}ms")
     }
 
     /**
@@ -881,9 +893,9 @@ class AutoSlideService : AccessibilityService() {
     private fun loadKeywordConfig() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         keywordIgnoreCase = prefs.getBoolean(KEY_KEYWORD_IGNORE_CASE, DEFAULT_KEYWORD_IGNORE_CASE)
-        keywordIntervalMs = prefs.getInt(KEY_KEYWORD_INTERVAL, DEFAULT_KEYWORD_INTERVAL_MS)
+        keywordIntervalMs = (prefs.getInt(KEY_KEYWORD_INTERVAL, DEFAULT_KEYWORD_INTERVAL) * 1000)
             .coerceIn(MIN_KEYWORD_INTERVAL_MS, MAX_KEYWORD_INTERVAL_MS)
-        keywordCooldownMs = prefs.getInt(KEY_KEYWORD_COOLDOWN, DEFAULT_KEYWORD_COOLDOWN_MS)
+        keywordCooldownMs = (prefs.getInt(KEY_KEYWORD_COOLDOWN, DEFAULT_KEYWORD_COOLDOWN) * 1000)
             .coerceIn(MIN_KEYWORD_COOLDOWN_MS, MAX_KEYWORD_COOLDOWN_MS)
         keywordMaxTriggers = prefs.getInt(KEY_KEYWORD_MAX_TRIGGERS, DEFAULT_KEYWORD_MAX_TRIGGERS)
             .coerceIn(1, 50)
@@ -915,7 +927,10 @@ class AutoSlideService : AccessibilityService() {
         if (!isRunning || !keywordModeActive) {
             return
         }
-        handler.postDelayed(keywordCheckRunnable, delayMs.coerceAtLeast(50))
+        val finalDelay = delayMs.coerceAtLeast(50)
+        handler.removeCallbacks(keywordCheckRunnable) // 确保只有一个定时器在运行
+        handler.postDelayed(keywordCheckRunnable, finalDelay)
+        Log.d(TAG, "Keyword check scheduled: delay=${finalDelay}ms")
     }
 
     /**
@@ -950,7 +965,7 @@ class AutoSlideService : AccessibilityService() {
             if (currentGen != runGeneration || !isRunning) {
                 return@launch
             }
-            handleKeywordCheckResult(text)
+            handleKeywordCheckResult(text, currentGen)
         }
     }
 
@@ -959,19 +974,23 @@ class AutoSlideService : AccessibilityService() {
      *
      * @param text 识别出的屏幕文字
      */
-    private fun handleKeywordCheckResult(text: String) {
+    private fun handleKeywordCheckResult(text: String, currentGen: Int) {
+        if (currentGen != runGeneration || !isRunning) return
         Log.d(TAG, "OCR text: $text")
         val now = SystemClock.elapsedRealtime()
         val elapsedSinceTrigger = now - lastKeywordTriggerAt
         // 冷却期内不再触发
         if (elapsedSinceTrigger < keywordCooldownMs) {
-            scheduleKeywordCheck(keywordCooldownMs - elapsedSinceTrigger)
+            val remaining = keywordCooldownMs - elapsedSinceTrigger
+            Log.d(TAG, "In cooldown, skipping. Remaining: ${remaining}ms")
+            scheduleKeywordCheck(remaining)
             return
         }
         // 未命中关键词则重置连续触发计数
         if (!matchesKeyword(text)) {
             keywordConsecutiveTriggers = 0
             lastTriggeredTextHash = null
+            Log.d(TAG, "Keyword not matched. Next check in ${keywordIntervalMs}ms")
             scheduleKeywordCheck(keywordIntervalMs.toLong())
             return
         }
@@ -982,12 +1001,13 @@ class AutoSlideService : AccessibilityService() {
             lastTriggeredTextHash = textHash
         }
         if (keywordConsecutiveTriggers >= keywordMaxTriggers) {
+            Log.d(TAG, "Max triggers reached for this screen text. Waiting interval.")
             scheduleKeywordCheck(keywordIntervalMs.toLong())
             return
         }
         keywordConsecutiveTriggers++
         lastKeywordTriggerAt = now
-        Log.i(TAG, "Keyword matched, swiping ($keywordConsecutiveTriggers/$keywordMaxTriggers)")
+        Log.i(TAG, "Keyword matched! Swiping. (Trigger $keywordConsecutiveTriggers/$keywordMaxTriggers)")
         performSlideByDirection(calculateGestureDurationMillis())
     }
 
@@ -1026,6 +1046,7 @@ class AutoSlideService : AccessibilityService() {
      *
      * @return 屏幕位图，失败时返回 null
      */
+    @SuppressLint("NewApi")
     private suspend fun captureScreenViaAccessibility(): Bitmap? {
         val executor = Executors.newSingleThreadExecutor()
         return try {

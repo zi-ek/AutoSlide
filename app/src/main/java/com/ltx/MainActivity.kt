@@ -252,12 +252,14 @@ class MainActivity : AppCompatActivity() {
         binding.keywordEditText.setText(preferences.getString(KEY_KEYWORDS, DEFAULT_KEYWORDS))
         binding.keywordIgnoreCaseSwitch.isChecked =
             preferences.getBoolean(KEY_KEYWORD_IGNORE_CASE, DEFAULT_KEYWORD_IGNORE_CASE)
-        val keywordInterval = preferences.getInt(KEY_KEYWORD_INTERVAL, DEFAULT_KEYWORD_INTERVAL_MS)
-            .coerceIn(200, 5000)
+        // 检测间隔（秒）
+        val keywordInterval = preferences.getInt(KEY_KEYWORD_INTERVAL, DEFAULT_KEYWORD_INTERVAL)
+            .coerceIn(1, 10)
         binding.keywordIntervalSlider.value = keywordInterval.toFloat()
         binding.keywordIntervalValueText.text = keywordInterval.toString()
-        val keywordCooldown = preferences.getInt(KEY_KEYWORD_COOLDOWN, DEFAULT_KEYWORD_COOLDOWN_MS)
-            .coerceIn(500, 10000)
+        // 触发后冷却（秒）
+        val keywordCooldown = preferences.getInt(KEY_KEYWORD_COOLDOWN, DEFAULT_KEYWORD_COOLDOWN)
+            .coerceIn(1, 20)
         binding.keywordCooldownSlider.value = keywordCooldown.toFloat()
         binding.keywordCooldownValueText.text = keywordCooldown.toString()
         val keywordMaxTriggers = preferences.getInt(KEY_KEYWORD_MAX_TRIGGERS, DEFAULT_KEYWORD_MAX_TRIGGERS)
@@ -433,22 +435,32 @@ class MainActivity : AppCompatActivity() {
                 preferences.edit { putString(KEY_KEYWORDS, s?.toString() ?: "") }
             }
         })
-        // 检测间隔
+        // 检测间隔（秒）
         binding.keywordIntervalSlider.setLabelFormatter { value -> value.toInt().toString() }
         binding.keywordIntervalSlider.addOnChangeListener { _, value, fromUser ->
             val progress = value.toInt()
             binding.keywordIntervalValueText.text = progress.toString()
             if (fromUser) {
                 preferences.edit { putInt(KEY_KEYWORD_INTERVAL, progress) }
+                // 实时更新运行中的服务参数
+                AutoSlideService.getInstance()?.updateKeywordConfig(
+                    interval = progress * 1000,
+                    cooldown = preferences.getInt(KEY_KEYWORD_COOLDOWN, DEFAULT_KEYWORD_COOLDOWN) * 1000
+                )
             }
         }
-        // 冷却时间
+        // 冷却时间（秒）
         binding.keywordCooldownSlider.setLabelFormatter { value -> value.toInt().toString() }
         binding.keywordCooldownSlider.addOnChangeListener { _, value, fromUser ->
             val progress = value.toInt()
             binding.keywordCooldownValueText.text = progress.toString()
             if (fromUser) {
                 preferences.edit { putInt(KEY_KEYWORD_COOLDOWN, progress) }
+                // 实时更新运行中的服务参数
+                AutoSlideService.getInstance()?.updateKeywordConfig(
+                    interval = preferences.getInt(KEY_KEYWORD_INTERVAL, DEFAULT_KEYWORD_INTERVAL) * 1000,
+                    cooldown = progress * 1000
+                )
             }
         }
         // 同一画面最大触发次数

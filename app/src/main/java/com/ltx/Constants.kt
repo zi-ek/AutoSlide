@@ -19,22 +19,22 @@ const val KEY_MIN_PAUSE_TIME = "minPauseTime"       // 随机时间模式的最�
 const val KEY_MAX_PAUSE_TIME = "maxPauseTime"       // 随机时间模式的最大停顿秒数
 const val KEY_KEYWORDS = "keywords"                 // 关键词列表（每行一个，用换行分隔）
 const val KEY_KEYWORD_IGNORE_CASE = "keywordIgnoreCase" // 是否忽略大小写
-const val KEY_KEYWORD_INTERVAL = "keywordIntervalMs"    // 关键词检测间隔（毫秒）
-const val KEY_KEYWORD_COOLDOWN = "keywordCooldownMs"    // 关键词触发后的冷却时间（毫秒）
+const val KEY_KEYWORD_INTERVAL = "keywordInterval"      // 关键词检测间隔（秒）
+const val KEY_KEYWORD_COOLDOWN = "keywordCooldown"      // 关键词触发后的冷却时间（秒）
 const val KEY_KEYWORD_MAX_TRIGGERS = "keywordMaxTriggers" // 同一画面最多连续触发次数
 const val KEY_KEYWORD_DIRECTION = "keywordDirection"    // 关键词触发时的滑动方向
 const val KEY_DOUYIN_AUTOPLAY = "douyinAutoPlay"        // 是否自动打开抖音连播开关（检测到抖音后触发）
 
 // ==================== 默认值 ====================
 const val DEFAULT_SPEED = 50                        // 默认滑动速度（中等）
-const val DEFAULT_PAUSE_TIME = 15                    // 默认固定停顿 1 秒
+const val DEFAULT_PAUSE_TIME = 15                    // 默认固定停顿 15 秒
 const val DEFAULT_MIN_PAUSE_TIME = 1                // 默认随机停顿下限 1 秒
-const val DEFAULT_MAX_PAUSE_TIME = 3                // 默认随机停顿上限 3 秒
+const val DEFAULT_MAX_PAUSE_TIME = 50                // 默认随机停顿上限 50 秒
 // 默认关键词（每行一个，供第一次打开应用时预填）
-const val DEFAULT_KEYWORDS = "上滑继续\n查看详情\n官方官号\n点击进入\n限时抢购\n购物"
+const val DEFAULT_KEYWORDS = "上滑继续\n查看详情\n官方\n官号\n直播中\n限时抢购\n购物"
 const val DEFAULT_KEYWORD_IGNORE_CASE = true        // 默认忽略大小写
-const val DEFAULT_KEYWORD_INTERVAL_MS = 1000        // 默认每 1000ms 检测一次
-const val DEFAULT_KEYWORD_COOLDOWN_MS = 500         // 默认触发后冷却 500ms
+const val DEFAULT_KEYWORD_INTERVAL = 5           // 默认每 5 秒检测一次
+const val DEFAULT_KEYWORD_COOLDOWN = 3           // 默认触发后冷却 3 秒
 const val DEFAULT_KEYWORD_MAX_TRIGGERS = 3          // 默认同一画面最多触发 3 次
 const val DEFAULT_DOUYIN_AUTOPLAY = true            // 默认开启抖音自动连播
 
@@ -74,3 +74,13 @@ fun getTrajectoryKey(direction: String): String? = when (direction) {
     DIRECTION_RIGHT -> KEY_CUSTOM_TRAJECTORY_RIGHT
     else -> null
 }
+
+/**
+ * 兼容读取关键词时间参数（单位：秒）
+ * 旧版本可能把秒数存成了 Float，新版本统一为整数；这里自动转换，避免类型不兼容闪退
+ *
+ * @param prefs SharedPreferences
+ * @param key 配置键名
+ * @param default 默认值（秒）
+ * @return 整数秒
+ */

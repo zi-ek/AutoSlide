@@ -22,6 +22,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
@@ -116,7 +117,7 @@ object UpdateChecker {
             if (now - lastCheckTime < AUTO_CHECK_INTERVAL_MS) {
                 return
             }
-            prefs.edit().putLong(KEY_LAST_AUTO_CHECK, now).apply()
+            prefs.edit { putLong(KEY_LAST_AUTO_CHECK, now) }
         }
         checkUpdate(activity, showToastOnLatest = false)
     }
