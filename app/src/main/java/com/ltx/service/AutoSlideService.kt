@@ -474,17 +474,17 @@ class AutoSlideService : AccessibilityService() {
         // 读取自定义轨迹字符串
         val trajectoryStr = getCustomTrajectory(currentDirection)
         if (trajectoryStr != null) {
-            // 分发自定义手势
+            // 分发自定义轨迹
             dispatchCustomGesture(trajectoryStr, durationMillis)
         } else {
-            // 分发默认手势
+            // 分发默认轨迹
             val (startX, startY, endX, endY) = getSlideCoordinates(currentDirection)
-            dispatchDefaultGesture(startX, startY, endX, endY, durationMillis)
+            dispatchLineGesture(startX, startY, endX, endY, durationMillis)
         }
     }
 
     /**
-     * 分发自定义手势
+     * 分发自定义轨迹
      *
      * @param trajectoryStr 轨迹字符串
      * @param durationMillis 手势持续时间(毫秒)
@@ -568,7 +568,7 @@ class AutoSlideService : AccessibilityService() {
     }
 
     /**
-     * 分发默认手势
+     * 分发一条线性手势
      *
      * @param startX 起点X坐标
      * @param startY 起点Y坐标
@@ -576,10 +576,9 @@ class AutoSlideService : AccessibilityService() {
      * @param endY 终点Y坐标
      * @param durationMillis 手势持续时间(毫秒)
      */
-    private fun dispatchDefaultGesture(
+    private fun dispatchLineGesture(
         startX: Float, startY: Float, endX: Float, endY: Float, durationMillis: Long
     ) {
-        // 获取当前设备的屏幕密度缩放比例
         val density = resources.displayMetrics.density
         val maxOffset = 10f * density
         // 计算起止坐标偏移量

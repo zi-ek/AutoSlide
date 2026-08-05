@@ -64,6 +64,8 @@ object UpdateChecker {
     // 用于加速下载的GitHub代理前缀
     private const val GITHUB_PROXY_PREFIX = "https://ghproxy.net/"
     private const val TAG = "UpdateChecker" // 日志标签
+    private const val KEY_LAST_AUTO_CHECK = "lastAutoCheckTime" // 上次自动检查更新的时间戳
+    private const val AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000L // 自动检查间隔：24 小时
     var ioDispatcher: CoroutineDispatcher = Dispatchers.IO // 网络请求使用的 IO 线程池
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 主线程协程作用域
     private var pendingUpdateInfo: UpdateInfo? = null   // 待展示的更新信息（页面不可见时先暂存）
@@ -105,6 +107,26 @@ object UpdateChecker {
                 handleUpdateFailure(activityRef, it, showToastOnLatest)
             }
         }
+    }
+
+    /**
+     * 主动检查更新：打开 App 时自动调用，每天最多检查一次
+     * 有新版本时自动弹出更新对话框，没有新版本时不打扰用户
+     *
+     * @param activity 活动
+     * @param force 是否强制检查（忽略每日间隔）
+     */
+    fun checkUpdateIfNeeded(activity: Activity, force: Boolean = false) {
+        if (!force) {
+            val prefs = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val lastCheckTime = prefs.getLong(KEY_LAST_AUTO_CHECK, 0L)
+            val now = System.currentTimeMillis()
+            if (now - lastCheckTime < AUTO_CHECK_INTERVAL_MS) {
+                return
+            }
+            prefs.edit().putLong(KEY_LAST_AUTO_CHECK, now).apply()
+        }
+        checkUpdate(activity, showToastOnLatest = false)
     }
 
     /* 处理更新检查成功结果 */

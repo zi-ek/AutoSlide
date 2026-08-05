@@ -210,6 +210,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
         UpdateChecker.onHostResumed(this)
+        // 打开 App 时主动检查更新（每天最多一次，有新版本自动弹窗）
+        UpdateChecker.checkUpdateIfNeeded(this)
     }
 
     /* 活动销毁时移除Shizuku权限请求监听器 */
