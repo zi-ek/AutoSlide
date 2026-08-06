@@ -136,6 +136,7 @@ class AutoSlideService : AccessibilityService() {
     private var lastDouyinAutoPlayAt = 0L // 上次执行抖音连播流程的时间（用于冷却）
     private var douyinSessionDone = false // 本次进入抖音是否已执行过连播流程（离开抖音后重置）
     private var douyinAutoPlayCompleted = false // 已成功打开连播后不再工作，直到下次启动 App 才重置
+    private var lastPushDialogDismissAt = 0L // 上次自动点「忽略」的时间（冷却，避免重复点击）
 
     /* 关键词检测循环 */
     private val keywordCheckRunnable = Runnable { runKeywordCheck() }
@@ -170,10 +171,21 @@ class AutoSlideService : AccessibilityService() {
         private const val MAX_KEYWORD_INTERVAL_MS = 60_000
         private const val MIN_KEYWORD_COOLDOWN_MS = 1000
         private const val MAX_KEYWORD_COOLDOWN_MS = 120_000
-        /* 抖音自动连播相关常量 */
+        /* 抖音/快手自动连播相关常量 */
         private const val DOUYIN_PACKAGE = "com.ss.android.ugc.aweme"
         private const val DOUYIN_AUTOPLAY_TEXT = "自动连播"
+        private const val KUAISHOU_PACKAGE = "com.smile.gifmaker"
+        private const val KUAISHOU_LITE_PACKAGE = "com.kuaishou.nebula"
+        private const val KUAISHOU_AUTOPLAY_TEXT = "自动上滑"
         private const val DOUYIN_AUTOPLAY_COOLDOWN_MS = 5_000L
+        /* 推送通知弹窗：识别到标题后自动点「忽略」 */
+        private const val PUSH_NOTIFICATION_DIALOG_TEXT = "打开推送通知"
+        private const val PUSH_IGNORE_TEXT = "忽略"
+        private const val PUSH_DIALOG_DISMISS_COOLDOWN_MS = 5_000L
+        /* 快手自定义开关的状态：1=开 0=关 -1=未知（无法判断时禁止点击） */
+        private const val KUAISHOU_STATE_ON = 1
+        private const val KUAISHOU_STATE_OFF = 0
+        private const val KUAISHOU_STATE_UNKNOWN = -1
         private var instanceRef: WeakReference<AutoSlideService>? = null
 
         /**
@@ -361,11 +373,15 @@ class AutoSlideService : AccessibilityService() {
      */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val packageName = event?.packageName?.toString() ?: return
-        if (packageName != DOUYIN_PACKAGE) {
+        if (packageName != DOUYIN_PACKAGE && packageName != KUAISHOU_PACKAGE &&
+            packageName != KUAISHOU_LITE_PACKAGE
+        ) {
             douyinSessionDone = false
-            return
+        } else {
+            tryStartDouyinAutoPlay(packageName)
         }
-        tryStartDouyinAutoPlay()
+        // 自动处理「打开推送通知」弹窗：点一次「忽略」
+        maybeDismissPushNotificationDialog()
     }
 
     // 无障碍服务被系统中断时回调：无需额外处理
@@ -657,10 +673,13 @@ class AutoSlideService : AccessibilityService() {
      * 处理抖音自动连播：先看界面里有没有「自动连播」
      * 没有就长按呼出菜单并上滑一次；如果还是没有，立即停止，绝不乱点其它按钮
      */
-    private suspend fun handleDouyinAutoPlay() {
+    private suspend fun handleDouyinAutoPlay(packageName: String) {
+        val targetText = autoplayTextFor(packageName)
+        // 先处理可能存在的推送通知弹窗，避免干扰后续手势
+        maybeDismissPushNotificationDialog()
         // 1. 当前界面已能直接找到「自动连播」时，直接处理
-        if (tryToggleDouyinAutoplaySwitch()) {
-            finishDouyinAutoPlaySuccess()
+        if (tryHandleAutoplaySwitch(targetText)) {
+            finishDouyinAutoPlaySuccess(targetText)
             return
         }
         // 2. 长按呼出菜单 + 向上滑动露出「自动连播」
@@ -669,24 +688,109 @@ class AutoSlideService : AccessibilityService() {
         dispatchSwipeUpLowerHalf()
         delay(550)
         // 3. 菜单弹出后再找一次；找不到就结束，不做任何多余点击
-        if (tryToggleDouyinAutoplaySwitch()) {
-            finishDouyinAutoPlaySuccess()
+        if (tryHandleAutoplaySwitch(targetText)) {
+            finishDouyinAutoPlaySuccess(targetText)
         } else {
-            Log.w(TAG, "未找到「自动连播」开关，放弃操作，不乱点其它按钮")
-            // 等菜单稳定后按返回键关闭菜单，避免菜单留在屏幕上
+            Log.w(TAG, "未找到「$targetText」开关，放弃操作，不乱点其它按钮")
+            // 等菜单稳定后，只有菜单还开着才按返回关闭，避免误退当前页面
             delay(400)
-            runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
+            if (isMenuStillOpen(targetText)) {
+                runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
+            }
         }
         lastDouyinAutoPlayAt = SystemClock.elapsedRealtime()
     }
 
+    /* 根据前台应用返回需要查找的开关文字（抖音：自动连播；快手：自动上滑） */
+    private fun autoplayTextFor(packageName: String): String {
+        return if (packageName == KUAISHOU_PACKAGE || packageName == KUAISHOU_LITE_PACKAGE) {
+            KUAISHOU_AUTOPLAY_TEXT
+        } else {
+            DOUYIN_AUTOPLAY_TEXT
+        }
+    }
+
+    /* 检测「打开推送通知」弹窗，存在时自动点击「忽略」按钮（带冷却，避免重复点击） */
+    private fun maybeDismissPushNotificationDialog() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastPushDialogDismissAt < PUSH_DIALOG_DISMISS_COOLDOWN_MS) {
+            return
+        }
+        val root = rootInActiveWindow ?: return
+        val titleNodes = root.findAccessibilityNodeInfosByText(PUSH_NOTIFICATION_DIALOG_TEXT)
+        if (titleNodes.isEmpty()) {
+            return
+        }
+        titleNodes.forEach { runCatching { it.recycle() } }
+        // 弹窗存在：优先找「忽略」按钮点击
+        val ignoreNodes = root.findAccessibilityNodeInfosByText(PUSH_IGNORE_TEXT)
+        var clicked = false
+        try {
+            for (node in ignoreNodes) {
+                if (node.text?.toString()?.trim() != PUSH_IGNORE_TEXT) continue
+                val target = if (node.isClickable) node else node.parent
+                clicked = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
+                if (clicked) {
+                    Log.i(TAG, "已自动点击「忽略」关闭推送通知弹窗")
+                    break
+                }
+            }
+        } finally {
+            ignoreNodes.forEach { runCatching { it.recycle() } }
+        }
+        // 没有「忽略」按钮时（另一种弹窗格式），找关闭按钮（关闭/取消）
+        if (!clicked && tryClickCloseButton(root)) {
+            clicked = true
+            Log.i(TAG, "已自动点击关闭按钮关闭推送通知弹窗")
+        }
+        // 最后兜底：按返回键关闭弹窗（绝不点「立即开启」）
+        if (!clicked) {
+            runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
+            clicked = true
+            Log.i(TAG, "未找到忽略/关闭按钮，使用返回键关闭推送通知弹窗")
+        }
+        if (clicked) {
+            lastPushDialogDismissAt = now
+        }
+    }
+
+    /* 在节点树中查找 content-desc 为「关闭/取消」的可点击按钮并点击 */
+    private fun tryClickCloseButton(root: AccessibilityNodeInfo): Boolean {
+        val queue = java.util.ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.poll()
+            val desc = node.contentDescription?.toString() ?: ""
+            if ((desc.contains("关闭") || desc.contains("取消")) && node.isClickable) {
+                if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    return true
+                }
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.add(it) }
+            }
+        }
+        return false
+    }
+
     /* 成功处理完「自动连播」后的收尾：标记完成（之后 tryStartDouyinAutoPlay 会因 douyinAutoPlayCompleted 直接短路）、关闭菜单 */
-    private suspend fun finishDouyinAutoPlaySuccess() {
+    private suspend fun finishDouyinAutoPlaySuccess(targetText: String) {
         Log.i(TAG, "Douyin autoplay switch handled")
         douyinAutoPlayCompleted = true
-        // 等开关动画结束后，关闭抖音弹出的菜单窗口
+        // 等开关动画结束后，只有菜单还开着才按返回关闭（快手点完开关可能自动收起菜单，此时不能再按返回）
         delay(400)
-        runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
+        if (isMenuStillOpen(targetText)) {
+            runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
+        }
+    }
+
+    /* 判断目标开关文字当前是否还在界面上（用于决定是否关闭菜单） */
+    private fun isMenuStillOpen(targetText: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val nodes = root.findAccessibilityNodeInfosByText(targetText)
+        val open = nodes.isNotEmpty()
+        nodes.forEach { runCatching { it.recycle() } }
+        return open
     }
 
     /**
@@ -695,24 +799,128 @@ class AutoSlideService : AccessibilityService() {
      *
      * @return true 表示已找到并处理（含本来已开启）；false 表示未找到，需要继续尝试
      */
-    private fun tryToggleDouyinAutoplaySwitch(): Boolean {
+    private suspend fun tryHandleAutoplaySwitch(targetText: String): Boolean {
         val root = rootInActiveWindow ?: return false
-        val nodes = root.findAccessibilityNodeInfosByText(DOUYIN_AUTOPLAY_TEXT)
+        val nodes = root.findAccessibilityNodeInfosByText(targetText)
         if (nodes.isEmpty()) return false
         val textNode = nodes.firstOrNull {
-            it.text?.toString()?.trim() == DOUYIN_AUTOPLAY_TEXT
+            it.text?.toString()?.trim() == targetText
         } ?: nodes.first()
         val result = try {
             val switchNode = findSwitchNodeInRow(textNode)
             when {
-                switchNode == null -> false // 找不到开关节点，无法判断状态，不盲目点击
-                switchNode.isChecked -> true // 开关已经是开启状态，无需操作
-                else -> switchNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                switchNode != null -> {
+                    if (switchNode.isChecked) {
+                        true // 开关已经是开启状态，无需操作
+                    } else {
+                        switchNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    }
+                }
+                else -> {
+                    // 无标准开关节点：仅快手使用截屏看颜色；抖音保持安全不点击
+                    if (targetText == KUAISHOU_AUTOPLAY_TEXT) {
+                        toggleKuaishouVisualSwitch(textNode)
+                    } else {
+                        false
+                    }
+                }
             }
         } finally {
             nodes.forEach { runCatching { it.recycle() } }
         }
         return result
+    }
+
+    /**
+     * 快手的「自动上滑」是无障碍树里没有状态的自定义开关：
+     * 截屏看开关区域颜色（开=蓝色，关=灰色），确认是关才点击，避免误关
+     */
+    private suspend fun toggleKuaishouVisualSwitch(textNode: AccessibilityNodeInfo): Boolean {
+        val row = textNode.parent ?: return false
+        val rowRect = Rect()
+        row.getBoundsInScreen(rowRect)
+        if (rowRect.width() <= 0 || rowRect.height() <= 0) return false
+        when (kuaishouToggleState(rowRect)) {
+            KUAISHOU_STATE_ON -> {
+                Log.i(TAG, "Kuaishou toggle already ON")
+                return true
+            }
+            KUAISHOU_STATE_OFF -> {
+                val toggleX = rowRect.right - rowRect.width() * 0.14f
+                val toggleY = rowRect.exactCenterY()
+                Log.i(TAG, "Kuaishou toggle OFF, tap at ($toggleX, $toggleY)")
+                dispatchTap(toggleX, toggleY)
+                delay(800)
+                val on = kuaishouToggleState(rowRect) == KUAISHOU_STATE_ON
+                Log.i(TAG, "Kuaishou toggle after tap: $on")
+                return on
+            }
+            else -> {
+                Log.w(TAG, "Kuaishou toggle state unknown, skip to avoid misclick")
+                return false
+            }
+        }
+    }
+
+    /**
+     * 截屏判断快手开关状态（开=蓝色，关=灰色）
+     * 截图失败或无法读取像素时返回 UNKNOWN，调用方不得点击
+     */
+    private suspend fun kuaishouToggleState(rowRect: Rect): Int {
+        val bitmap = runCatching { captureScreenBitmap() }.getOrNull() ?: return KUAISHOU_STATE_UNKNOWN
+        return try {
+            // 无障碍截图可能是 HARDWARE 位图，不能直接 getPixel，先转成软件位图
+            val soft = if (bitmap.config == Bitmap.Config.ARGB_8888) {
+                bitmap
+            } else {
+                bitmap.copy(Bitmap.Config.ARGB_8888, false)
+            }
+            if (soft == null) {
+                KUAISHOU_STATE_UNKNOWN
+            } else {
+                try {
+                    val left = (rowRect.right - rowRect.width() * 0.32f).toInt().coerceIn(0, soft.width - 1)
+                    val right = (rowRect.right - rowRect.width() * 0.02f).toInt().coerceIn(0, soft.width - 1)
+                    val top = (rowRect.top + rowRect.height() * 0.1f).toInt().coerceIn(0, soft.height - 1)
+                    val bottom = (rowRect.bottom - rowRect.height() * 0.1f).toInt().coerceIn(0, soft.height - 1)
+                    var blue = 0
+                    var y = top
+                    while (y <= bottom) {
+                        var x = left
+                        while (x <= right) {
+                            val p = soft.getPixel(x, y)
+                            val r = (p shr 16) and 0xFF
+                            val g = (p shr 8) and 0xFF
+                            val b = p and 0xFF
+                            if (r in 47..127 && g in 94..174 && b >= 215) blue++
+                            x += 2
+                        }
+                        y += 2
+                    }
+                    if (blue > 300) KUAISHOU_STATE_ON else KUAISHOU_STATE_OFF
+                } finally {
+                    if (soft !== bitmap) {
+                        runCatching { soft.recycle() }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Kuaishou toggle state check failed", e)
+            KUAISHOU_STATE_UNKNOWN
+        } finally {
+            if (bitmap.config != Bitmap.Config.ARGB_8888) {
+                runCatching { bitmap.recycle() }
+            }
+        }
+    }
+
+    /* 在指定坐标模拟一次点击 */
+    private suspend fun dispatchTap(x: Float, y: Float) {
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 120L))
+            .build()
+        dispatchGestureAwait(gesture)
     }
 
     /**
@@ -821,7 +1029,7 @@ class AutoSlideService : AccessibilityService() {
      * 内部仍保留会话去重（douyinSessionDone）和冷却（DOUYIN_AUTOPLAY_COOLDOWN_MS），
      * 所以即使同一次抖音会话内触发多次无障碍事件，也只会真正执行一次连播流程。
      */
-    private fun tryStartDouyinAutoPlay() {
+    private fun tryStartDouyinAutoPlay(packageName: String) {
         val enabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             .getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
         if (!enabled || douyinAutoPlayCompleted || douyinSessionDone || douyinAutoPlayInProgress) {
@@ -835,7 +1043,9 @@ class AutoSlideService : AccessibilityService() {
         douyinAutoPlayInProgress = true
         serviceScope.launch {
             try {
-                handleDouyinAutoPlay()
+                // 等 App 完全启动到界面后再执行，避免页面还没加载完成导致操作失败
+                delay(5000)
+                handleDouyinAutoPlay(packageName)
             } finally {
                 douyinAutoPlayInProgress = false
             }
@@ -853,10 +1063,12 @@ class AutoSlideService : AccessibilityService() {
         douyinSessionDone = false
         douyinAutoPlayInProgress = false
         if (enabled) {
-            // 开关打开时立刻检查一次当前前台是否已是抖音（一次性检查，不是轮询，不耗电）
+            // 开关打开时立刻检查一次当前前台是否已是抖音/快手（一次性检查，不是轮询，不耗电）
             val currentPackage = rootInActiveWindow?.packageName?.toString()
-            if (currentPackage == DOUYIN_PACKAGE) {
-                tryStartDouyinAutoPlay()
+            if (currentPackage == DOUYIN_PACKAGE || currentPackage == KUAISHOU_PACKAGE ||
+                currentPackage == KUAISHOU_LITE_PACKAGE
+            ) {
+                tryStartDouyinAutoPlay(currentPackage)
             }
         }
     }
