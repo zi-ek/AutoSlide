@@ -1,6 +1,6 @@
 {
-  "versionCode": 25,
-  "versionName": "2.6.6",
-  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.6.6/AutoSlide-v2.6.6.apk",
-  "updateLog": "1. 大幅降低耗电：抖音连播检测改为事件驱动，移除常驻轮询\n2. OCR 截图线程池复用，减少重复创建开销\n3. 打开抖音连播开关时立即检查当前前台"
+  "versionCode": 26,
+  "versionName": "2.6.7",
+  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.6.7/AutoSlide-v2.6.7.apk",
+  "updateLog": "1. 固定时间模式新增关键词识别：定时滑动照常，命中关键词立即滑动\n2. 关键词支持用中文逗号分隔\n3. 修复找不到自动连播开关时菜单未关闭的问题"
 }

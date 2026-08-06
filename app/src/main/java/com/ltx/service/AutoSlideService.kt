@@ -1135,7 +1135,8 @@ class AutoSlideService : AccessibilityService() {
     private fun tryStartDouyinAutoPlay(packageName: String) {
         val enabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             .getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
-        if (!enabled || douyinAutoPlayCompleted || douyinSessionDone || douyinAutoPlayInProgress) {
+        // 只有用户点击方向键启动滑动后（isRunning）才允许执行自动连播
+        if (!isRunning || !enabled || douyinAutoPlayCompleted || douyinSessionDone || douyinAutoPlayInProgress) {
             return
         }
         val now = SystemClock.elapsedRealtime()
