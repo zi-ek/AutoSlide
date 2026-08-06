@@ -4,7 +4,7 @@ import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 // 本文件配置应用模块的 SDK 版本、构建类型、签名、混淆和依赖
 
 // 版本名称（APK 输出文件名也使用它）
-val appVersionName = "2.6.7"
+val appVersionName = "2.6.8"
 
 // AGP
 plugins {
@@ -24,7 +24,7 @@ android {
         // 目标设备的SDK版本
         targetSdk = 37
         // 版本号
-        versionCode = 26
+        versionCode = 27
         // 版本名称
         versionName = appVersionName
     }

@@ -430,6 +430,7 @@ class MainActivity : AppCompatActivity() {
     private fun setupKeywordControls() {
         binding.keywordIgnoreCaseSwitch.setOnCheckedChangeListener { _, isChecked ->
             preferences.edit { putBoolean(KEY_KEYWORD_IGNORE_CASE, isChecked) }
+            AutoSlideService.getInstance()?.updateKeywordConfig(ignoreCase = isChecked)
         }
         // 关键词输入框：输入即保存
         binding.keywordEditText.addTextChangedListener(object : TextWatcher {
@@ -438,7 +439,9 @@ class MainActivity : AppCompatActivity() {
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
 
             override fun afterTextChanged(s: Editable?) {
-                preferences.edit { putString(KEY_KEYWORDS, s?.toString() ?: "") }
+                val keywords = s?.toString() ?: ""
+                preferences.edit { putString(KEY_KEYWORDS, keywords) }
+                AutoSlideService.getInstance()?.updateKeywordConfig(keywords = keywords)
             }
         })
         // 检测间隔（秒）

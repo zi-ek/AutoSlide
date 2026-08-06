@@ -12,8 +12,6 @@ package com.ltx.service
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
-import android.accessibilityservice.AccessibilityService.ScreenshotResult
-import android.accessibilityservice.AccessibilityService.TakeScreenshotCallback
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -43,12 +41,12 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.ltx.DEFAULT_DOUYIN_AUTOPLAY
+import com.ltx.DEFAULT_KEYWORDS
 import com.ltx.DEFAULT_KEYWORD_COOLDOWN
 import com.ltx.DEFAULT_KEYWORD_DIRECTION
 import com.ltx.DEFAULT_KEYWORD_IGNORE_CASE
 import com.ltx.DEFAULT_KEYWORD_INTERVAL
 import com.ltx.DEFAULT_KEYWORD_MAX_TRIGGERS
-import com.ltx.DEFAULT_KEYWORDS
 import com.ltx.DEFAULT_MAX_PAUSE_TIME
 import com.ltx.DEFAULT_MIN_PAUSE_TIME
 import com.ltx.DEFAULT_PAUSE_TIME
@@ -57,13 +55,13 @@ import com.ltx.DIRECTION_DOWN
 import com.ltx.DIRECTION_LEFT
 import com.ltx.DIRECTION_RIGHT
 import com.ltx.DIRECTION_UP
+import com.ltx.KEY_DOUYIN_AUTOPLAY
+import com.ltx.KEY_KEYWORDS
 import com.ltx.KEY_KEYWORD_COOLDOWN
 import com.ltx.KEY_KEYWORD_DIRECTION
 import com.ltx.KEY_KEYWORD_IGNORE_CASE
 import com.ltx.KEY_KEYWORD_INTERVAL
 import com.ltx.KEY_KEYWORD_MAX_TRIGGERS
-import com.ltx.KEY_KEYWORDS
-import com.ltx.KEY_DOUYIN_AUTOPLAY
 import com.ltx.KEY_MAX_PAUSE_TIME
 import com.ltx.KEY_MIN_PAUSE_TIME
 import com.ltx.KEY_PAUSE_MODE
@@ -74,18 +72,11 @@ import com.ltx.PAUSE_MODE_KEYWORD
 import com.ltx.PAUSE_MODE_NONE
 import com.ltx.PAUSE_MODE_RANDOM
 import com.ltx.PREFS_NAME
-import com.ltx.parseKeywords
 import com.ltx.R
 import com.ltx.SlideEvent
 import com.ltx.SlideEventHub
 import com.ltx.getTrajectoryKey
-import java.lang.ref.WeakReference
-import java.security.SecureRandom
-import java.util.concurrent.Executors
-import kotlin.math.abs
-import kotlin.math.ln
-import kotlin.math.roundToLong
-import kotlin.random.asKotlinRandom
+import com.ltx.parseKeywords
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -96,6 +87,13 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuRemoteProcess
+import java.lang.ref.WeakReference
+import java.security.SecureRandom
+import java.util.concurrent.Executors
+import kotlin.math.abs
+import kotlin.math.ln
+import kotlin.math.roundToLong
+import kotlin.random.asKotlinRandom
 
 /**
  * 自动滑动无障碍服务
@@ -303,11 +301,32 @@ class AutoSlideService : AccessibilityService() {
      *
      * @param interval 检测间隔
      * @param cooldown 冷却时间
+     * @param keywords 关键词列表文本
+     * @param ignoreCase 是否忽略大小写
      */
-    fun updateKeywordConfig(interval: Int, cooldown: Int) {
-        keywordIntervalMs = interval.coerceIn(MIN_KEYWORD_INTERVAL_MS, MAX_KEYWORD_INTERVAL_MS)
-        keywordCooldownMs = cooldown.coerceIn(MIN_KEYWORD_COOLDOWN_MS, MAX_KEYWORD_COOLDOWN_MS)
-        Log.i(TAG, "Keyword config updated: interval=${keywordIntervalMs}ms, cooldown=${keywordCooldownMs}ms")
+    fun updateKeywordConfig(
+        interval: Int? = null,
+        cooldown: Int? = null,
+        keywords: String? = null,
+        ignoreCase: Boolean? = null
+    ) {
+        interval?.let {
+            keywordIntervalMs = it.coerceIn(MIN_KEYWORD_INTERVAL_MS, MAX_KEYWORD_INTERVAL_MS)
+        }
+        cooldown?.let {
+            keywordCooldownMs = it.coerceIn(MIN_KEYWORD_COOLDOWN_MS, MAX_KEYWORD_COOLDOWN_MS)
+        }
+        keywords?.let {
+            keywordList = parseKeywords(it)
+        }
+        ignoreCase?.let {
+            keywordIgnoreCase = it
+        }
+        updateKeywordCheckFlags()
+        Log.i(
+            TAG,
+            "Keyword config updated: interval=${keywordIntervalMs}ms, cooldown=${keywordCooldownMs}ms, keywords=${keywordList.size}, ignoreCase=$keywordIgnoreCase"
+        )
     }
 
     /**
@@ -1112,16 +1131,20 @@ class AutoSlideService : AccessibilityService() {
     /* 分发手势并等待手势执行完成 */
     private suspend fun dispatchGestureAwait(gesture: GestureDescription): Boolean =
         suspendCancellableCoroutine { continuation ->
+            isGestureActive = true
             val success = dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
+                    isGestureActive = false
                     if (continuation.isActive) continuation.resumeWith(Result.success(true))
                 }
 
                 override fun onCancelled(gestureDescription: GestureDescription?) {
+                    isGestureActive = false
                     if (continuation.isActive) continuation.resumeWith(Result.success(false))
                 }
             }, handler)
             if (!success && continuation.isActive) {
+                isGestureActive = false
                 continuation.resumeWith(Result.success(false))
             }
         }
@@ -1441,7 +1464,9 @@ class AutoSlideService : AccessibilityService() {
             if (!ocrFailureNotified) {
                 ocrFailureNotified = true
                 Log.e(TAG, "OCR failed", e)
-                Toast.makeText(this@AutoSlideService, R.string.keyword_ocr_failed, Toast.LENGTH_LONG).show()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@AutoSlideService, R.string.keyword_ocr_failed, Toast.LENGTH_LONG).show()
+                }
             }
             ""
         }
