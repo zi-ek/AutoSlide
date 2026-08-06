@@ -17,7 +17,7 @@ const val KEY_PAUSE_MODE = "pauseMode"              // 当前选择的滑动模�
 const val KEY_PAUSE_TIME = "pauseTime"              // 固定时间模式的停顿秒数
 const val KEY_MIN_PAUSE_TIME = "minPauseTime"       // 随机时间模式的最小停顿秒数
 const val KEY_MAX_PAUSE_TIME = "maxPauseTime"       // 随机时间模式的最大停顿秒数
-const val KEY_KEYWORDS = "keywords"                 // 关键词列表（每行一个，用换行分隔）
+const val KEY_KEYWORDS = "keywords"                 // 关键词列表（用中文逗号分隔）
 const val KEY_KEYWORD_IGNORE_CASE = "keywordIgnoreCase" // 是否忽略大小写
 const val KEY_KEYWORD_INTERVAL = "keywordInterval"      // 关键词检测间隔（秒）
 const val KEY_KEYWORD_COOLDOWN = "keywordCooldown"      // 关键词触发后的冷却时间（秒）
@@ -30,13 +30,21 @@ const val DEFAULT_SPEED = 50                        // 默认滑动速度（中�
 const val DEFAULT_PAUSE_TIME = 15                    // 默认固定停顿 15 秒
 const val DEFAULT_MIN_PAUSE_TIME = 1                // 默认随机停顿下限 1 秒
 const val DEFAULT_MAX_PAUSE_TIME = 50                // 默认随机停顿上限 50 秒
-// 默认关键词（每行一个，供第一次打开应用时预填）
-const val DEFAULT_KEYWORDS = "上滑继续\n查看详情\n官方\n官号\n直播中\n限时抢购\n购物"
+// 默认关键词（用中文逗号分隔，供第一次打开应用时预填）
+const val DEFAULT_KEYWORDS = "上滑继续，查看详情，官方，官号，点击进入，限时抢购，购物"
 const val DEFAULT_KEYWORD_IGNORE_CASE = true        // 默认忽略大小写
 const val DEFAULT_KEYWORD_INTERVAL = 5           // 默认每 5 秒检测一次
 const val DEFAULT_KEYWORD_COOLDOWN = 3           // 默认触发后冷却 3 秒
 const val DEFAULT_KEYWORD_MAX_TRIGGERS = 3          // 默认同一画面最多触发 3 次
 const val DEFAULT_DOUYIN_AUTOPLAY = true            // 默认开启抖音自动连播
+
+/**
+ * 把关键词文本拆分成关键词列表。
+ * 只支持中文逗号（，）分隔；
+ * 为了兼容旧版本保存的数据，换行符仍然有效。
+ */
+fun parseKeywords(text: String): List<String> =
+    text.split('，', '\n', '\r').map { it.trim() }.filter { it.isNotBlank() }
 
 // ==================== 滑动模式编号 ====================
 // 主界面四个选项对应的模式值，服务端根据该值决定走哪套滑动逻辑

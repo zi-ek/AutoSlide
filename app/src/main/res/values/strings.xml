@@ -1,6 +1,6 @@
 <resources>
     <!-- 应用与权限 -->
-    <string name="app_name">自动滑动器</string>
+    <string name="app_name">自动滑屏器</string>
     <string name="accessibility_service_description">自动滑动器需要无障碍服务权限来执行屏幕滑动操作</string>
     <string name="start">开始</string>
     <string name="pause_time">停顿时间（秒）点击可修改 ：</string>
@@ -74,7 +74,7 @@
     <string name="tile_label">自动滑动</string>
     <string name="tile_permission_toast">请先授予无障碍和悬浮窗权限</string>
     <string name="keyword_detection">关键词检测</string>
-    <string name="keyword_hint">关键词（每行一个）</string>
+    <string name="keyword_hint">关键词（用中文逗号分隔）</string>
     <string name="keyword_ignore_case">忽略大小写</string>
     <string name="keyword_interval">检测间隔（秒）</string>
     <string name="keyword_cooldown">触发后冷却（秒）</string>

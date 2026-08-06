@@ -57,6 +57,7 @@ import com.ltx.R
 import com.ltx.SlideEvent
 import com.ltx.SlideEventHub
 import com.ltx.getTrajectoryKey
+import com.ltx.parseKeywords
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -625,7 +626,7 @@ class FloatingWindowService : Service() {
                 keywordText = DEFAULT_KEYWORDS
                 prefs.edit { putString(KEY_KEYWORDS, DEFAULT_KEYWORDS) }
             }
-            val hasKeyword = keywordText.lines().any { it.isNotBlank() }
+            val hasKeyword = parseKeywords(keywordText).isNotEmpty()
             if (!hasKeyword) {
                 expand()
                 return

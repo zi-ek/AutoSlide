@@ -329,7 +329,7 @@
                         android:text="@string/douyin_auto_play"
                         android:textColor="@color/text_secondary"
                         android:textSize="@dimen/text_size_body" />
-                    <!--抖音自动连播开关-->
+                    <!--自动连播开关-->
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/douyinAutoPlaySwitch"
                         android:layout_width="wrap_content"

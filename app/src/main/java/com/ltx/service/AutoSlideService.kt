@@ -74,6 +74,7 @@ import com.ltx.PAUSE_MODE_KEYWORD
 import com.ltx.PAUSE_MODE_NONE
 import com.ltx.PAUSE_MODE_RANDOM
 import com.ltx.PREFS_NAME
+import com.ltx.parseKeywords
 import com.ltx.R
 import com.ltx.SlideEvent
 import com.ltx.SlideEventHub
@@ -118,6 +119,7 @@ class AutoSlideService : AccessibilityService() {
     private var isGestureActive = false  // 是否正在执行手势（防止手势期间重复调度）
     /* 关键词检测（OCR）状态 */
     private var keywordModeActive = false // 当前是否运行关键词检测模式
+    private var keywordCheckActive = false // 是否运行关键词检测循环（关键词模式或固定时间模式）
     private var keywordList: List<String> = emptyList() // 用户填写的关键词列表
     private var keywordIgnoreCase = DEFAULT_KEYWORD_IGNORE_CASE // 是否忽略大小写
     private var keywordIntervalMs = DEFAULT_KEYWORD_INTERVAL * 1000 // 检测间隔（毫秒，由秒换算）
@@ -146,6 +148,11 @@ class AutoSlideService : AccessibilityService() {
     /* 执行一次定时滑动 */
     private fun runSlide() {
         if (!isRunning) {
+            return
+        }
+        if (isGestureActive) {
+            // 已有手势在执行（例如关键词触发的滑动），跳过本次并顺延到下一轮
+            scheduleNextSlide()
             return
         }
         performSlideByDirection(calculateGestureDurationMillis())
@@ -268,12 +275,27 @@ class AutoSlideService : AccessibilityService() {
         pauseTime = time.coerceAtLeast(1)
         minPauseTime = min.coerceAtLeast(1)
         maxPauseTime = max.coerceAtLeast(1)
+        val keywordCheckWasActive = keywordCheckActive
+        updateKeywordCheckFlags()
+        // 刚切换到需要关键词检测的模式时，立即启动一次检测
+        if (isRunning && keywordCheckActive && !keywordCheckWasActive) {
+            scheduleKeywordCheck(0L)
+        }
         if (!isRunning || isGestureActive || keywordModeActive) {
             return
         }
         // 移除当前滑动任务并重新调度新的停顿时间
         handler.removeCallbacks(slideRunnable)
         handler.postDelayed(slideRunnable, calculatePauseDelayMillis())
+    }
+
+    /* 根据当前停顿模式刷新关键词检测循环标记（关键词模式、固定时间模式都会运行 OCR 检测） */
+    private fun updateKeywordCheckFlags() {
+        keywordModeActive = pauseMode == PAUSE_MODE_KEYWORD && keywordList.isNotEmpty()
+        keywordCheckActive = keywordModeActive || (pauseMode == PAUSE_MODE_FIXED && keywordList.isNotEmpty())
+        if (!keywordCheckActive) {
+            handler.removeCallbacks(keywordCheckRunnable)
+        }
     }
 
     /**
@@ -361,6 +383,7 @@ class AutoSlideService : AccessibilityService() {
         isRunning = false
         isGestureActive = false
         keywordModeActive = false
+        keywordCheckActive = false
         runGeneration++
         handler.removeCallbacks(slideRunnable)
         handler.removeCallbacks(keywordCheckRunnable)
@@ -476,7 +499,7 @@ class AutoSlideService : AccessibilityService() {
     private fun startAutoSlide() {
         isRunning = true
         isGestureActive = false
-        keywordModeActive = pauseMode == PAUSE_MODE_KEYWORD && keywordList.isNotEmpty()
+        updateKeywordCheckFlags()
         lastKeywordTriggerAt = 0L
         keywordConsecutiveTriggers = 0
         lastTriggeredTextHash = null
@@ -487,8 +510,12 @@ class AutoSlideService : AccessibilityService() {
         // 延迟300ms执行第一次滑动/检测(等待悬浮窗完成最小化动画)
         handler.postDelayed({
             if (currentGen == runGeneration && isRunning) {
-                if (keywordModeActive) {
+                if (keywordCheckActive) {
                     scheduleKeywordCheck(0L)
+                    // 固定时间模式：保留定时滑动，关键词命中时另外触发一次滑动
+                    if (pauseMode == PAUSE_MODE_FIXED) {
+                        runSlide()
+                    }
                 } else {
                     runSlide()
                 }
@@ -501,16 +528,16 @@ class AutoSlideService : AccessibilityService() {
      *
      * @param durationMillis 手势持续时间(毫秒)
      */
-    private fun performSlideByDirection(durationMillis: Long) {
+    private fun performSlideByDirection(durationMillis: Long, fromKeyword: Boolean = false) {
         // 读取自定义轨迹字符串
         val trajectoryStr = getCustomTrajectory(currentDirection)
         if (trajectoryStr != null) {
             // 分发自定义轨迹
-            dispatchCustomGesture(trajectoryStr, durationMillis)
+            dispatchCustomGesture(trajectoryStr, durationMillis, fromKeyword)
         } else {
             // 分发默认轨迹
             val (startX, startY, endX, endY) = getSlideCoordinates(currentDirection)
-            dispatchLineGesture(startX, startY, endX, endY, durationMillis)
+            dispatchLineGesture(startX, startY, endX, endY, durationMillis, fromKeyword)
         }
     }
 
@@ -520,13 +547,13 @@ class AutoSlideService : AccessibilityService() {
      * @param trajectoryStr 轨迹字符串
      * @param durationMillis 手势持续时间(毫秒)
      */
-    private fun dispatchCustomGesture(trajectoryStr: String, durationMillis: Long) {
+    private fun dispatchCustomGesture(trajectoryStr: String, durationMillis: Long, fromKeyword: Boolean = false) {
         // 按分号拆分轨迹字符串并去掉空项
         val pointsStr = trajectoryStr.split(";").filter { it.isNotBlank() }
         // 不足两个点视为无效数据清除后跳过本次滑动
         if (pointsStr.size < 2) {
             clearCustomTrajectory(currentDirection)
-            continueAfterGesture(runGeneration)
+            continueAfterGesture(runGeneration, fromKeyword)
             return
         }
         // 解析轨迹点
@@ -541,7 +568,7 @@ class AutoSlideService : AccessibilityService() {
         // 解析后有效点不足两个视为无效数据清除后跳过本次滑动
         if (parsedPoints.size < 2) {
             clearCustomTrajectory(currentDirection)
-            continueAfterGesture(runGeneration)
+            continueAfterGesture(runGeneration, fromKeyword)
             return
         }
         // 根据轨迹点构建手势路径
@@ -566,7 +593,7 @@ class AutoSlideService : AccessibilityService() {
         val gesture = GestureDescription.Builder().addStroke(
             GestureDescription.StrokeDescription(path, 0, durationMillis)
         ).build()
-        dispatchGestureAndContinue(gesture)
+        dispatchGestureAndContinue(gesture, fromKeyword)
     }
 
     /**
@@ -608,7 +635,8 @@ class AutoSlideService : AccessibilityService() {
      * @param durationMillis 手势持续时间(毫秒)
      */
     private fun dispatchLineGesture(
-        startX: Float, startY: Float, endX: Float, endY: Float, durationMillis: Long
+        startX: Float, startY: Float, endX: Float, endY: Float, durationMillis: Long,
+        fromKeyword: Boolean = false
     ) {
         val density = resources.displayMetrics.density
         val maxOffset = 10f * density
@@ -639,7 +667,7 @@ class AutoSlideService : AccessibilityService() {
         val gesture = GestureDescription.Builder().addStroke(
             GestureDescription.StrokeDescription(path, 0, durationMillis)
         ).build()
-        dispatchGestureAndContinue(gesture)
+        dispatchGestureAndContinue(gesture, fromKeyword)
     }
 
     /**
@@ -647,13 +675,13 @@ class AutoSlideService : AccessibilityService() {
      *
      * @param gesture 待分发的手势
      */
-    private fun dispatchGestureAndContinue(gesture: GestureDescription) {
+    private fun dispatchGestureAndContinue(gesture: GestureDescription, fromKeyword: Boolean = false) {
         isGestureActive = true
         val currentGen = runGeneration
         val success = dispatchGesture(gesture, object : GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
                 isGestureActive = false
-                continueAfterGesture(currentGen)
+                continueAfterGesture(currentGen, fromKeyword)
             }
 
             override fun onCancelled(gestureDescription: GestureDescription?) {
@@ -663,7 +691,7 @@ class AutoSlideService : AccessibilityService() {
         // 分发失败时手动复位并继续下一轮滑动
         if (!success) {
             isGestureActive = false
-            continueAfterGesture(currentGen)
+            continueAfterGesture(currentGen, fromKeyword)
         }
     }
 
@@ -683,6 +711,8 @@ class AutoSlideService : AccessibilityService() {
             return
         }
         // 2. 长按呼出菜单 + 向上滑动露出「自动连播」
+        // 长按前先记一下屏幕亮度，用于长按后判断菜单是否真的弹出来了（有些菜单文字不在无障碍树里）
+        val brightnessBefore = screenBrightness()
         dispatchLongPress()
         delay(550)
         dispatchSwipeUpLowerHalf()
@@ -694,7 +724,8 @@ class AutoSlideService : AccessibilityService() {
             Log.w(TAG, "未找到「$targetText」开关，放弃操作，不乱点其它按钮")
             // 等菜单稳定后，只有菜单还开着才按返回关闭，避免误退当前页面
             delay(400)
-            if (isMenuStillOpen(targetText)) {
+            if (isMenuStillOpen(targetText) || isLongPressMenuVisible(brightnessBefore)) {
+                Log.i(TAG, "长按菜单仍处于打开状态，按返回键关闭菜单")
                 runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
             }
         }
@@ -791,6 +822,78 @@ class AutoSlideService : AccessibilityService() {
         val open = nodes.isNotEmpty()
         nodes.forEach { runCatching { it.recycle() } }
         return open
+    }
+
+    /**
+     * 长按菜单是否还开着（用于找不到开关文字时决定是否按返回）：
+     * 1. 先看无障碍树里有没有菜单专属文字（不感兴趣/举报/定时关闭/复制链接）；
+     * 2. 树里看不到时，再用截屏亮度对比：菜单弹出后背景会明显变暗。
+     * 两者都判断不出来时返回 false，宁可不动也不误退当前页面。
+     */
+    private suspend fun isLongPressMenuVisible(brightnessBefore: Float?): Boolean {
+        if (hasLongPressMenuMarker()) return true
+        val brightnessAfter = screenBrightness() ?: return false
+        val before = brightnessBefore ?: return false
+        // 背景至少变暗 25% 且画面已经很暗，才认为菜单弹出，避免视频画面本身变暗造成误判
+        return before > 20f && brightnessAfter <= 150f && (before - brightnessAfter) >= before * 0.25f
+    }
+
+    /* 在无障碍树中查找长按菜单里才会出现的文字（正常视频界面不会出现这些文字） */
+    private fun hasLongPressMenuMarker(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val markers = listOf("不感兴趣", "举报", "定时关闭", "复制链接")
+        for (marker in markers) {
+            val nodes = runCatching { root.findAccessibilityNodeInfosByText(marker) }.getOrNull()
+                ?: continue
+            val found = nodes.isNotEmpty()
+            nodes.forEach { runCatching { it.recycle() } }
+            if (found) return true
+        }
+        return false
+    }
+
+    /* 截取当前屏幕并计算平均亮度（0~255），失败返回 null */
+    private suspend fun screenBrightness(): Float? {
+        val bitmap = runCatching { captureScreenBitmap() }.getOrNull() ?: return null
+        return try {
+            val soft = if (bitmap.config == Bitmap.Config.ARGB_8888) {
+                bitmap
+            } else {
+                bitmap.copy(Bitmap.Config.ARGB_8888, false)
+            }
+            if (soft == null) {
+                null
+            } else {
+                try {
+                    var sum = 0L
+                    var count = 0L
+                    val step = 16
+                    var y = 0
+                    while (y < soft.height) {
+                        var x = 0
+                        while (x < soft.width) {
+                            val p = soft.getPixel(x, y)
+                            val r = (p shr 16) and 0xFF
+                            val g = (p shr 8) and 0xFF
+                            val b = p and 0xFF
+                            sum += (r * 299 + g * 587 + b * 114) / 1000
+                            count++
+                            x += step
+                        }
+                        y += step
+                    }
+                    if (count == 0L) null else sum.toFloat() / count
+                } finally {
+                    if (soft !== bitmap) {
+                        runCatching { soft.recycle() }
+                    }
+                }
+            }
+        } finally {
+            if (bitmap.config != Bitmap.Config.ARGB_8888) {
+                runCatching { bitmap.recycle() }
+            }
+        }
     }
 
     /**
@@ -1093,7 +1196,7 @@ class AutoSlideService : AccessibilityService() {
             keywordText = DEFAULT_KEYWORDS
             prefs.edit { putString(KEY_KEYWORDS, DEFAULT_KEYWORDS) }
         }
-        keywordList = keywordText.lines().map { it.trim() }.filter { it.isNotBlank() }
+        keywordList = parseKeywords(keywordText)
     }
 
     /**
@@ -1115,7 +1218,7 @@ class AutoSlideService : AccessibilityService() {
      * @param delayMs 延迟毫秒数
      */
     private fun scheduleKeywordCheck(delayMs: Long) {
-        if (!isRunning || !keywordModeActive) {
+        if (!isRunning || !keywordCheckActive) {
             return
         }
         val finalDelay = delayMs.coerceAtLeast(50)
@@ -1129,8 +1232,9 @@ class AutoSlideService : AccessibilityService() {
      *
      * @param currentGen 当前运行代数
      */
-    private fun continueAfterGesture(currentGen: Int) {
-        if (keywordModeActive) {
+    private fun continueAfterGesture(currentGen: Int, fromKeyword: Boolean) {
+        if (fromKeyword) {
+            // 关键词触发的滑动结束后，等待冷却再进行下一次检测
             scheduleKeywordCheck(keywordCooldownMs.toLong())
         } else {
             scheduleNextSlide(currentGen)
@@ -1141,7 +1245,7 @@ class AutoSlideService : AccessibilityService() {
      * 执行一次关键词检测：截图 -> OCR -> 匹配
      */
     private fun runKeywordCheck() {
-        if (!isRunning) {
+        if (!isRunning || !keywordCheckActive) {
             return
         }
         val currentGen = runGeneration
@@ -1166,8 +1270,14 @@ class AutoSlideService : AccessibilityService() {
      * @param text 识别出的屏幕文字
      */
     private fun handleKeywordCheckResult(text: String, currentGen: Int) {
-        if (currentGen != runGeneration || !isRunning) return
+        if (currentGen != runGeneration || !isRunning || !keywordCheckActive) return
         Log.d(TAG, "OCR text: $text")
+        // 已有手势在执行时（例如定时滑动正在进行），本次命中先跳过，等待下一轮检测
+        if (isGestureActive) {
+            Log.d(TAG, "Gesture in progress, skip keyword trigger")
+            scheduleKeywordCheck(keywordIntervalMs.toLong())
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         val elapsedSinceTrigger = now - lastKeywordTriggerAt
         // 冷却期内不再触发
@@ -1199,7 +1309,7 @@ class AutoSlideService : AccessibilityService() {
         keywordConsecutiveTriggers++
         lastKeywordTriggerAt = now
         Log.i(TAG, "Keyword matched! Swiping. (Trigger $keywordConsecutiveTriggers/$keywordMaxTriggers)")
-        performSlideByDirection(calculateGestureDurationMillis())
+        performSlideByDirection(calculateGestureDurationMillis(), fromKeyword = true)
     }
 
     /**
