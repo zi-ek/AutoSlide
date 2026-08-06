@@ -129,6 +129,8 @@ class AutoSlideService : AccessibilityService() {
     private var ocrFailureNotified = false // 是否已提示过 OCR 失败（避免反复弹提示）
     private var textRecognizer: TextRecognizer? = null // ML Kit 中文文字识别器
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 截图/OCR 协程作用域
+    // 截图专用单线程池：整个服务生命周期复用一个线程，避免关键词模式下每次检测都新建/销毁线程池
+    private val screenshotExecutor: java.util.concurrent.ExecutorService by lazy { Executors.newSingleThreadExecutor() }
     /* 抖音自动连播状态 */
     private var douyinAutoPlayInProgress = false // 是否正在执行抖音连播开启流程（防止重复触发）
     private var lastDouyinAutoPlayAt = 0L // 上次执行抖音连播流程的时间（用于冷却）
@@ -139,8 +141,6 @@ class AutoSlideService : AccessibilityService() {
     private val keywordCheckRunnable = Runnable { runKeywordCheck() }
     /* 定时滑动循环 */
     private val slideRunnable = Runnable { runSlide() }
-    /* 抖音前台检测轮询 */
-    private val douyinWatchRunnable = Runnable { checkDouyinForeground() }
 
     /* 执行一次定时滑动 */
     private fun runSlide() {
@@ -150,7 +150,7 @@ class AutoSlideService : AccessibilityService() {
         performSlideByDirection(calculateGestureDurationMillis())
     }
 
-    /* 息屏时强制停止滑动 */
+    /* 息屏时强制停止滑动（抖音连播检测已改为事件驱动，无需在这里额外处理） */
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != Intent.ACTION_SCREEN_OFF || !isRunning) {
@@ -163,18 +163,17 @@ class AutoSlideService : AccessibilityService() {
     companion object {
         private const val TAG = "AutoSlideService"
         private const val MIN_GESTURE_DURATION_MS = 100L
-        private const val MAX_GESTURE_DURATION_MS = 900L
+        private const val MAX_GESTURE_DURATION_MS = 3000L
         private const val NO_PAUSE_GAP_MS = 80L
         private const val SPEED_CURVE_FACTOR = 0.7
-        private const val MIN_KEYWORD_INTERVAL_MS = 200
+        private const val MIN_KEYWORD_INTERVAL_MS = 500
         private const val MAX_KEYWORD_INTERVAL_MS = 60_000
-        private const val MIN_KEYWORD_COOLDOWN_MS = 500
+        private const val MIN_KEYWORD_COOLDOWN_MS = 1000
         private const val MAX_KEYWORD_COOLDOWN_MS = 120_000
         /* 抖音自动连播相关常量 */
         private const val DOUYIN_PACKAGE = "com.ss.android.ugc.aweme"
         private const val DOUYIN_AUTOPLAY_TEXT = "自动连播"
         private const val DOUYIN_AUTOPLAY_COOLDOWN_MS = 5_000L
-        private const val DOUYIN_WATCH_INTERVAL_MS = 10_000L
         private var instanceRef: WeakReference<AutoSlideService>? = null
 
         /**
@@ -327,17 +326,17 @@ class AutoSlideService : AccessibilityService() {
         loadKeywordDirection()
         douyinAutoPlayCompleted = false
         douyinSessionDone = false
-        startDouyinWatchIfEnabled()
+        // 不再启动固定间隔轮询，改为在 onAccessibilityEvent 里事件驱动触发，省电
     }
 
     /* 服务销毁时停止滑动并释放单例 */
     override fun onDestroy() {
         unregisterScreenOffReceiver()
         stopSlide()
-        handler.removeCallbacks(douyinWatchRunnable)
         serviceScope.cancel()
         runCatching { textRecognizer?.close() }
         textRecognizer = null
+        runCatching { screenshotExecutor.shutdown() }
         instanceRef = null
         super.onDestroy()
     }
@@ -356,14 +355,17 @@ class AutoSlideService : AccessibilityService() {
     }
 
     /**
-     * 无障碍事件回调：抖音连播由定时轮询驱动
-     * 这里只在离开抖音时重置失败重试标记（成功完成后不再工作，直到下次启动 App）
+     * 无障碍事件回调：不再用定时器轮询前台包名，而是直接复用系统已经在分发的无障碍事件来判断
+     * 是否进入了抖音，省去了后台每 10 秒主动唤醒 CPU 查询前台应用的开销。
+     * 离开抖音时重置会话标记；进入抖音时尝试触发连播检测（内部有冷却和去重，不会频繁执行）。
      */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val packageName = event?.packageName?.toString() ?: return
         if (packageName != DOUYIN_PACKAGE) {
             douyinSessionDone = false
+            return
         }
+        tryStartDouyinAutoPlay()
     }
 
     // 无障碍服务被系统中断时回调：无需额外处理
@@ -678,11 +680,10 @@ class AutoSlideService : AccessibilityService() {
         lastDouyinAutoPlayAt = SystemClock.elapsedRealtime()
     }
 
-    /* 成功处理完「自动连播」后的收尾：标记完成、停止轮询、关闭菜单 */
+    /* 成功处理完「自动连播」后的收尾：标记完成（之后 tryStartDouyinAutoPlay 会因 douyinAutoPlayCompleted 直接短路）、关闭菜单 */
     private suspend fun finishDouyinAutoPlaySuccess() {
         Log.i(TAG, "Douyin autoplay switch handled")
         douyinAutoPlayCompleted = true
-        stopDouyinWatch()
         // 等开关动画结束后，关闭抖音弹出的菜单窗口
         delay(400)
         runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
@@ -814,74 +815,49 @@ class AutoSlideService : AccessibilityService() {
             }
         }
 
-    /* 开关打开且本次会话未完成时，开始定时轮询抖音前台检测 */
-    private fun startDouyinWatchIfEnabled() {
-        val enabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
-        if (!enabled || douyinAutoPlayCompleted) {
-            stopDouyinWatch()
-            return
-        }
-        handler.removeCallbacks(douyinWatchRunnable)
-        handler.postDelayed(douyinWatchRunnable, DOUYIN_WATCH_INTERVAL_MS)
-    }
-
-    /* 停止抖音检测轮询 */
-    private fun stopDouyinWatch() {
-        handler.removeCallbacks(douyinWatchRunnable)
-    }
-
-    /* 安排下一次轮询 */
-    private fun scheduleNextDouyinWatch() {
-        handler.postDelayed(douyinWatchRunnable, DOUYIN_WATCH_INTERVAL_MS)
-    }
-
     /**
-     * 检查当前前台应用是否为抖音；是且本次会话未执行过时启动连播流程
+     * 事件驱动版本的抖音连播检测：由 onAccessibilityEvent 在检测到当前包名为抖音时调用，
+     * 不再需要每 10 秒主动轮询前台应用，省去后台常驻定时唤醒的耗电开销。
+     * 内部仍保留会话去重（douyinSessionDone）和冷却（DOUYIN_AUTOPLAY_COOLDOWN_MS），
+     * 所以即使同一次抖音会话内触发多次无障碍事件，也只会真正执行一次连播流程。
      */
-    private fun checkDouyinForeground() {
+    private fun tryStartDouyinAutoPlay() {
         val enabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             .getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
-        if (!enabled || douyinAutoPlayCompleted) {
-            stopDouyinWatch()
+        if (!enabled || douyinAutoPlayCompleted || douyinSessionDone || douyinAutoPlayInProgress) {
             return
         }
-        val packageName = rootInActiveWindow?.packageName?.toString()
-        if (packageName != DOUYIN_PACKAGE) {
-            douyinSessionDone = false
-            scheduleNextDouyinWatch()
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastDouyinAutoPlayAt < DOUYIN_AUTOPLAY_COOLDOWN_MS) {
             return
         }
-        if (!douyinSessionDone && !douyinAutoPlayInProgress) {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastDouyinAutoPlayAt >= DOUYIN_AUTOPLAY_COOLDOWN_MS) {
-                douyinSessionDone = true
-                douyinAutoPlayInProgress = true
-                serviceScope.launch {
-                    try {
-                        handleDouyinAutoPlay()
-                    } finally {
-                        douyinAutoPlayInProgress = false
-                    }
-                }
+        douyinSessionDone = true
+        douyinAutoPlayInProgress = true
+        serviceScope.launch {
+            try {
+                handleDouyinAutoPlay()
+            } finally {
+                douyinAutoPlayInProgress = false
             }
         }
-        scheduleNextDouyinWatch()
     }
 
     /**
-     * 由主界面开关调用：打开时开始轮询并允许重新执行，关闭时停止轮询
+     * 由主界面开关调用：重置会话状态。事件驱动模式下无需显式启动/停止轮询，
+     * 下次无障碍事件检测到进入抖音时会自动按最新开关状态判断。
      *
-     * @param enabled 抖音自动连播开关状态
+     * @param enabled 抖音自动连播开关状态（保留参数以兼容调用方，逻辑已改为读取实时配置）
      */
     fun setDouyinAutoPlayEnabled(enabled: Boolean) {
         douyinAutoPlayCompleted = false
         douyinSessionDone = false
         douyinAutoPlayInProgress = false
         if (enabled) {
-            startDouyinWatchIfEnabled()
-        } else {
-            stopDouyinWatch()
+            // 开关打开时立刻检查一次当前前台是否已是抖音（一次性检查，不是轮询，不耗电）
+            val currentPackage = rootInActiveWindow?.packageName?.toString()
+            if (currentPackage == DOUYIN_PACKAGE) {
+                tryStartDouyinAutoPlay()
+            }
         }
     }
 
@@ -1051,11 +1027,10 @@ class AutoSlideService : AccessibilityService() {
      */
     @SuppressLint("NewApi")
     private suspend fun captureScreenViaAccessibility(): Bitmap? {
-        val executor = Executors.newSingleThreadExecutor()
         return try {
             suspendCancellableCoroutine { continuation ->
                 try {
-                    takeScreenshot(Display.DEFAULT_DISPLAY, executor, object : TakeScreenshotCallback {
+                    takeScreenshot(Display.DEFAULT_DISPLAY, screenshotExecutor, object : TakeScreenshotCallback {
                         override fun onSuccess(screenshot: ScreenshotResult) {
                             val bitmap = try {
                                 val buffer = screenshot.hardwareBuffer
@@ -1087,8 +1062,9 @@ class AutoSlideService : AccessibilityService() {
                     }
                 }
             }
-        } finally {
-            executor.shutdown()
+        } catch (e: Exception) {
+            Log.w(TAG, "captureScreenViaAccessibility error", e)
+            null
         }
     }
 
