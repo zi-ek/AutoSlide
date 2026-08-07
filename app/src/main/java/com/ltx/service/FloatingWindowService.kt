@@ -17,7 +17,9 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.PointF
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import android.view.ContextThemeWrapper
 import android.view.Gravity
@@ -51,7 +53,6 @@ import com.ltx.KEY_PAUSE_TIME
 import com.ltx.KEY_SPEED
 import com.ltx.MainActivity
 import com.ltx.PAUSE_MODE_KEYWORD
-import com.ltx.PAUSE_MODE_NONE
 import com.ltx.PREFS_NAME
 import com.ltx.R
 import com.ltx.SlideEvent
@@ -84,6 +85,14 @@ class FloatingWindowService : Service() {
     private var recordOverlayView: View? = null // 轨迹录制遮罩视图
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 主线程协程作用域
     private var lastScreenWidth = 0 // 上次记录的屏幕宽度（旋转后用于判断保持左/右同一侧）
+    private var isExpandButtonEnlarged = false // 悬浮球是否处于放大状态
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val shrinkRunnable = Runnable { 
+        if (isExpandButtonEnlarged) {
+            isExpandButtonEnlarged = false
+            updateExpandButtonSize(30)
+        }
+    }
 
     /* 绑定服务 */
     override fun onBind(intent: Intent?): IBinder? = null
@@ -297,7 +306,21 @@ class FloatingWindowService : Service() {
 
     /* 绑定所有控制按钮事件 */
     private fun setupControlButtons() {
-        expandButton.setOnClickListener { expand() }
+        expandButton.setOnClickListener {
+            if (!isExpandButtonEnlarged) {
+                // 第一次点击：放大图标并开启 3 秒计时
+                isExpandButtonEnlarged = true
+                updateExpandButtonSize(48) // 放大到 48dp
+                mainHandler.removeCallbacks(shrinkRunnable)
+                mainHandler.postDelayed(shrinkRunnable, 3000L)
+            } else {
+                // 放大状态下的第二次点击：恢复大小并展开面板
+                mainHandler.removeCallbacks(shrinkRunnable)
+                isExpandButtonEnlarged = false
+                updateExpandButtonSize(30) // 恢复到 30dp
+                expand()
+            }
+        }
         // 方向按钮⌈点击/长按⌋事件绑定
         bindDirectionButton(R.id.floating_up_button, DIRECTION_UP)
         bindDirectionButton(R.id.floating_down_button, DIRECTION_DOWN)
@@ -569,6 +592,12 @@ class FloatingWindowService : Service() {
     private fun minimize() {
         controlPanel.visibility = View.GONE
         expandButton.visibility = View.VISIBLE
+        // 确保状态复位
+        isExpandButtonEnlarged = false
+        mainHandler.removeCallbacks(shrinkRunnable)
+        val density = resources.displayMetrics.density
+        expandButton.layoutParams.width = (30 * density).toInt()
+        expandButton.layoutParams.height = (30 * density).toInt()
         // 收起时去掉根布局内边距和小球外边距，让窗口尺寸正好等于小球，实现真正贴边
         rootView.setPadding(0, 0, 0, 0)
         (expandButton.layoutParams as? ViewGroup.MarginLayoutParams)?.setMargins(0, 0, 0, 0)
@@ -600,8 +629,13 @@ class FloatingWindowService : Service() {
     private fun expand(stopSlide: Boolean = true) {
         controlPanel.visibility = View.VISIBLE
         expandButton.visibility = View.GONE
+        // 确保状态复位
+        isExpandButtonEnlarged = false
+        mainHandler.removeCallbacks(shrinkRunnable)
         // 恢复根布局内边距和小球外边距
         val density = resources.displayMetrics.density
+        expandButton.layoutParams.width = (30 * density).toInt()
+        expandButton.layoutParams.height = (30 * density).toInt()
         val padding = (6 * density).toInt()
         rootView.setPadding(padding, padding, padding, padding)
         val margin = (3 * density).toInt()
@@ -658,6 +692,33 @@ class FloatingWindowService : Service() {
         val dialog = builder.create()
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         dialog.show()
+    }
+
+    /**
+     * 更新展开按钮的大小
+     * 
+     * @param sizeDp 目标大小(dp)
+     */
+    private fun updateExpandButtonSize(sizeDp: Int) {
+        if (!::rootView.isInitialized || !::layoutParams.isInitialized) return
+        val density = resources.displayMetrics.density
+        val sizePx = (sizeDp * density).toInt()
+        
+        expandButton.layoutParams.width = sizePx
+        expandButton.layoutParams.height = sizePx
+        rootView.requestLayout()
+        
+        // 更新窗口布局以适应新大小
+        try {
+            windowManager.updateViewLayout(rootView, layoutParams)
+        } catch (e: Exception) {
+            Log.e("FloatingWindowService", "Update view layout failed", e)
+        }
+        
+        // 布局完成后重新执行贴边吸附，确保放大后不悬在半空
+        rootView.post {
+            snapToNearestEdge()
+        }
     }
 
     companion object {

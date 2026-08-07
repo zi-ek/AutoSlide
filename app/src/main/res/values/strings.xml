@@ -85,6 +85,16 @@
     <string name="douyin_auto_play">开启自动连播</string>
     <string name="douyin_auto_play_switch">抖音自动连播开关</string>
     <string name="douyin_auto_play_need_accessibility">开启抖音自动连播需要先开启无障碍服务权限</string>
+
+    <string name="title_statistics">数据统计</string>
+    <string name="total_swipes">累计滑动</string>
+    <string name="keyword_matches">关键词命中</string>
+    <string name="saved_distance">节省手指行程</string>
+    <string name="distance_unit">米</string>
+
+
+
+
     <string name="donate_tip">打赏个5毛钱吧</string>
     <string name="donate_qr_desc">微信打赏二维码</string>
 </resources>

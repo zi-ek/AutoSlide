@@ -25,6 +25,11 @@ const val KEY_KEYWORD_MAX_TRIGGERS = "keywordMaxTriggers" // 同一画面最多�
 const val KEY_KEYWORD_DIRECTION = "keywordDirection"    // 关键词触发时的滑动方向
 const val KEY_DOUYIN_AUTOPLAY = "douyinAutoPlay"        // 是否自动打开抖音连播开关（检测到抖音后触发）
 
+// ==================== 统计数据 ====================
+const val KEY_STATS_TOTAL_SWIPES = "stats_total_swipes"
+const val KEY_STATS_KEYWORD_MATCHES = "stats_keyword_matches"
+const val KEY_STATS_SAVED_DISTANCE = "stats_saved_distance"
+
 // ==================== 默认值 ====================
 const val DEFAULT_SPEED = 50                        // 默认滑动速度（中等）
 const val DEFAULT_PAUSE_TIME = 15                    // 默认固定停顿 15 秒

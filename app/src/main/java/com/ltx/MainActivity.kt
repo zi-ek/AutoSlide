@@ -32,6 +32,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import java.util.Locale
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.edit
 import androidx.core.view.isVisible
@@ -116,6 +117,8 @@ class MainActivity : AppCompatActivity() {
         startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
         updateOverlaySwitchState(!isChecked)
     }
+
+
 
     /**
      * 更新权限开关状态
@@ -206,6 +209,7 @@ class MainActivity : AppCompatActivity() {
                     AutoSlideService.getInstance()?.setDouyinAutoPlayEnabled(
                         preferences.getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
                     )
+                    updateStatistics()
                 }
             }
         }
@@ -278,6 +282,18 @@ class MainActivity : AppCompatActivity() {
         // 恢复抖音自动连播开关
         binding.douyinAutoPlaySwitch.isChecked =
             preferences.getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
+        updateStatistics()
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun updateStatistics() {
+        val totalSwipes = preferences.getInt(KEY_STATS_TOTAL_SWIPES, 0)
+        val keywordMatches = preferences.getInt(KEY_STATS_KEYWORD_MATCHES, 0)
+        val savedDistanceM = preferences.getInt(KEY_STATS_SAVED_DISTANCE, 0) / 1000f
+
+        binding.totalSwipesText.text = totalSwipes.toString()
+        binding.keywordMatchesText.text = keywordMatches.toString()
+        binding.savedDistanceText.text = String.format(Locale.getDefault(), "%.1f %s", savedDistanceM, getString(R.string.distance_unit))
     }
 
     /* 绑定停顿相关控件事件并持久化用户设置 */

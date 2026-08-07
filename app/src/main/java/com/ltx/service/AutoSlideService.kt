@@ -10,7 +10,6 @@ package com.ltx.service
  */
 
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
@@ -67,6 +66,9 @@ import com.ltx.KEY_MIN_PAUSE_TIME
 import com.ltx.KEY_PAUSE_MODE
 import com.ltx.KEY_PAUSE_TIME
 import com.ltx.KEY_SPEED
+import com.ltx.KEY_STATS_KEYWORD_MATCHES
+import com.ltx.KEY_STATS_SAVED_DISTANCE
+import com.ltx.KEY_STATS_TOTAL_SWIPES
 import com.ltx.PAUSE_MODE_FIXED
 import com.ltx.PAUSE_MODE_KEYWORD
 import com.ltx.PAUSE_MODE_NONE
@@ -142,6 +144,16 @@ class AutoSlideService : AccessibilityService() {
     private val keywordCheckRunnable = Runnable { runKeywordCheck() }
     /* 定时滑动循环 */
     private val slideRunnable = Runnable { runSlide() }
+
+    /* 更新统计数据 */
+    private fun updateStats(swipes: Int = 0, matches: Int = 0, distanceMm: Int = 0) {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        prefs.edit {
+            if (swipes > 0) putInt(KEY_STATS_TOTAL_SWIPES, prefs.getInt(KEY_STATS_TOTAL_SWIPES, 0) + swipes)
+            if (matches > 0) putInt(KEY_STATS_KEYWORD_MATCHES, prefs.getInt(KEY_STATS_KEYWORD_MATCHES, 0) + matches)
+            if (distanceMm > 0) putInt(KEY_STATS_SAVED_DISTANCE, prefs.getInt(KEY_STATS_SAVED_DISTANCE, 0) + distanceMm)
+        }
+    }
 
     /* 执行一次定时滑动 */
     private fun runSlide() {
@@ -287,10 +299,10 @@ class AutoSlideService : AccessibilityService() {
         handler.postDelayed(slideRunnable, calculatePauseDelayMillis())
     }
 
-    /* 根据当前停顿模式刷新关键词检测循环标记（关键词模式、固定时间模式都会运行 OCR 检测） */
+    /* 根据当前停顿模式刷新关键词检测循环标记 */
     private fun updateKeywordCheckFlags() {
         keywordModeActive = pauseMode == PAUSE_MODE_KEYWORD && keywordList.isNotEmpty()
-        keywordCheckActive = keywordModeActive || (pauseMode == PAUSE_MODE_FIXED && keywordList.isNotEmpty())
+        keywordCheckActive = keywordModeActive
         if (!keywordCheckActive) {
             handler.removeCallbacks(keywordCheckRunnable)
         }
@@ -370,10 +382,6 @@ class AutoSlideService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instanceRef = WeakReference(this)
-        // 请求按键过滤能力(用于音量键强制停止滑动)
-        serviceInfo = serviceInfo.apply {
-            flags = flags or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
-        }
         registerScreenOffReceiver()
         loadKeywordConfig()
         loadKeywordDirection()
@@ -430,24 +438,10 @@ class AutoSlideService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     /**
-     * 监听音量键(在滑动运行中按音量键强制停止)
-     *
-     * @param event 物理按键事件
-     * @return 是否已处理按键事件
+     * 物理按键回调：目前不需要拦截任何物理按键
      */
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        // 只在按键按下且滑动正在运行时处理
-        if (event.action != KeyEvent.ACTION_DOWN || !isRunning) {
-            return super.onKeyEvent(event)
-        }
-        // 判断是否为音量键
-        val isVolumeKey = event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
-        if (!isVolumeKey) {
-            return super.onKeyEvent(event)
-        }
-        // 强制停止滑动并恢复悬浮窗面板
-        forceStop()
-        return true
+        return super.onKeyEvent(event)
     }
 
     /* 强制停止滑动并恢复悬浮窗面板 */
@@ -526,15 +520,10 @@ class AutoSlideService : AccessibilityService() {
         val currentGen = runGeneration
         handler.removeCallbacks(slideRunnable)
         handler.removeCallbacks(keywordCheckRunnable)
-        // 延迟300ms执行第一次滑动/检测(等待悬浮窗完成最小化动画)
         handler.postDelayed({
             if (currentGen == runGeneration && isRunning) {
                 if (keywordCheckActive) {
                     scheduleKeywordCheck(0L)
-                    // 固定时间模式：保留定时滑动，关键词命中时另外触发一次滑动
-                    if (pauseMode == PAUSE_MODE_FIXED) {
-                        runSlide()
-                    }
                 } else {
                     runSlide()
                 }
@@ -612,6 +601,12 @@ class AutoSlideService : AccessibilityService() {
         val gesture = GestureDescription.Builder().addStroke(
             GestureDescription.StrokeDescription(path, 0, durationMillis)
         ).build()
+
+        // 统计数据
+        val h = resources.displayMetrics.heightPixels
+        val distMm = (h * 0.4f / resources.displayMetrics.density / 6.0f).toInt().coerceAtLeast(1)
+        updateStats(swipes = 1, distanceMm = distMm)
+
         dispatchGestureAndContinue(gesture, fromKeyword)
     }
 
@@ -686,6 +681,12 @@ class AutoSlideService : AccessibilityService() {
         val gesture = GestureDescription.Builder().addStroke(
             GestureDescription.StrokeDescription(path, 0, durationMillis)
         ).build()
+
+        // 统计数据
+        val height = resources.displayMetrics.heightPixels
+        val distanceMm = (height * 0.6f / resources.displayMetrics.density / 6.0f).toInt().coerceAtLeast(1)
+        updateStats(swipes = 1, distanceMm = distanceMm)
+
         dispatchGestureAndContinue(gesture, fromKeyword)
     }
 
@@ -1332,6 +1333,7 @@ class AutoSlideService : AccessibilityService() {
         }
         keywordConsecutiveTriggers++
         lastKeywordTriggerAt = now
+        updateStats(matches = 1)
         Log.i(TAG, "Keyword matched! Swiping. (Trigger $keywordConsecutiveTriggers/$keywordMaxTriggers)")
         performSlideByDirection(calculateGestureDurationMillis(), fromKeyword = true)
     }
