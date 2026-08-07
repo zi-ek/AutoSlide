@@ -29,6 +29,9 @@ const val KEY_DOUYIN_AUTOPLAY = "douyinAutoPlay"        // 是否自动打开抖
 const val KEY_STATS_TOTAL_SWIPES = "stats_total_swipes"
 const val KEY_STATS_KEYWORD_MATCHES = "stats_keyword_matches"
 const val KEY_STATS_SAVED_DISTANCE = "stats_saved_distance"
+const val KEY_IS_REPORTED = "is_reported"
+const val REPORT_URL = "https://auto-slide-sigma.vercel.app/api/report"
+
 
 // ==================== 默认值 ====================
 const val DEFAULT_SPEED = 50                        // 默认滑动速度（中等）

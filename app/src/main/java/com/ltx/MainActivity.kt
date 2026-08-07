@@ -180,6 +180,7 @@ class MainActivity : AppCompatActivity() {
         }
         setupStartButton()
         setupUpdateButton()
+        reportInstallIfNeeded()
         // 注册Shizuku监听器
         binding.root.post {
             Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
@@ -859,6 +860,36 @@ class MainActivity : AppCompatActivity() {
     private fun setupUpdateButton() {
         binding.checkUpdateButton.setOnClickListener {
             UpdateChecker.checkUpdate(this, showToastOnLatest = true)
+        }
+    }
+
+    /**
+     * 首次安装上报统计
+     */
+    private fun reportInstallIfNeeded() {
+        val isReported = preferences.getBoolean(KEY_IS_REPORTED, false)
+        if (isReported) return
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val url = java.net.URL(REPORT_URL)
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+                
+                val responseCode = connection.responseCode
+                Log.d(TAG, "Install report response code: $responseCode")
+                if (responseCode == 200) {
+                    preferences.edit { putBoolean(KEY_IS_REPORTED, true) }
+                    Log.i(TAG, "Install reported successfully")
+                } else {
+                    Log.w(TAG, "Install report failed with code: $responseCode")
+                }
+                connection.disconnect()
+            } catch (e: Exception) {
+                Log.e(TAG, "Install report failed", e)
+            }
         }
     }
 
