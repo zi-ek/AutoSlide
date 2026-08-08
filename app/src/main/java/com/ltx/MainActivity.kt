@@ -32,7 +32,6 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import java.util.Locale
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.edit
 import androidx.core.view.isVisible
@@ -50,6 +49,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuRemoteProcess
+import java.util.Locale
 import android.R as AndroidR
 import com.google.android.material.R as MaterialR
 
@@ -173,9 +173,6 @@ class MainActivity : AppCompatActivity() {
         binding.overlayPermissionSwitch.setOnCheckedChangeListener(overlaySwitchListener)
         binding.douyinAutoPlaySwitch.setOnCheckedChangeListener { _, isChecked ->
             preferences.edit { putBoolean(KEY_DOUYIN_AUTOPLAY, isChecked) }
-            if (isChecked && !isAccessibilityServicePermissionEnabled()) {
-                Toast.makeText(this, R.string.douyin_auto_play_need_accessibility, Toast.LENGTH_LONG).show()
-            }
             AutoSlideService.getInstance()?.setDouyinAutoPlayEnabled(isChecked)
         }
         setupStartButton()

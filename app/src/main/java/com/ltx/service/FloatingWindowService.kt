@@ -8,15 +8,18 @@ package com.ltx.service
  * 设置按钮返回主界面，关闭按钮停止服务。
  */
 
+// import com.ltx.KEY_CUSTOM_TRAJECTORY_DOWN
+// import com.ltx.KEY_CUSTOM_TRAJECTORY_LEFT
+// import com.ltx.KEY_CUSTOM_TRAJECTORY_RIGHT
+// import com.ltx.KEY_CUSTOM_TRAJECTORY_UP
+// import com.ltx.getTrajectoryKey
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.PixelFormat
-import android.graphics.PointF
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -29,9 +32,7 @@ import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.Toast
-import androidx.core.content.ContextCompat
 import androidx.core.content.edit
-import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.ltx.DEFAULT_KEYWORDS
 import com.ltx.DEFAULT_MAX_PAUSE_TIME
 import com.ltx.DEFAULT_MIN_PAUSE_TIME
@@ -41,10 +42,6 @@ import com.ltx.DIRECTION_DOWN
 import com.ltx.DIRECTION_LEFT
 import com.ltx.DIRECTION_RIGHT
 import com.ltx.DIRECTION_UP
-import com.ltx.KEY_CUSTOM_TRAJECTORY_DOWN
-import com.ltx.KEY_CUSTOM_TRAJECTORY_LEFT
-import com.ltx.KEY_CUSTOM_TRAJECTORY_RIGHT
-import com.ltx.KEY_CUSTOM_TRAJECTORY_UP
 import com.ltx.KEY_KEYWORDS
 import com.ltx.KEY_MAX_PAUSE_TIME
 import com.ltx.KEY_MIN_PAUSE_TIME
@@ -57,14 +54,12 @@ import com.ltx.PREFS_NAME
 import com.ltx.R
 import com.ltx.SlideEvent
 import com.ltx.SlideEventHub
-import com.ltx.getTrajectoryKey
 import com.ltx.parseKeywords
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
 /**
  * 悬浮窗服务
@@ -143,7 +138,7 @@ class FloatingWindowService : Service() {
                 if (!::rootView.isInitialized) return@collect
                 when (event) {
                     is SlideEvent.ForceStop -> expand(stopSlide = false)
-                    is SlideEvent.CustomTrajectoryCleared -> updateDirectionButtonIndicators()
+                    // is SlideEvent.CustomTrajectoryCleared -> updateDirectionButtonIndicators()
                 }
             }
         }
@@ -154,7 +149,7 @@ class FloatingWindowService : Service() {
         isServiceRunning = false
         AutoSlideTileService.requestUpdate(this)
         serviceScope.cancel()
-        removeRecordView()
+        // removeRecordView()
         super.onDestroy()
         runCatching { windowManager.removeView(rootView) }
     }
@@ -346,6 +341,7 @@ class FloatingWindowService : Service() {
      *
      * @param direction 方向字符串
      */
+    /*
     private fun showTrajectoryManageDialog(direction: String) {
         val items = arrayOf(getString(R.string.record), getString(R.string.reset))
         val builder = AlertDialog.Builder(ContextThemeWrapper(this, R.style.Theme_AutoSlide))
@@ -357,12 +353,14 @@ class FloatingWindowService : Service() {
             }.setNegativeButton(R.string.cancel, null)
         showSystemAlertDialog(builder)
     }
+    */
 
     /**
      * 开始录制轨迹
      *
      * @param direction 方向字符串
      */
+    /*
     private fun startRecordingTrajectory(direction: String) {
         AutoSlideService.getInstance()?.stopSlide()
         minimize()
@@ -401,13 +399,16 @@ class FloatingWindowService : Service() {
             Log.e("FloatingWindowService", "Failed to add record view", e)
         }
     }
+    */
 
     /* 移除录制视图 */
+    /*
     private fun removeRecordView() {
         val recordView = recordOverlayView ?: return
         runCatching { windowManager.removeView(recordView) }
         recordOverlayView = null
     }
+    */
 
     /**
      * 保存轨迹
@@ -415,6 +416,7 @@ class FloatingWindowService : Service() {
      * @param points 轨迹点列表
      * @param direction 方向字符串
      */
+    /*
     private fun saveTrajectory(points: List<PointF>, direction: String) {
         if (points.isEmpty()) return
         val sb = StringBuilder()
@@ -426,12 +428,14 @@ class FloatingWindowService : Service() {
             putString(key, sb.toString())
         }
     }
+    */
 
     /**
      * 清除轨迹
      *
      * @param direction 方向字符串
      */
+    /*
     private fun clearTrajectory(direction: String) {
         val key = getTrajectoryKey(direction) ?: return
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
@@ -439,6 +443,7 @@ class FloatingWindowService : Service() {
         }
         updateDirectionButtonIndicators()
     }
+    */
 
     /**
      * 获取方向显示名称
@@ -460,6 +465,7 @@ class FloatingWindowService : Service() {
      * @param direction 方向字符串
      * @return 标题
      */
+    /*
     private fun getTrajectoryManageTitle(direction: String): String = when (direction) {
         DIRECTION_UP -> getString(R.string.trajectory_title_up)
         DIRECTION_DOWN -> getString(R.string.trajectory_title_down)
@@ -467,6 +473,7 @@ class FloatingWindowService : Service() {
         DIRECTION_RIGHT -> getString(R.string.trajectory_title_right)
         else -> direction
     }
+    */
 
     /**
      * 获取录制时的方向提示文本
@@ -474,6 +481,7 @@ class FloatingWindowService : Service() {
      * @param direction 方向字符串
      * @return 方向提示文本
      */
+    /*
     private fun getRecordDirectionInstruction(direction: String): String = when (direction) {
         DIRECTION_UP -> getString(R.string.record_direction_up_explicit)
         DIRECTION_DOWN -> getString(R.string.record_direction_down_explicit)
@@ -481,6 +489,7 @@ class FloatingWindowService : Service() {
         DIRECTION_RIGHT -> getString(R.string.record_direction_right_explicit)
         else -> direction
     }
+    */
 
     /**
      * 根据轨迹首尾点位移检测主导方向
@@ -488,6 +497,7 @@ class FloatingWindowService : Service() {
      * @param points 轨迹点列表
      * @return 主导方向
      */
+    /*
     private fun detectTrajectoryDirection(points: List<PointF>): String {
         if (points.size < 2) return ""
         val start = points.first()
@@ -499,6 +509,7 @@ class FloatingWindowService : Service() {
             else -> if (dy > 0) DIRECTION_UP else DIRECTION_DOWN
         }
     }
+    */
 
     /**
      * 当录制轨迹方向与所选方向不一致时弹出确认对话框
@@ -507,6 +518,7 @@ class FloatingWindowService : Service() {
      * @param selectedDirection 用户选择的方向
      * @param detectedDirection 检测到的实际方向
      */
+    /*
     private fun showDirectionMismatchDialog(
         points: List<PointF>, selectedDirection: String, detectedDirection: String
     ) {
@@ -524,9 +536,11 @@ class FloatingWindowService : Service() {
             }.setNegativeButton(R.string.cancel, null)
         showSystemAlertDialog(builder)
     }
+    */
 
     /* 更新方向按钮视觉标记 */
     private fun updateDirectionButtonIndicators() {
+        /*
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val defaultColor = ContextCompat.getColor(this, R.color.floating_btn_bg)
         val activeColor = ContextCompat.getColor(this, R.color.floating_btn_active)
@@ -552,6 +566,7 @@ class FloatingWindowService : Service() {
                 )
             }
         }
+        */
     }
 
     /**
@@ -575,6 +590,7 @@ class FloatingWindowService : Service() {
             startSlide()
         }
         // 方向按钮⌈长按⌋事件绑定
+        /*
         button.setOnLongClickListener {
             val hasCustom = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
                 .getString(getTrajectoryKey(direction), null)
@@ -586,6 +602,7 @@ class FloatingWindowService : Service() {
             }
             true
         }
+        */
     }
 
     /* 最小化悬浮窗 */

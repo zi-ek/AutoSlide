@@ -20,7 +20,6 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Path
-import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
@@ -77,7 +76,6 @@ import com.ltx.PREFS_NAME
 import com.ltx.R
 import com.ltx.SlideEvent
 import com.ltx.SlideEventHub
-import com.ltx.getTrajectoryKey
 import com.ltx.parseKeywords
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -155,7 +153,6 @@ class AutoSlideService : AccessibilityService() {
         }
     }
 
-    /* 执行一次定时滑动 */
     private fun runSlide() {
         if (!isRunning) {
             return
@@ -232,18 +229,21 @@ class AutoSlideService : AccessibilityService() {
      * @param direction 方向字符串
      * @return 自定义轨迹字符串
      */
+    /*
     private fun getCustomTrajectory(direction: String): String? {
         val key = getTrajectoryKey(direction) ?: return null
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val value = prefs.getString(key, null)
         return if (value.isNullOrBlank()) null else value
     }
+    */
 
     /**
      * 清除自定义轨迹
      *
      * @param direction 方向字符串
      */
+    /*
     private fun clearCustomTrajectory(direction: String) {
         val key = getTrajectoryKey(direction) ?: return
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
@@ -251,6 +251,7 @@ class AutoSlideService : AccessibilityService() {
         }
         SlideEventHub.sendEvent(SlideEvent.CustomTrajectoryCleared)
     }
+    */
 
     /**
      * 更新滑动速度而不触发启动逻辑
@@ -382,6 +383,10 @@ class AutoSlideService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instanceRef = WeakReference(this)
+        // 重新开启按键过滤，用于录制时拦截音量键
+        serviceInfo = serviceInfo.apply {
+            flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
+        }
         registerScreenOffReceiver()
         loadKeywordConfig()
         loadKeywordDirection()
@@ -402,11 +407,10 @@ class AutoSlideService : AccessibilityService() {
         super.onDestroy()
     }
 
-    /* 停止自动滑动循环 */
+    /**
+     * 停止滑动并重置所有状态标记
+     */
     fun stopSlide() {
-        if (!isRunning) {
-            return
-        }
         isRunning = false
         isGestureActive = false
         keywordModeActive = false
@@ -438,7 +442,7 @@ class AutoSlideService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     /**
-     * 物理按键回调：目前不需要拦截任何物理按键
+     * 物理按键回调
      */
     override fun onKeyEvent(event: KeyEvent): Boolean {
         return super.onKeyEvent(event)
@@ -538,6 +542,7 @@ class AutoSlideService : AccessibilityService() {
      */
     private fun performSlideByDirection(durationMillis: Long, fromKeyword: Boolean = false) {
         // 读取自定义轨迹字符串
+        /*
         val trajectoryStr = getCustomTrajectory(currentDirection)
         if (trajectoryStr != null) {
             // 分发自定义轨迹
@@ -547,6 +552,10 @@ class AutoSlideService : AccessibilityService() {
             val (startX, startY, endX, endY) = getSlideCoordinates(currentDirection)
             dispatchLineGesture(startX, startY, endX, endY, durationMillis, fromKeyword)
         }
+        */
+        // 统一分发线性轨迹
+        val (startX, startY, endX, endY) = getSlideCoordinates(currentDirection)
+        dispatchLineGesture(startX, startY, endX, endY, durationMillis, fromKeyword)
     }
 
     /**
@@ -555,6 +564,7 @@ class AutoSlideService : AccessibilityService() {
      * @param trajectoryStr 轨迹字符串
      * @param durationMillis 手势持续时间(毫秒)
      */
+    /*
     private fun dispatchCustomGesture(trajectoryStr: String, durationMillis: Long, fromKeyword: Boolean = false) {
         // 按分号拆分轨迹字符串并去掉空项
         val pointsStr = trajectoryStr.split(";").filter { it.isNotBlank() }
@@ -609,6 +619,7 @@ class AutoSlideService : AccessibilityService() {
 
         dispatchGestureAndContinue(gesture, fromKeyword)
     }
+    */
 
     /**
      * 计算滑动手势持续时间

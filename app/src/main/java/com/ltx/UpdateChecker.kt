@@ -10,14 +10,21 @@ package com.ltx
 import android.app.Activity
 import android.app.DownloadManager
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.Settings
+import android.text.Spannable
+import android.text.SpannableStringBuilder
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -55,12 +62,17 @@ object UpdateChecker {
      * @param downloadUrl 下载URL
      */
     private data class UpdateInfo(
-        val versionName: String, val updateLog: String, val downloadUrl: String
+        val versionName: String, 
+        val updateLog: String, 
+        val downloadUrl: String
     )
 
     // 远端版本信息 JSON 的地址（本仓库地址，可能被代理加速）
     private const val UPDATE_INFO_URL =
         "https://raw.githubusercontent.com/zi-ek/AutoSlide/master/update.json"
+
+    // 固定网盘下载地址
+    private const val LANZOU_DOWNLOAD_URL = "https://q-sj.lanzoum.com/b0pnt04li"
 
     // 用于加速下载的 GitHub 代理前缀（按顺序尝试，哪个能用用哪个；最后直连）
     private val GITHUB_PROXY_PREFIXES = listOf(
@@ -156,8 +168,7 @@ object UpdateChecker {
     private suspend fun fetchUpdateInfo(context: Context): Result<UpdateInfo?> = withContext(ioDispatcher) {
         runCatching {
             // 依次尝试各个加速代理，全部失败再试直连
-            val candidates = GITHUB_PROXY_PREFIXES.map { it to (it + UPDATE_INFO_URL) } +
-                ("" to UPDATE_INFO_URL)
+            val candidates = GITHUB_PROXY_PREFIXES.map { it to (it + UPDATE_INFO_URL) } + ("" to UPDATE_INFO_URL)
             var lastError: Exception? = null
             for ((prefix, candidateUrl) in candidates) {
                 try {
@@ -226,12 +237,17 @@ object UpdateChecker {
         if (!canShowDialog(activity)) return
         Log.d(TAG, "show update dialog")
         val lifecycleOwner = activity as? LifecycleOwner
+        
+        val message = updateInfo.updateLog.ifEmpty { activity.getString(R.string.update_found_default_message) }
+
         updateDialog = AlertDialog.Builder(activity)
-            .setTitle(activity.getString(R.string.update_found_title, updateInfo.versionName)).setMessage(
-                updateInfo.updateLog.ifEmpty {
-                    activity.getString(R.string.update_found_default_message)
-                }).setPositiveButton(R.string.update_now, null).setNegativeButton(R.string.cancel, null)
-            .setCancelable(false).create().also { dialog ->
+            .setTitle(activity.getString(R.string.update_found_title, updateInfo.versionName))
+            .setMessage(message)
+            .setPositiveButton(R.string.update_now, null)
+            .setNeutralButton("网盘下载", null)
+            .setNegativeButton(R.string.cancel, null)
+            .setCancelable(false)
+            .create().also { dialog ->
                 val shownAt = SystemClock.elapsedRealtime()
                 val lifecycleObserver = createLifecycleObserver(dialog)
                 lifecycleOwner?.lifecycle?.addObserver(lifecycleObserver)
@@ -304,6 +320,40 @@ object UpdateChecker {
             pendingUpdateInfo = null
             dialog.dismiss()
             downloadAndInstall(activity, updateInfo.downloadUrl, updateInfo.versionName)
+        }
+        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+            // 复制固定网盘地址
+            copyToClipboard(activity, LANZOU_DOWNLOAD_URL)
+            
+            // 准备展开后的消息内容
+            val originalLog = updateInfo.updateLog.ifEmpty { activity.getString(R.string.update_found_default_message) }
+            val successHint = "\n\n✅ 网盘地址已复制，请在浏览器中打开并下载\n\n🔐 网盘密码:lanr"
+            
+            // 使用 SpannableStringBuilder 增加颜色和加粗效果
+            val spannable = SpannableStringBuilder(originalLog).apply {
+                val start = length
+                append(successHint)
+                setSpan(
+                    ForegroundColorSpan(ContextCompat.getColor(activity, R.color.primary)),
+                    start,
+                    length,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                setSpan(
+                    StyleSpan(Typeface.BOLD),
+                    start,
+                    length,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+            
+            // 更新弹窗内容，不关闭弹窗
+            dialog.setMessage(spannable)
+            
+            // 禁用按钮并修改文字，提示已复制
+            val neutralBtn = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
+            neutralBtn.isEnabled = false
+            neutralBtn.text = "地址已复制"
         }
         dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
             val shownDuration = SystemClock.elapsedRealtime() - shownAt
@@ -391,6 +441,18 @@ object UpdateChecker {
         } else {
             Toast.makeText(context, R.string.download_failed, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * 将文本复制到剪贴板
+     *
+     * @param context 上下文
+     * @param text 要复制的文本
+     */
+    private fun copyToClipboard(context: Context, text: String) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("AutoSlide Download Link", text)
+        clipboard.setPrimaryClip(clip)
     }
 
     /**

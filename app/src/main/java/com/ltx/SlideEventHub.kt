@@ -33,5 +33,5 @@ sealed class SlideEvent {
     /* 强行停止滑动事件 */
     object ForceStop : SlideEvent()
     /* 自定义轨迹被清除事件（悬浮窗据此刷新方向按钮高亮） */
-    object CustomTrajectoryCleared : SlideEvent()
+    // object CustomTrajectoryCleared : SlideEvent()
 }

@@ -36,12 +36,12 @@ const val REPORT_URL = "https://auto-slide-sigma.vercel.app/api/report"
 // ==================== 默认值 ====================
 const val DEFAULT_SPEED = 50                        // 默认滑动速度（中等）
 const val DEFAULT_PAUSE_TIME = 15                    // 默认固定停顿 15 秒
-const val DEFAULT_MIN_PAUSE_TIME = 1                // 默认随机停顿下限 1 秒
-const val DEFAULT_MAX_PAUSE_TIME = 50                // 默认随机停顿上限 50 秒
+const val DEFAULT_MIN_PAUSE_TIME = 5                // 默认随机停顿下限 5 秒
+const val DEFAULT_MAX_PAUSE_TIME = 30                // 默认随机停顿上限 30 秒
 // 默认关键词（用中文逗号分隔，供第一次打开应用时预填）
 const val DEFAULT_KEYWORDS = "上滑继续，查看详情，官方，官号，点击进入，限时抢购，购物"
 const val DEFAULT_KEYWORD_IGNORE_CASE = true        // 默认忽略大小写
-const val DEFAULT_KEYWORD_INTERVAL = 5           // 默认每 5 秒检测一次
+const val DEFAULT_KEYWORD_INTERVAL = 2           // 默认每 5 秒检测一次
 const val DEFAULT_KEYWORD_COOLDOWN = 3           // 默认触发后冷却 3 秒
 const val DEFAULT_KEYWORD_MAX_TRIGGERS = 3          // 默认同一画面最多触发 3 次
 const val DEFAULT_DOUYIN_AUTOPLAY = true            // 默认开启抖音自动连播
@@ -72,6 +72,7 @@ const val DEFAULT_KEYWORD_DIRECTION = DIRECTION_UP
 
 // ==================== 自定义轨迹 ====================
 // 四个方向的自定义轨迹存储键名，轨迹是一串“x,y;x,y;...”坐标点
+/*
 const val KEY_CUSTOM_TRAJECTORY_UP = "customTrajectory_up"
 const val KEY_CUSTOM_TRAJECTORY_DOWN = "customTrajectory_down"
 const val KEY_CUSTOM_TRAJECTORY_LEFT = "customTrajectory_left"
@@ -90,6 +91,7 @@ fun getTrajectoryKey(direction: String): String? = when (direction) {
     DIRECTION_RIGHT -> KEY_CUSTOM_TRAJECTORY_RIGHT
     else -> null
 }
+*/
 
 /**
  * 兼容读取关键词时间参数（单位：秒）
