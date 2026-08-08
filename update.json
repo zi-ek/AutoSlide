@@ -1,6 +1,6 @@
 {
-  "versionCode": 28,
-  "versionName": "2.6.9",
+  "versionCode": 29,
+  "versionName": "2.7.0",
   "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.6.9/AutoSlide-v2.6.9.apk",
   "updateLog": "1. 修复音量键导致程序退出/误触问题，音量键恢复正常调节\n2. 新增数据统计卡片：累计滑动、关键词命中、节省手指行程\n3. 悬浮球双击展开：第一次点击放大，3 秒内再点一次展开面板"
 }
