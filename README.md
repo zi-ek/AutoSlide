@@ -22,7 +22,7 @@
 
 ## 截图展示
 
-![](assets/screenshot.png)
+![](assets/screenshot.png?v=20260808)
 
 ## 快速开始
 
