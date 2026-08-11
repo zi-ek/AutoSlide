@@ -30,7 +30,9 @@ const val KEY_STATS_TOTAL_SWIPES = "stats_total_swipes"
 const val KEY_STATS_KEYWORD_MATCHES = "stats_keyword_matches"
 const val KEY_STATS_SAVED_DISTANCE = "stats_saved_distance"
 const val KEY_IS_REPORTED = "is_reported"
-const val REPORT_URL = "https://auto-slide-sigma.vercel.app/api/report"
+const val KEY_LAST_REPORTED_VERSION = "last_reported_version"
+// 统计后台地址（Cloudflare Tunnel 绑定域名）
+const val STATS_URL = "https://pve.8450696.shop"
 
 
 // ==================== 默认值 ====================

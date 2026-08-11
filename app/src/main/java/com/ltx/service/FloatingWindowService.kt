@@ -54,6 +54,7 @@ import com.ltx.PREFS_NAME
 import com.ltx.R
 import com.ltx.SlideEvent
 import com.ltx.SlideEventHub
+import com.ltx.isAccessibilityServicePermissionEnabled
 import com.ltx.parseKeywords
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -581,9 +582,22 @@ class FloatingWindowService : Service() {
         button.setOnClickListener {
             val service = AutoSlideService.getInstance()
             if (service == null) {
-                // 无障碍服务未连接时给出提示，避免点击后毫无反应
-                Log.w("FloatingWindowService", "方向键点击时无障碍服务未连接")
-                Toast.makeText(this, R.string.accessibility_service_disabled, Toast.LENGTH_SHORT).show()
+                if (isAccessibilityServicePermissionEnabled()) {
+                    // 设置里已开启但服务实例还没连上（启动中/崩溃后重连），给出准确提示并自动重试一次
+                    Log.w("FloatingWindowService", "无障碍服务设置已开启但实例未连接，自动重试一次")
+                    Toast.makeText(this, R.string.accessibility_service_starting, Toast.LENGTH_SHORT).show()
+                    rootView.postDelayed({
+                        val retryService = AutoSlideService.getInstance()
+                        if (retryService != null) {
+                            retryService.setDirection(direction)
+                            startSlide()
+                        }
+                    }, 1500L)
+                } else {
+                    // 设置里确实没开启
+                    Log.w("FloatingWindowService", "方向键点击时无障碍服务未开启")
+                    Toast.makeText(this, R.string.accessibility_service_disabled, Toast.LENGTH_SHORT).show()
+                }
                 return@setOnClickListener
             }
             service.setDirection(direction)

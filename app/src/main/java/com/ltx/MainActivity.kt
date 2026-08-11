@@ -51,6 +51,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuRemoteProcess
 import java.util.Locale
@@ -895,29 +896,76 @@ class MainActivity : AppCompatActivity() {
      */
     private fun reportInstallIfNeeded() {
         val isReported = preferences.getBoolean(KEY_IS_REPORTED, false)
-        if (isReported) return
+        val lastReportedVersion = preferences.getInt(KEY_LAST_REPORTED_VERSION, 0)
+        val currentVersionCode = getAppVersionCode()
+        // 首次安装或版本号变化时才上报
+        if (isReported && lastReportedVersion == currentVersionCode) return
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val url = java.net.URL(REPORT_URL)
+                val url = java.net.URL(STATS_URL + "/api/report")
                 val connection = url.openConnection() as java.net.HttpURLConnection
-                connection.requestMethod = "GET"
+                connection.requestMethod = "POST"
                 connection.connectTimeout = 5000
                 connection.readTimeout = 5000
-                
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+
+                val payload = JSONObject()
+                    .put("event", if (isReported) "update" else "install")
+                    .put("deviceId", Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "")
+                    .put("device", buildDeviceInfoJson())
+                connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+
                 val responseCode = connection.responseCode
                 Log.d(TAG, "Install report response code: $responseCode")
                 if (responseCode == 200) {
-                    preferences.edit { putBoolean(KEY_IS_REPORTED, true) }
-                    Log.i(TAG, "Install reported successfully")
+                    preferences.edit {
+                        putBoolean(KEY_IS_REPORTED, true)
+                        putInt(KEY_LAST_REPORTED_VERSION, currentVersionCode)
+                    }
+                    Log.i(TAG, "Reported successfully")
                 } else {
-                    Log.w(TAG, "Install report failed with code: $responseCode")
+                    Log.w(TAG, "Report failed with code: $responseCode")
                 }
                 connection.disconnect()
             } catch (e: Exception) {
                 Log.e(TAG, "Install report failed", e)
             }
         }
+    }
+
+    /* 构建设备信息 JSON（随统计一起上报） */
+    private fun buildDeviceInfoJson(): JSONObject {
+        return JSONObject()
+            .put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
+            .put("brand", Build.BRAND)
+            .put("android", Build.VERSION.RELEASE)
+            .put("cpu", Build.SUPPORTED_ABIS.joinToString(","))
+            .put("appVersion", getAppVersionName())
+            .put("appVersionCode", getAppVersionCode())
+    }
+
+    /* 获取应用版本名称 */
+    private fun getAppVersionName(): String {
+        val pi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0)
+        }
+        return pi.versionName ?: ""
+    }
+
+    /* 获取应用版本号 */
+    private fun getAppVersionCode(): Int {
+        val pi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageInfo(packageName, 0)
+        }
+        return pi.versionCode
     }
 
     /**

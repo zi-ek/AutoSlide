@@ -1,0 +1,10 @@
+{
+  "name": "autoslide-stats-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AutoSlide 安装统计后台（零依赖）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

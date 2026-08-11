@@ -20,7 +20,8 @@
         android:icon="@mipmap/auto_slide"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AutoSlide">
+        android:theme="@style/Theme.AutoSlide"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

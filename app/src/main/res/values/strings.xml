@@ -12,6 +12,7 @@
     <string name="cancel">取消</string>
     <string name="accessibility_service_enabled">无障碍服务已开启</string>
     <string name="accessibility_service_disabled">无障碍服务已关闭</string>
+    <string name="accessibility_service_starting">无障碍服务正在启动，请稍候再试</string>
     <string name="accessibility_service_auto_enabled">已自动开启无障碍服务</string>
     <string name="manual_enable">手动开启</string>
     <string name="adb_authorization">ADB 授权</string>
