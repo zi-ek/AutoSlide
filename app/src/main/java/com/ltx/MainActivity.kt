@@ -27,6 +27,7 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.Log
 import android.util.TypedValue
+import android.view.WindowManager
 import android.widget.CompoundButton
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -34,6 +35,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.edit
+import androidx.core.view.WindowCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.slider.RangeSlider
@@ -163,6 +167,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        // 刘海屏/挖孔屏适配
+        setupCutoutInsets()
         // 初始化SharedPreferences用于本地配置存储
         preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         restoreSettings()
@@ -181,6 +187,30 @@ class MainActivity : AppCompatActivity() {
         // 注册Shizuku监听器
         binding.root.post {
             Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
+        }
+    }
+
+    /* 刘海屏/挖孔屏适配：读取系统安全区 inset（含挖孔），按安全区给根布局加内边距，避免内容被遮挡 */
+    private fun setupCutoutInsets() {
+        // A：明确告诉系统由应用自行处理系统栏边距，保证各版本行为一致
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        // C：先取出窗口属性，修改后再赋值回去，确保生效
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val params = window.attributes
+            params.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            window.attributes = params
+        }
+
+        // 监听并应用四边安全区边距（B：横屏时左侧/右侧挖孔也能避让）
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { view, insets ->
+            // 系统栏（状态栏/导航栏）inset 已经包含挖孔区域，这里再显式合并 displayCutout 保险
+            val bars = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            insets
         }
     }
 

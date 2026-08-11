@@ -1,6 +1,6 @@
 {
-  "versionCode": 29,
-  "versionName": "2.7.0",
-  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.7.0/AutoSlide-v2.7.0.apk",
-  "updateLog": "1. 优化 UI 布局与间距统一化\n2. 更新弹窗支持网盘下载按钮及自动复制取件码\n3. 适配刘海屏，修复顶部 UI 重叠问题"
+  "versionCode": 30,
+  "versionName": "2.7.1",
+  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.7.1/AutoSlide-v2.7.1.apk",
+  "updateLog": "1. 修复刘海屏/挖孔屏适配：滚动内容不再与状态栏重叠\n2. 适配横屏左右挖孔与手势导航条\n3. 更新弹窗与 UI 优化"
 }
