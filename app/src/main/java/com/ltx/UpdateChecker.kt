@@ -29,6 +29,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.core.content.edit
 import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.net.toUri
@@ -240,7 +241,7 @@ object UpdateChecker {
         
         val message = updateInfo.updateLog.ifEmpty { activity.getString(R.string.update_found_default_message) }
 
-        updateDialog = AlertDialog.Builder(activity)
+        updateDialog = MaterialAlertDialogBuilder(activity)
             .setTitle(activity.getString(R.string.update_found_title, updateInfo.versionName))
             .setMessage(message)
             .setPositiveButton(R.string.update_now, null)

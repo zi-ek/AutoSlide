@@ -37,19 +37,44 @@
                 android:orientation="vertical"
                 android:padding="@dimen/margin_medium">
 
-                <TextView
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/title_statistics"
-                    android:textColor="@color/text_primary"
-                    android:textSize="@dimen/text_size_subtitle"
-                    android:textStyle="bold" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/title_statistics"
+                        android:textColor="@color/text_primary"
+                        android:textSize="@dimen/text_size_subtitle"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/chatRoomText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_chat_room_circle"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:paddingHorizontal="14dp"
+                        android:paddingVertical="7dp"
+                        android:text="@string/chat_room"
+                        android:textColor="@color/on_primary"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        tools:ignore="ClickableViewAccessibility" />
+                </LinearLayout>
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="@dimen/margin_small"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:baselineAligned="false">
 
                     <LinearLayout
                         android:layout_width="0dp"
@@ -156,7 +181,8 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="@dimen/margin_small"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:baselineAligned="false">
 
                     <!--无障碍服务权限-->
                     <LinearLayout
@@ -261,6 +287,7 @@
                         android:text="@string/keyword_detection"
                         android:textColor="@color/toggle_btn_text"
                         app:backgroundTint="@color/toggle_btn_bg"
+                        app:cornerRadius="14dp"
                         tools:ignore="VisualLintButtonSize" />
                     <!--不停顿-->
                     <com.google.android.material.button.MaterialButton
@@ -273,6 +300,7 @@
                         android:text="@string/pause_mode_none"
                         android:textColor="@color/toggle_btn_text"
                         app:backgroundTint="@color/toggle_btn_bg"
+                        app:cornerRadius="14dp"
                         tools:ignore="VisualLintButtonSize" />
                     <!--固定时间-->
                     <!--随机时间-->
@@ -286,6 +314,7 @@
                         android:text="@string/pause_mode_fixed"
                         android:textColor="@color/toggle_btn_text"
                         app:backgroundTint="@color/toggle_btn_bg"
+                        app:cornerRadius="14dp"
                         tools:ignore="VisualLintButtonSize" />
 
                     <com.google.android.material.button.MaterialButton
@@ -298,6 +327,7 @@
                         android:text="@string/pause_mode_random"
                         android:textColor="@color/toggle_btn_text"
                         app:backgroundTint="@color/toggle_btn_bg"
+                        app:cornerRadius="14dp"
                         tools:ignore="VisualLintButtonSize" />
 
                 </com.google.android.material.button.MaterialButtonToggleGroup>
@@ -391,7 +421,8 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="@dimen/margin_small"
                     android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:baselineAligned="false">
 
                     <TextView
                         android:layout_width="wrap_content"
@@ -429,7 +460,8 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="@dimen/margin_small"
                     android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:baselineAligned="false">
 
                     <TextView
                         android:layout_width="0dp"
@@ -461,7 +493,8 @@
                         android:layout_height="wrap_content"
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
-                        android:visibility="gone">
+                        android:visibility="gone"
+                        android:baselineAligned="false">
 
                         <TextView
                             android:layout_width="0dp"
@@ -483,7 +516,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="@dimen/margin_small"
-                        android:orientation="horizontal">
+                        android:orientation="horizontal"
+                        android:baselineAligned="false">
 
                         <TextView
                             android:layout_width="0dp"
@@ -519,10 +553,46 @@
                         app:trackHeight="4dp" />
 
                     <LinearLayout
+                        android:id="@+id/keywordMoreHeader"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="@dimen/margin_small"
-                        android:orientation="horizontal">
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingVertical="4dp">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/keyword_more"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="@dimen/text_size_body" />
+
+                        <TextView
+                            android:id="@+id/keywordMoreArrow"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="▾"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="36sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/keywordMoreContainer"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/margin_small"
+                        android:orientation="horizontal"
+                        android:baselineAligned="false">
 
                         <TextView
                             android:layout_width="0dp"
@@ -595,6 +665,7 @@
                         app:trackColorActive="@color/primary"
                         app:trackColorInactive="@color/switch_track_unchecked"
                         app:trackHeight="4dp" />
+                    </LinearLayout>
 
                     <TextView
                         android:layout_width="match_parent"
@@ -648,7 +719,8 @@
             android:layout_gravity="center_horizontal"
             android:layout_marginTop="@dimen/margin_medium"
             android:text="@string/check_update"
-            android:textColor="@color/text_secondary" />
+            android:textColor="@color/text_secondary"
+            app:cornerRadius="18dp" />
 
         <!--微信打赏二维码-->
         <TextView

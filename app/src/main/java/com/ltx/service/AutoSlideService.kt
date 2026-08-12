@@ -1319,9 +1319,16 @@ class AutoSlideService : AccessibilityService() {
      *
      * @param name 录制名称
      * @param onFinished 完整回放结束后的回调（被中断时不回调）
+     * @param onActionStart 每个动作开始前的回调（用于显示点击圈圈/滑动痕迹）
+     * @param onEnd 回放结束（无论完成还是被中断）后的清理回调
      * @return 是否存在可回放的录制记录
      */
-    fun playMacro(name: String, onFinished: (() -> Unit)? = null): Boolean {
+    fun playMacro(
+        name: String,
+        onFinished: (() -> Unit)? = null,
+        onActionStart: ((AutoSlideInput) -> Unit)? = null,
+        onEnd: (() -> Unit)? = null
+    ): Boolean {
         val macro = getMacro(name) ?: return false
         stopSlide()
         val currentGen = runGeneration
@@ -1345,6 +1352,7 @@ class AutoSlideService : AccessibilityService() {
                         break
                     }
                 }
+                onActionStart?.invoke(input)
                 val ok = dispatchOneInput(input, width, height)
                 if (!ok) {
                     completed = false
@@ -1357,6 +1365,7 @@ class AutoSlideService : AccessibilityService() {
             if (completed) {
                 onFinished?.invoke()
             }
+            onEnd?.invoke()
         }
         return true
     }

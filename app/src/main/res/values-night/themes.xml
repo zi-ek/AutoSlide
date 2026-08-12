@@ -14,6 +14,7 @@
         <item name="android:enforceNavigationBarContrast">false</item>
         <item name="android:textColorPrimary">@color/text_primary</item>
         <item name="android:textColorSecondary">@color/text_secondary</item>
+        <item name="materialAlertDialogTheme">@style/ThemeOverlay.AutoSlide.Dialog</item>
     </style>
 
     <style name="Theme.AutoSlide" parent="Base.Theme.AutoSlide" />

@@ -10,6 +10,7 @@
 //   GET  /             简单的统计看板页面
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
@@ -34,7 +35,7 @@ function ensureData() {
 function readStats() {
   ensureData();
   try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    return dedupeDevices(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
   } catch (e) {
     return { install_count: 0, update_count: 0, unique_devices: 0, devices: [], last_update: null };
   }
@@ -84,6 +85,127 @@ function writeManifest(manifest) {
   fs.writeFileSync(MANIFEST_FILE, JSON.stringify(manifest, null, 2));
 }
 
+/* IP 归属地查询缓存：ip -> 归属地 */
+const ipLocationCache = new Map();
+
+/**
+ * 查询 IP 归属地（免费接口，失败或超时返回空字符串，不影响主流程）
+ */
+function lookupIpLocation(ip) {
+  if (!ip) return Promise.resolve('');
+  // 内网地址无需查询
+  if (/^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip)) {
+    return Promise.resolve('内网');
+  }
+  if (ipLocationCache.has(ip)) {
+    return Promise.resolve(ipLocationCache.get(ip));
+  }
+  return new Promise((resolve) => {
+    const req = https.get(
+      `https://opendata.baidu.com/api.php?query=${encodeURIComponent(ip)}&co=&resource_id=6006&oe=utf8`,
+      { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 3000 },
+      (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => {
+          try {
+            const j = JSON.parse(data);
+            const loc = String((j.data && j.data[0] && j.data[0].location) || '')
+              .replace(/^[，,\s]+/, '')
+              .trim();
+            ipLocationCache.set(ip, loc);
+            resolve(loc);
+          } catch (e) {
+            resolve('');
+          }
+        });
+      }
+    );
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve(''));
+  });
+}
+
+/* ==================== 聊天（频道）数据 ==================== */
+const CHAT_FILE = path.join(DATA_DIR, 'chat.json');
+const CHAT_MESSAGE_LIMIT = 300;
+
+function ensureChatData() {
+  if (!fs.existsSync(CHAT_FILE)) {
+    fs.writeFileSync(CHAT_FILE, JSON.stringify({ channels: [] }, null, 2));
+  }
+}
+
+function readChat() {
+  ensureChatData();
+  try {
+    return JSON.parse(fs.readFileSync(CHAT_FILE, 'utf8'));
+  } catch (e) {
+    return { channels: [] };
+  }
+}
+
+function writeChat(chat) {
+  fs.writeFileSync(CHAT_FILE, JSON.stringify(chat, null, 2));
+}
+
+function genChannelCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+function chatChannelModel(ch, deviceId) {
+  const members = (ch.members || []).map((m) => ({
+    deviceId: m.deviceId,
+    name: m.name,
+    joinedAt: m.joinedAt,
+  }));
+  const last = (ch.messages || []).slice(-1)[0];
+  return {
+    id: ch.id,
+    code: ch.code,
+    name: ch.name,
+    creatorId: ch.creatorId,
+    createdAt: ch.createdAt,
+    members,
+    joined: members.some((m) => m.deviceId === deviceId),
+    lastMessageText: last ? (last.type === 'image' ? '[图片]' : last.text) : '',
+    lastMessageTime: last ? last.time : '',
+  };
+}
+/**
+ * 设备去重：同一设备 ID 视为同一台设备（ANDROID_ID 固定签名下保持稳定）。
+ * 只按 deviceId 合并，绝不按品牌/型号合并。
+ */
+function dedupeDevices(stats) {
+  const devices = stats.devices || [];
+  const map = new Map();
+  for (const d of devices) {
+    const idKey = 'id:' + d.deviceId;
+    const existing = map.get(idKey);
+    if (!existing) {
+      map.set(idKey, d);
+      continue;
+    }
+    // 合并：安装次数相加，首次安装取更早，最近上报取更晚，设备ID保留安装次数多的那一个
+    const installs = (existing.installs || 0) + (d.installs || 0);
+    const prefer = (d.installs || 0) > (existing.installs || 0) ? d : existing;
+    const merged = { ...prefer, installs };
+    if (String(d.firstInstall || '').localeCompare(String(existing.firstInstall || '')) < 0) {
+      merged.firstInstall = d.firstInstall;
+    }
+    if (String(d.lastSeen || '').localeCompare(String(existing.lastSeen || '')) > 0) {
+      merged.lastSeen = d.lastSeen;
+    }
+    map.set(idKey, merged);
+  }
+  stats.devices = [...map.values()].sort((a, b) => String(b.lastSeen).localeCompare(String(a.lastSeen)));
+  stats.unique_devices = stats.devices.length;
+  return stats;
+}
+
 function sendJson(res, code, obj) {
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -98,118 +220,315 @@ function esc(s) {
   }[c]));
 }
 
-function dashboardHtml(stats) {
-  const rows = (stats.devices || [])
-    .map(
-      (d) => `<tr>
-        <td>${esc(d.model)}</td>
-        <td>${esc(d.brand)}</td>
-        <td>${esc(d.android)}</td>
-        <td>${esc(d.cpu)}</td>
-        <td>${esc(d.appVersion)} (${esc(d.appVersionCode)})</td>
-        <td>${esc(d.installs)}</td>
-        <td>${esc(d.firstInstall)}</td>
-        <td>${esc(d.lastSeen)}</td>
-      </tr>`
-    )
-    .join('');
+function fmtBytes(n) {
+  const num = Number(n) || 0;
+  if (num < 1024) return num + ' B';
+  if (num < 1024 * 1024) return (num / 1024).toFixed(1) + ' KB';
+  return (num / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// 共享设计系统：亮色 "机房监控台" 风格，贴合家庭网络实验室的气质。
+function baseStyles() {
+  return `
+    :root {
+      --bg: #f5f4ee;
+      --panel: #ffffff;
+      --panel-alt: #faf9f4;
+      --border: #e5e2d8;
+      --border-soft: #ece9de;
+      --text: #23221f;
+      --text-dim: #6b6a63;
+      --text-faint: #9c9a90;
+      --clay: #d97757;
+      --sage: #7a8f6c;
+      --slate: #6b84a3;
+      --green: #5b9279;
+      --mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+      --serif: 'Source Serif 4', Georgia, serif;
+      --sans: 'Inter', 'Microsoft YaHei', -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(ellipse 900px 500px at 15% -10%, rgba(217,119,87,.06), transparent 60%),
+        radial-gradient(ellipse 700px 400px at 100% 0%, rgba(107,132,163,.05), transparent 60%),
+        var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      padding: 28px 20px 60px;
+    }
+    .wrap { max-width: 1640px; margin: 0 auto; }
+    a { color: var(--clay); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .topbar {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 26px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: .18em;
+      color: var(--text-faint);
+      text-transform: uppercase;
+      margin: 0 0 6px;
+    }
+    h1 { font-family: var(--serif); font-size: 27px; font-weight: 600; margin: 0; letter-spacing: -.01em; color: var(--text); }
+    .breadcrumb { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+    .live {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      letter-spacing: .08em;
+    }
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 0 0 rgba(91,146,121,.6);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(91,146,121,.45); }
+      70% { box-shadow: 0 0 0 6px rgba(91,146,121,0); }
+      100% { box-shadow: 0 0 0 0 rgba(91,146,121,0); }
+    }
+    @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-left: 2px solid var(--accent, var(--clay));
+      border-radius: 8px;
+      padding: 16px 18px;
+      box-shadow: 0 1px 2px rgba(35,34,31,.03);
+    }
+    .card .num {
+      font-family: var(--mono);
+      font-size: 26px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1;
+    }
+    .card .label {
+      font-size: 11px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+      margin-top: 8px;
+    }
+    .section-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+      margin: 0 0 10px 2px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 1px 2px rgba(35,34,31,.03);
+    }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 720px; }
+    th, td {
+      padding: 11px 14px;
+      text-align: left;
+      font-size: 12.5px;
+      border-bottom: 1px solid var(--border-soft);
+      white-space: nowrap;
+    }
+    th {
+      background: var(--panel-alt);
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-weight: 500;
+      font-size: 10.5px;
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    td { color: var(--text-dim); font-family: var(--mono); }
+    td.strong { color: var(--text); }
+    td .ip-loc { margin-top: 2px; color: var(--text-faint); font-size: 10.5px; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: rgba(217,119,87,.06); color: var(--text); }
+    .empty { color: var(--text-faint); font-style: normal; text-align: center; padding: 32px 0 !important; }
+    .actions a {
+      font-family: var(--mono);
+      font-size: 11px;
+      margin-right: 14px;
+      color: var(--clay);
+    }
+    .actions a.dl { color: var(--slate); }
+    .top-links { margin-bottom: 18px; }
+    @media (max-width: 640px) {
+      body { padding: 20px 14px 40px; }
+      .cards { grid-template-columns: repeat(2, 1fr); }
+      .topbar { align-items: flex-start; }
+      h1 { font-size: 20px; }
+    }
+  `;
+}
+
+function pageShell({ title, eyebrow, heading, headerRight, breadcrumb, body }) {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AutoSlide 统计后台</title>
-  <style>
-    body { font-family: "Microsoft YaHei", sans-serif; margin: 20px; background: #f5f6fa; color: #333; }
-    .cards { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
-    .card { background: #fff; border-radius: 12px; padding: 18px 24px; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
-    .card .num { font-size: 28px; font-weight: bold; color: #4a6cf7; }
-    .card .label { font-size: 13px; color: #888; margin-top: 4px; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
-    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; font-size: 13px; }
-    th { background: #4a6cf7; color: #fff; }
-    tr:hover { background: #f0f4ff; }
-  </style>
+  <title>${esc(title)}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap" rel="stylesheet">
+  <style>${baseStyles()}</style>
 </head>
 <body>
-  <h2>AutoSlide 统计后台</h2>
-  <p><a href="/uploads">查看上传的录制脚本 →</a></p>
-  <div class="cards">
-    <div class="card"><div class="num">${stats.install_count || 0}</div><div class="label">安装次数</div></div>
-    <div class="card"><div class="num">${stats.update_count || 0}</div><div class="label">更新次数</div></div>
-    <div class="card"><div class="num">${stats.unique_devices || 0}</div><div class="label">设备数</div></div>
-    <div class="card"><div class="num">${esc(stats.last_update || '-')}</div><div class="label">最近上报</div></div>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <p class="eyebrow">${esc(eyebrow)}</p>
+        ${breadcrumb ? `<p class="breadcrumb">${breadcrumb}</p>` : ''}
+        <h1>${esc(heading)}</h1>
+      </div>
+      ${headerRight || ''}
+    </div>
+    ${body}
   </div>
-  <table>
-    <thead><tr><th>型号</th><th>品牌</th><th>系统</th><th>CPU</th><th>应用版本</th><th>安装次数</th><th>首次安装</th><th>最近上报</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="8">暂无数据</td></tr>'}</tbody>
-  </table>
 </body>
 </html>`;
+}
+
+function dashboardHtml(stats) {
+  const ann = (readChat().announcement) || { title: '公告栏', content: '', updatedAt: '' };
+  const rows = (stats.devices || [])
+    .map(
+      (d) => `<tr>
+        <td class="strong">${esc(d.brand)}</td>
+        <td>${esc(d.model)}</td>
+        <td>${esc(d.deviceId)}</td>
+        <td>${esc(d.android)}</td>
+        <td>${esc(d.cpu)}</td>
+        <td>${esc(d.appVersion)} <span style="color:var(--text-faint)">(${esc(d.appVersionCode)})</span></td>
+        <td class="strong">${esc(d.installs)}</td>
+        <td>${esc(d.firstInstall)}</td>
+        <td>${esc(d.lastSeen)}</td>
+        <td>${esc(d.ip || '-')}${d.ipLoc ? `<div class="ip-loc">${esc(d.ipLoc)}</div>` : ''}</td>
+      </tr>`
+    )
+    .join('');
+
+  const headerRight = `<div class="live"><span class="dot"></span>LIVE · 最近上报 ${esc(stats.last_update || '-')}</div>`;
+
+  const body = `
+    <div class="top-links"><a href="/uploads">查看上传的录制脚本 →</a></div>
+    <div class="panel" style="padding:16px;margin-bottom:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+        <b style="color:var(--text);">公告栏</b>
+        <a href="#" onclick="document.getElementById('announceEdit').style.display='block';return false;">编辑</a>
+      </div>
+      <p style="margin:8px 0 0;color:var(--text-dim);white-space:pre-wrap;word-break:break-word;">${esc(ann.content || '暂无公告')}</p>
+      <form id="announceEdit" method="post" action="/api/chat/announcement" style="display:none;margin-top:12px;">
+        <input name="title" value="${esc(ann.title || '公告栏')}" placeholder="公告标题" style="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel-alt);color:var(--text);font-size:13px;" />
+        <textarea name="content" rows="4" placeholder="公告内容" style="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel-alt);color:var(--text);font-size:13px;resize:vertical;">${esc(ann.content || '')}</textarea>
+        <button type="submit" style="padding:8px 18px;border:none;border-radius:8px;background:var(--clay);color:#fff;font-size:13px;cursor:pointer;">保存公告</button>
+        <span style="margin-left:10px;font-size:11px;color:var(--text-faint);">更新于 ${esc(ann.updatedAt || '-')}</span>
+      </form>
+    </div>
+    <div class="cards">
+      <div class="card" style="--accent: var(--clay)"><div class="num">${stats.install_count || 0}</div><div class="label">安装次数</div></div>
+      <div class="card" style="--accent: var(--sage)"><div class="num">${stats.update_count || 0}</div><div class="label">更新次数</div></div>
+      <div class="card" style="--accent: var(--slate)"><div class="num">${stats.unique_devices || 0}</div><div class="label">设备数</div></div>
+      <div class="card" style="--accent: var(--green)"><div class="num" style="font-size:15px;">${esc(stats.last_update || '-')}</div><div class="label">最近上报</div></div>
+    </div>
+    <p class="section-label">设备日志 · Device Log</p>
+    <div class="panel table-wrap">
+      <table>
+        <thead><tr><th>品牌</th><th>型号</th><th>设备 ID</th><th>系统版本</th><th>CPU</th><th>应用版本</th><th>安装次数</th><th>首次安装</th><th>最近上报</th><th>设备 IP / 归属地</th></tr></thead>
+        <tbody>${rows || '<tr><td class="empty" colspan="10">暂无数据</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
+
+  return pageShell({
+    title: 'AutoSlide 统计后台',
+    eyebrow: 'AutoSlide · Fleet Monitor',
+    heading: '统计后台',
+    headerRight,
+    body,
+  });
 }
 
 function uploadsHtml(manifest) {
   const rows = (manifest.files || [])
     .map(
       (f) => `<tr>
-        <td>${esc(f.deviceName)}</td>
+        <td class="strong">${esc(f.deviceName)}</td>
         <td>${esc(f.deviceId)}</td>
         <td>${esc(f.filename)}</td>
-        <td>${f.size}</td>
+        <td>${esc(fmtBytes(f.size))}</td>
         <td>${esc(f.updatedAt)}</td>
-        <td>
+        <td class="actions">
           <a href="/view?deviceId=${encodeURIComponent(f.deviceId)}&filename=${encodeURIComponent(f.filename)}">查看内容</a>
-          <a href="/api/download?deviceId=${encodeURIComponent(f.deviceId)}&filename=${encodeURIComponent(f.filename)}">下载</a>
+          <a class="dl" href="/api/download?deviceId=${encodeURIComponent(f.deviceId)}&filename=${encodeURIComponent(f.filename)}">下载</a>
         </td>
       </tr>`
     )
     .join('');
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AutoSlide 脚本同步</title>
-  <style>
-    body { font-family: "Microsoft YaHei", sans-serif; margin: 20px; background: #f5f6fa; color: #333; }
-    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
-    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; font-size: 13px; }
-    th { background: #4a6cf7; color: #fff; }
-    tr:hover { background: #f0f4ff; }
-    a { color: #4a6cf7; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-  </style>
-</head>
-<body>
-  <h2>AutoSlide 脚本同步</h2>
-  <p><a href="/">← 返回统计看板</a></p>
-  <table>
-    <thead><tr><th>设备</th><th>设备ID</th><th>文件名</th><th>大小</th><th>更新时间</th><th>操作</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="6">暂无上传文件</td></tr>'}</tbody>
-  </table>
-</body>
-</html>`;
+
+  const body = `
+    <p class="section-label">脚本同步 · ${(manifest.files || []).length} 个文件</p>
+    <div class="panel table-wrap">
+      <table>
+        <thead><tr><th>设备</th><th>设备 ID</th><th>文件名</th><th>大小</th><th>更新时间</th><th>操作</th></tr></thead>
+        <tbody>${rows || '<tr><td class="empty" colspan="6">暂无上传文件</td></tr>'}</tbody>
+      </table>
+    </div>
+  `;
+
+  return pageShell({
+    title: 'AutoSlide 脚本同步',
+    eyebrow: 'AutoSlide · Fleet Monitor',
+    heading: '脚本同步',
+    breadcrumb: '<a href="/">← 返回统计看板</a>',
+    body,
+  });
 }
 
 function viewHtml(content, filename) {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${esc(filename)}</title>
-  <style>
-    body { font-family: "Microsoft YaHei", monospace; margin: 20px; background: #f5f6fa; color: #333; }
-    pre { background: #fff; border-radius: 12px; padding: 16px; overflow: auto; box-shadow: 0 2px 8px rgba(0,0,0,.06); font-size: 12px; white-space: pre-wrap; word-break: break-all; }
-    a { color: #4a6cf7; text-decoration: none; }
-  </style>
-</head>
-<body>
-  <p><a href="/uploads">← 返回文件列表</a> | <a href="javascript:location.reload()">刷新</a></p>
-  <h3>${esc(filename)}</h3>
-  <pre>${esc(content)}</pre>
-</body>
-</html>`;
+  const body = `
+    <p class="section-label">脚本内容 · ${esc(filename)}</p>
+    <div class="panel" style="padding: 4px 0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border-soft);">
+        <span style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">${esc(filename)}</span>
+        <a href="javascript:location.reload()" style="font-family:var(--mono);font-size:11px;">刷新</a>
+      </div>
+      <pre style="margin:0;padding:16px;overflow:auto;font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--text-dim);white-space:pre-wrap;word-break:break-all;">${esc(content)}</pre>
+    </div>
+  `;
+
+  return pageShell({
+    title: filename,
+    eyebrow: 'AutoSlide · Fleet Monitor',
+    heading: '脚本内容',
+    breadcrumb: '<a href="/uploads">← 返回文件列表</a>',
+    body,
+  });
 }
 
 const server = http.createServer(async (req, res) => {
@@ -223,6 +542,15 @@ const server = http.createServer(async (req, res) => {
       const device = payload.device || {};
       const event = payload.event === 'update' ? 'update' : 'install';
       const deviceId = String(payload.deviceId || '').slice(0, 64);
+      // 客户端 IP：优先 Cloudflare 透传的真实 IP
+      const clientIp = String(
+        req.headers['cf-connecting-ip'] ||
+          String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+          req.socket.remoteAddress ||
+          ''
+      ).slice(0, 64);
+
+      const ipLoc = await lookupIpLocation(clientIp);
 
       await updateStats((stats) => {
         if (event === 'install') {
@@ -234,7 +562,7 @@ const server = http.createServer(async (req, res) => {
         if (deviceId) {
           const devices = stats.devices || [];
           const idx = devices.findIndex((d) => d.deviceId === deviceId);
-          const record = {
+          const incoming = {
             deviceId,
             model: String(device.model || '').slice(0, 100),
             brand: String(device.brand || '').slice(0, 100),
@@ -242,14 +570,19 @@ const server = http.createServer(async (req, res) => {
             cpu: String(device.cpu || '').slice(0, 100),
             appVersion: String(device.appVersion || '').slice(0, 50),
             appVersionCode: Number(device.appVersionCode) || 0,
-            firstInstall: idx >= 0 ? devices[idx].firstInstall : now,
             lastSeen: now,
-            installs: idx >= 0 ? (devices[idx].installs || 1) + (event === 'install' ? 1 : 0) : 1,
+            installs: event === 'install' ? 1 : 0,
+            ip: clientIp,
+            ipLoc,
           };
           if (idx >= 0) {
-            devices[idx] = record;
+            const d = devices[idx];
+            incoming.firstInstall = d.firstInstall;
+            incoming.installs = (d.installs || 0) + (event === 'install' ? 1 : 0);
+            devices[idx] = { ...d, ...incoming };
           } else {
-            devices.push(record);
+            incoming.firstInstall = now;
+            devices.push(incoming);
           }
           devices.sort((a, b) => String(b.lastSeen).localeCompare(String(a.lastSeen)));
           stats.devices = devices;
@@ -268,6 +601,251 @@ const server = http.createServer(async (req, res) => {
   // 统计 JSON
   if (req.method === 'GET' && url.pathname === '/api/stats') {
     return sendJson(res, 200, readStats());
+  }
+
+  // 聊天：公告（App 聊天室公告栏读取）
+  if (req.method === 'GET' && url.pathname === '/api/chat/announcement') {
+    const chat = readChat();
+    return sendJson(res, 200, {
+      ok: true,
+      announcement: chat.announcement || { title: '公告栏', content: '', updatedAt: '' },
+    });
+  }
+
+  // 聊天：保存公告（统计后台页面表单提交）
+  if (req.method === 'POST' && url.pathname === '/api/chat/announcement') {
+    try {
+      const raw = await readBody(req, 64 * 1024);
+      const ct = String(req.headers['content-type'] || '');
+      let title = '';
+      let content = '';
+      if (ct.includes('application/json')) {
+        const p = JSON.parse(raw || '{}');
+        title = String(p.title || '').trim().slice(0, 50);
+        content = String(p.content || '').trim().slice(0, 2000);
+      } else {
+        const p = new URLSearchParams(raw);
+        title = String(p.get('title') || '').trim().slice(0, 50);
+        content = String(p.get('content') || '').trim().slice(0, 2000);
+      }
+      const chat = readChat();
+      chat.announcement = {
+        title: title || '公告栏',
+        content,
+        updatedAt: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+      };
+      writeChat(chat);
+      return sendJson(res, 200, { ok: true, announcement: chat.announcement });
+    } catch (e) {
+      return sendJson(res, 400, { ok: false, error: String(e.message || e) });
+    }
+  }
+
+  // 聊天：创建频道
+  if (req.method === 'POST' && url.pathname === '/api/chat/create') {
+    try {
+      const payload = JSON.parse((await readBody(req)) || '{}');
+      const name = String(payload.name || '').trim().slice(0, 50);
+      const deviceId = String(payload.deviceId || '').slice(0, 64);
+      const deviceName = String(payload.deviceName || '').slice(0, 50);
+      if (!name || !deviceId) {
+        return sendJson(res, 400, { ok: false, error: 'name and deviceId required' });
+      }
+      const chat = readChat();
+      let code = genChannelCode();
+      while (chat.channels.some((c) => c.code === code)) code = genChannelCode();
+      const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+      const channel = {
+        id: 'ch_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+        code,
+        name,
+        creatorId: deviceId,
+        createdAt: now,
+        members: [{ deviceId, name: deviceName || deviceId, joinedAt: now }],
+        messages: [],
+        lastSeq: 0,
+      };
+      chat.channels.push(channel);
+      writeChat(chat);
+      return sendJson(res, 200, { ok: true, channel: chatChannelModel(channel, deviceId) });
+    } catch (e) {
+      return sendJson(res, 400, { ok: false, error: String(e.message || e) });
+    }
+  }
+
+  // 聊天：加入频道
+  if (req.method === 'POST' && url.pathname === '/api/chat/join') {
+    try {
+      const payload = JSON.parse((await readBody(req)) || '{}');
+      const channelId = String(payload.channelId || '').slice(0, 80);
+      const deviceId = String(payload.deviceId || '').slice(0, 64);
+      const deviceName = String(payload.deviceName || '').slice(0, 50);
+      if (!channelId || !deviceId) {
+        return sendJson(res, 400, { ok: false, error: 'channelId and deviceId required' });
+      }
+      const chat = readChat();
+      const ch = chat.channels.find((c) => c.id === channelId);
+      if (!ch) return sendJson(res, 404, { ok: false, error: 'channel not found' });
+      const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+      if (!(ch.members || []).some((m) => m.deviceId === deviceId)) {
+        ch.members.push({ deviceId, name: deviceName || deviceId, joinedAt: now });
+      }
+      writeChat(chat);
+      return sendJson(res, 200, { ok: true, channel: chatChannelModel(ch, deviceId) });
+    } catch (e) {
+      return sendJson(res, 400, { ok: false, error: String(e.message || e) });
+    }
+  }
+
+  // 聊天：全部公开频道列表（无需邀请码，点开即加入）
+  if (req.method === 'GET' && url.pathname === '/api/chat/channels') {
+    const deviceId = String(url.searchParams.get('deviceId') || '').slice(0, 64);
+    const chat = readChat();
+    const channels = chat.channels
+      .map((c) => chatChannelModel(c, deviceId))
+      .sort((a, b) =>
+        String(b.lastMessageTime || b.createdAt).localeCompare(String(a.lastMessageTime || a.createdAt))
+      );
+    return sendJson(res, 200, { ok: true, channels });
+  }
+
+  // 聊天：频道详情（成员列表）
+  if (req.method === 'GET' && url.pathname === '/api/chat/channel') {
+    const channelId = String(url.searchParams.get('id') || '').slice(0, 80);
+    const deviceId = String(url.searchParams.get('deviceId') || '').slice(0, 64);
+    const chat = readChat();
+    const ch = chat.channels.find((c) => c.id === channelId);
+    if (!ch) return sendJson(res, 404, { ok: false, error: 'channel not found' });
+    return sendJson(res, 200, { ok: true, channel: chatChannelModel(ch, deviceId) });
+  }
+
+  // 聊天：拉取消息（after=上次消息 seq）
+  if (req.method === 'GET' && url.pathname === '/api/chat/messages') {
+    const channelId = String(url.searchParams.get('channelId') || '').slice(0, 80);
+    const after = parseInt(url.searchParams.get('after') || '0', 10) || 0;
+    const chat = readChat();
+    const ch = chat.channels.find((c) => c.id === channelId);
+    if (!ch) return sendJson(res, 404, { ok: false, error: 'channel not found' });
+    const messages = (ch.messages || []).filter((m) => m.seq > after);
+    return sendJson(res, 200, { ok: true, messages });
+  }
+
+  // 聊天：读取图片消息
+  if (req.method === 'GET' && url.pathname === '/api/chat/image') {
+    const file = sanitize(url.searchParams.get('file') || '', '');
+    if (!file) return sendJson(res, 400, { ok: false, error: 'file required' });
+    const p = path.join(path.join(DATA_DIR, 'chat-images'), file);
+    if (!fs.existsSync(p)) return sendJson(res, 404, { ok: false, error: 'image not found' });
+    const type = file.endsWith('.png') ? 'image/png'
+      : file.endsWith('.gif') ? 'image/gif'
+      : file.endsWith('.webp') ? 'image/webp'
+      : 'image/jpeg';
+    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'public, max-age=86400' });
+    return fs.createReadStream(p).pipe(res);
+  }
+
+  // 聊天：发送消息
+  if (req.method === 'POST' && url.pathname === '/api/chat/send') {
+    try {
+      const payload = JSON.parse((await readBody(req, 8 * 1024 * 1024)) || '{}');
+      const channelId = String(payload.channelId || '').slice(0, 80);
+      const deviceId = String(payload.deviceId || '').slice(0, 64);
+      const deviceName = String(payload.deviceName || '').slice(0, 50);
+      const text = String(payload.text || '').trim().slice(0, 2000);
+      const imageRaw = String(payload.image || '');
+      if (!channelId || !deviceId || (!text && !imageRaw)) {
+        return sendJson(res, 400, { ok: false, error: 'channelId, deviceId and text/image required' });
+      }
+      const chat = readChat();
+      const ch = chat.channels.find((c) => c.id === channelId);
+      if (!ch) return sendJson(res, 404, { ok: false, error: 'channel not found' });
+      ch.lastSeq = (ch.lastSeq || 0) + 1;
+      let msgType = 'text';
+      let imagePath = '';
+      if (imageRaw) {
+        const m = imageRaw.match(/^data:image\/(png|jpe?g|gif|webp);base64,(.+)$/i);
+        const b64 = m ? m[2] : imageRaw;
+        const buf = Buffer.from(b64, 'base64');
+        if (!buf.length || buf.length > 6 * 1024 * 1024) {
+          return sendJson(res, 400, { ok: false, error: 'image invalid or too large' });
+        }
+        const ext = m ? (m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase()) : 'png';
+        const imageDir = path.join(DATA_DIR, 'chat-images');
+        fs.mkdirSync(imageDir, { recursive: true });
+        const file = ch.id + '_' + ch.lastSeq + '.' + ext;
+        fs.writeFileSync(path.join(imageDir, file), buf);
+        imagePath = '/api/chat/image?file=' + encodeURIComponent(file);
+        msgType = 'image';
+      }
+      const msg = {
+        seq: ch.lastSeq,
+        channelId,
+        deviceId,
+        name: deviceName || deviceId,
+        text,
+        type: msgType,
+        image: imagePath,
+        time: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+      };
+      ch.messages = ch.messages || [];
+      ch.messages.push(msg);
+      if (ch.messages.length > CHAT_MESSAGE_LIMIT) {
+        ch.messages = ch.messages.slice(-CHAT_MESSAGE_LIMIT);
+      }
+      writeChat(chat);
+      return sendJson(res, 200, { ok: true, message: msg });
+    } catch (e) {
+      return sendJson(res, 400, { ok: false, error: String(e.message || e) });
+    }
+  }
+
+  // 聊天：退出频道
+  if (req.method === 'POST' && url.pathname === '/api/chat/leave') {
+    try {
+      const payload = JSON.parse((await readBody(req)) || '{}');
+      const channelId = String(payload.channelId || '').slice(0, 80);
+      const deviceId = String(payload.deviceId || '').slice(0, 64);
+      const chat = readChat();
+      const ch = chat.channels.find((c) => c.id === channelId);
+      if (!ch) return sendJson(res, 404, { ok: false, error: 'channel not found' });
+      ch.members = (ch.members || []).filter((m) => m.deviceId !== deviceId);
+      writeChat(chat);
+      return sendJson(res, 200, { ok: true });
+    } catch (e) {
+      return sendJson(res, 400, { ok: false, error: String(e.message || e) });
+    }
+  }
+
+  // 聊天：删除频道（仅创建者）
+  if (req.method === 'POST' && url.pathname === '/api/chat/delete') {
+    try {
+      const payload = JSON.parse((await readBody(req)) || '{}');
+      const channelId = String(payload.channelId || '').slice(0, 80);
+      const deviceId = String(payload.deviceId || '').slice(0, 64);
+      const chat = readChat();
+      const idx = chat.channels.findIndex((c) => c.id === channelId);
+      if (idx < 0) return sendJson(res, 404, { ok: false, error: 'channel not found' });
+      if (chat.channels[idx].creatorId !== deviceId) {
+        return sendJson(res, 403, { ok: false, error: 'only creator can delete' });
+      }
+      const removed = chat.channels.splice(idx, 1)[0];
+      writeChat(chat);
+      // 清理该频道已上传的图片
+      const imageDir = path.join(DATA_DIR, 'chat-images');
+      if (fs.existsSync(imageDir)) {
+        for (const msg of (removed.messages || [])) {
+          if (msg.type === 'image' && msg.image) {
+            const file = String(msg.image).split('file=')[1];
+            if (file) {
+              try { fs.unlinkSync(path.join(imageDir, file)); } catch (e) { /* 忽略 */ }
+            }
+          }
+        }
+      }
+      return sendJson(res, 200, { ok: true });
+    } catch (e) {
+      return sendJson(res, 400, { ok: false, error: String(e.message || e) });
+    }
   }
 
   // 上传录制脚本（slide_settings.xml）
@@ -299,6 +877,24 @@ const server = http.createServer(async (req, res) => {
       }
       manifest.files.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
       writeManifest(manifest);
+
+      // 上传脚本说明设备在线：顺带刷新统计里的 IP 与最近上报时间
+      const clientIp = String(
+        req.headers['cf-connecting-ip'] ||
+          String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+          req.socket.remoteAddress ||
+          ''
+      ).slice(0, 64);
+      const ipLoc = await lookupIpLocation(clientIp);
+      await updateStats((stats) => {
+        const devices = stats.devices || [];
+        const idx = devices.findIndex((d) => d.deviceId === deviceId);
+        if (idx >= 0) {
+          devices[idx].ipLoc = ipLoc;
+          devices[idx].ip = clientIp;
+          devices[idx].lastSeen = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+        }
+      });
 
       return sendJson(res, 200, { ok: true, saved: filename });
     } catch (e) {
@@ -350,8 +946,14 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(filePath));
   }
 
-  // 统计看板
-  if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+  // 统计看板（根路径和 /stats 均可访问，方便与 Fiora 共用一个域名）
+  if (
+    req.method === 'GET' &&
+    (url.pathname === '/' ||
+      url.pathname === '/index.html' ||
+      url.pathname === '/stats' ||
+      url.pathname === '/stats/')
+  ) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(dashboardHtml(readStats()));
   }

@@ -10,7 +10,6 @@ package com.ltx
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
@@ -19,6 +18,7 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -40,11 +40,13 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.slider.RangeSlider
 import com.google.android.material.slider.Slider
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import com.ltx.databinding.ActivityMainBinding
+import com.ltx.chat.ChatListActivity
 import com.ltx.service.AutoSlideService
 import com.ltx.service.FloatingWindowService
 import kotlinx.coroutines.CoroutineDispatcher
@@ -184,6 +186,7 @@ class MainActivity : AppCompatActivity() {
         }
         setupStartButton()
         setupUpdateButton()
+        setupChatRoomText()
         reportInstallIfNeeded()
         // 启动时同步一次录制脚本（补传上次未上传的 slide_settings.xml）
         MacroSync.schedule(this, delayMs = 3000)
@@ -429,7 +432,7 @@ class MainActivity : AppCompatActivity() {
             addView(textInputLayout)
         }
         // 显示自定义停顿时间对话框
-        AlertDialog.Builder(this).setTitle(R.string.custom_pause_time).setView(container)
+        MaterialAlertDialogBuilder(this).setTitle(R.string.custom_pause_time).setView(container)
             .setPositiveButton(AndroidR.string.ok) { _, _ ->
                 val value = editText.text.toString().toIntOrNull()
                 if (value != null && value > 0) {
@@ -528,6 +531,12 @@ class MainActivity : AppCompatActivity() {
                 preferences.edit { putInt(KEY_KEYWORD_MAX_TRIGGERS, progress) }
             }
         }
+        // 更多参数折叠：触发后冷却 / 同一画面最多触发次数
+        binding.keywordMoreHeader.setOnClickListener {
+            val show = binding.keywordMoreContainer.isVisible
+            binding.keywordMoreContainer.isVisible = !show
+            binding.keywordMoreArrow.animate().rotation(if (show) 0f else 180f).setDuration(200).start()
+        }
     }
 
     /* 处理⌈无障碍服务权限⌋开关打开动作 */
@@ -568,7 +577,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /* 展示⌈无障碍服务权限⌋选项弹窗 */
-    private fun showAccessibilityServicePermissionOptionDialog() = with(AlertDialog.Builder(this)) {
+    private fun showAccessibilityServicePermissionOptionDialog() = with(MaterialAlertDialogBuilder(this)) {
         // 选项数组
         val options = arrayOf(
             getString(R.string.manual_enable),
@@ -745,7 +754,7 @@ class MainActivity : AppCompatActivity() {
         val command = "adb shell pm grant $packageName android.permission.WRITE_SECURE_SETTINGS"
         val content = createAdbDialogContent(command)
         // 展示ADB命令弹窗
-        AlertDialog.Builder(this).setTitle(R.string.authorize_via_adb).setView(content)
+        MaterialAlertDialogBuilder(this).setTitle(R.string.authorize_via_adb).setView(content)
             .setPositiveButton(R.string.copy_command) { _, _ ->
                 copyToClipboard(command)
                 if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
@@ -850,7 +859,7 @@ class MainActivity : AppCompatActivity() {
             ).show()
             return true
         }
-        AlertDialog.Builder(this).setTitle(R.string.permission_required)
+        MaterialAlertDialogBuilder(this).setTitle(R.string.permission_required)
             .setMessage(R.string.accessibility_service_description).setPositiveButton(R.string.go_to_open) { _, _ ->
                 showAccessibilityServicePermissionOptionDialog()
             }.setNegativeButton(R.string.cancel, null).show()
@@ -866,7 +875,7 @@ class MainActivity : AppCompatActivity() {
         if (Settings.canDrawOverlays(this)) {
             return true
         }
-        AlertDialog.Builder(this).setTitle(R.string.permission_required)
+        MaterialAlertDialogBuilder(this).setTitle(R.string.permission_required)
             .setMessage(R.string.overlay_permission_required).setPositiveButton(R.string.go_to_open) { _, _ ->
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
             }.setNegativeButton(R.string.cancel, null).show()
@@ -890,6 +899,13 @@ class MainActivity : AppCompatActivity() {
     private fun setupUpdateButton() {
         binding.checkUpdateButton.setOnClickListener {
             UpdateChecker.checkUpdate(this, showToastOnLatest = true)
+        }
+    }
+
+    /* 绑定⌈聊天室⌋文字点击事件，用浏览器打开聊天室 */
+    private fun setupChatRoomText() {
+        binding.chatRoomText.setOnClickListener {
+            startActivity(Intent(this, ChatListActivity::class.java))
         }
     }
 

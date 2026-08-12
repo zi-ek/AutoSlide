@@ -1,6 +1,6 @@
 {
-  "versionCode": 31,
-  "versionName": "3.0.0",
-  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v3.0.0/AutoSlide-v3.0.0.apk",
-  "updateLog": "1. 新增录制库：可保存多条录制记录（点击/长按/滑动/等待），录制时命名保存\n2. 录制过程边录边同步：操作实时执行到真实应用，返回键可录制\n3. 回放列表选择执行，回放完毕提示\n4. 录制脚本自动同步到服务器（每台设备独立保存）\n5. 悬浮窗优化：回放/录制按钮、3dp 边距、音量键控制录制"
+  "versionCode": 32,
+  "versionName": "3.1.0",
+  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v3.1.0/AutoSlide-v3.1.0.apk",
+  "updateLog": "1. 新增联网聊天室：公开频道直接加入、创建频道、多人聊天\n2. 聊天支持发送图片、公告栏（后台可编辑）\n3. 频道支持删除（仅创建者）、成员列表、退出\n4. 回放新增 5..0 圆形倒计时\n5. 聊天界面全面美化（卡片、气泡、头像）\n6. 修复一加等新系统输入法遮挡、状态栏重叠问题"
 }

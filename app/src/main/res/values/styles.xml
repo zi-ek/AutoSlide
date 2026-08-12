@@ -1,2 +1,64 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources />
+<resources>
+
+    <!-- ==================== 弹窗统一主题 ====================
+         所有 MaterialAlertDialogBuilder 构建的弹窗都会自动套用这套样式：
+         大圆角（和卡片的 20dp 呼应）、主题色按钮、加粗标题，
+         让原生 AlertDialog 风格的弹窗和主界面的 Material3 卡片视觉统一。 -->
+    <style name="ThemeOverlay.AutoSlide.Dialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearance.AutoSlide.Dialog</item>
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Widget.AutoSlide.Dialog.Button</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Widget.AutoSlide.Dialog.Button.Neutral</item>
+        <item name="buttonBarNeutralButtonStyle">@style/Widget.AutoSlide.Dialog.Button.Neutral</item>
+        <item name="materialAlertDialogTitleTextStyle">@style/TextAppearance.AutoSlide.Dialog.Title</item>
+        <item name="materialAlertDialogBodyTextStyle">@style/TextAppearance.AutoSlide.Dialog.Body</item>
+    </style>
+
+    <!-- 弹窗圆角：24dp，比卡片(20dp)略大一点，弹窗层级更突出 -->
+    <style name="ShapeAppearance.AutoSlide.Dialog" parent="ShapeAppearance.Material3.LargeComponent">
+        <item name="cornerSize">24dp</item>
+    </style>
+
+    <!-- 确认/主操作按钮：主题色加粗文字，不全大写 -->
+    <style name="Widget.AutoSlide.Dialog.Button" parent="Widget.Material3.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/primary</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <!-- 取消/次要按钮：次要文字色，不加粗 -->
+    <style name="Widget.AutoSlide.Dialog.Button.Neutral" parent="Widget.Material3.Button.TextButton.Dialog">
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0</item>
+    </style>
+
+    <style name="TextAppearance.AutoSlide.Dialog.Title" parent="MaterialAlertDialog.Material3.Title.Text">
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textSize">18sp</item>
+    </style>
+
+    <style name="TextAppearance.AutoSlide.Dialog.Body" parent="MaterialAlertDialog.Material3.Body.Text">
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:lineSpacingExtra">2dp</item>
+    </style>
+
+    <!-- ==================== 悬浮窗弹窗内小控件 ==================== -->
+
+    <!-- 回放列表里的“清除”按钮：浅红底的圆角小胶囊，比纯文字按钮更像可点击控件 -->
+    <style name="Widget.AutoSlide.MacroClearButton" parent="Widget.Material3.Button.TextButton">
+        <item name="android:textColor">@color/floating_btn_close_icon</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="cornerRadius">14dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">0dp</item>
+    </style>
+
+</resources>

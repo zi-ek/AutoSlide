@@ -2,6 +2,8 @@
 <resources>
     <color name="white">#FFFFFFFF</color>
     <color name="window_background">#FFFFFFFF</color>
+    <color name="card_background">#FFFFFFFF</color>
+    <color name="chat_page_bg">#F4F5F9</color>
     <color name="primary">#545995</color>
     <color name="on_primary">#FFFFFF</color>
     <color name="surface">#EFEFF6</color>
@@ -23,4 +25,5 @@
 <color name="floating_btn_fun">#FFC107</color>
 <color name="floating_btn_fun_icon">#4E342E</color>
     <color name="floating_panel_bg">#99E8E9F5</color>
+    <color name="dialog_divider">#1F000000</color>
 </resources>

@@ -10,13 +10,13 @@ package com.ltx.service
  */
 
 import android.annotation.SuppressLint
-import android.app.AlertDialog
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.os.Handler
@@ -24,6 +24,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.Build
 import android.util.Log
+import android.util.TypedValue
 import android.view.ActionMode
 import android.view.ContextThemeWrapper
 import android.view.Display
@@ -37,13 +38,17 @@ import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.BaseAdapter
 import android.widget.Button
-import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import com.ltx.DEFAULT_KEYWORDS
 import com.ltx.DEFAULT_MAX_PAUSE_TIME
 import com.ltx.DEFAULT_MIN_PAUSE_TIME
@@ -73,8 +78,10 @@ import com.ltx.isAccessibilityServicePermissionEnabled
 import com.ltx.parseKeywords
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -95,6 +102,10 @@ class FloatingWindowService : Service() {
     private var initialTouchY = 0f           // 按下时手指的 Y 坐标
     private var recordOverlayView: View? = null // 轨迹录制遮罩视图
     private var playListDialog: AlertDialog? = null // 回放记录列表对话框（删除后刷新用）
+    private var floatingWindowHidden = false // 悬浮窗是否被完全隐藏（录制/回放期间）
+    private var playbackFeedbackView: PlaybackFeedbackView? = null // 回放可视化反馈层
+    private var playbackCountdownView: View? = null // 回放前倒计时遮罩
+    private var playbackCountdownJob: Job? = null   // 倒计时协程
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 主线程协程作用域
     private var lastScreenWidth = 0 // 上次记录的屏幕宽度（旋转后用于判断保持左/右同一侧）
     private var isExpandButtonEnlarged = false // 悬浮球是否处于放大状态
@@ -165,7 +176,15 @@ class FloatingWindowService : Service() {
         isServiceRunning = false
         AutoSlideTileService.requestUpdate(this)
         serviceScope.cancel()
+        playbackCountdownJob?.cancel()
+        playbackCountdownJob = null
+        playbackCountdownView?.let { runCatching { windowManager.removeView(it) } }
+        playbackCountdownView = null
         removeRecordView()
+        playbackFeedbackView?.let { feedback ->
+            runCatching { (rootView as? ViewGroup)?.removeView(feedback) }
+        }
+        playbackFeedbackView = null
         playListDialog?.dismiss()
         super.onDestroy()
         runCatching { windowManager.removeView(rootView) }
@@ -381,8 +400,12 @@ class FloatingWindowService : Service() {
      * 新建录制：弹出名称输入窗口，确定后开始录制
      */
     private fun showNewMacroDialog() {
-        val input = EditText(this).apply {
+        val dialogContext = createDialogContext()
+        val inputLayout = TextInputLayout(dialogContext).apply {
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
             hint = getString(R.string.record_name_hint)
+        }
+        val input = TextInputEditText(inputLayout.context).apply {
             isSingleLine = true
             // 服务上下文创建输入框时禁用文本选择工具条，
             // 避免部分机型（如 ColorOS）在弹出选择工具栏时 getDisplay 崩溃
@@ -393,9 +416,14 @@ class FloatingWindowService : Service() {
                 override fun onDestroyActionMode(mode: ActionMode?) {}
             }
         }
-        val builder = AlertDialog.Builder(createDialogContext())
+        inputLayout.addView(input)
+        val container = FrameLayout(dialogContext).apply {
+            setPadding(dp(24), dp(12), dp(24), 0)
+            addView(inputLayout)
+        }
+        val builder = MaterialAlertDialogBuilder(dialogContext)
             .setTitle(R.string.record_name_title)
-            .setView(input)
+            .setView(container)
             .setPositiveButton(R.string.confirm) { _, _ ->
                 val name = input.text.toString().trim()
                 if (name.isEmpty()) {
@@ -408,18 +436,21 @@ class FloatingWindowService : Service() {
         showSystemAlertDialog(builder)
     }
 
-    /* 创建带显示上下文的对话框上下文（服务上下文无法直接获取 Display） */
+    /* 创建带显示上下文且套用应用主题的对话框上下文（服务上下文无法直接获取 Display） */
     private fun createDialogContext(): Context {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             runCatching {
                 val display = (getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
                     ?.getDisplay(Display.DEFAULT_DISPLAY)
                     ?: return@runCatching
-                return createWindowContext(
+                val windowContext = createWindowContext(
                     display,
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     null
                 )
+                // 窗口上下文默认不带应用主题，必须包一层 Theme_AutoSlide，
+                // 否则 TextInputLayout 等 Material 组件会因主题不是 AppCompat 而崩溃
+                return ContextThemeWrapper(windowContext, R.style.Theme_AutoSlide)
             }
         }
         return ContextThemeWrapper(this, R.style.Theme_AutoSlide)
@@ -435,7 +466,13 @@ class FloatingWindowService : Service() {
             Toast.makeText(this, R.string.macro_not_found, Toast.LENGTH_SHORT).show()
             return
         }
-        val listView = ListView(dialogContext)
+        val listView = ListView(dialogContext).apply {
+            divider = ColorDrawable(ContextCompat.getColor(this@FloatingWindowService, R.color.dialog_divider))
+            dividerHeight = 1
+        }
+        // 触摸反馈用的可点击态背景（涟漪效果，来自当前主题的 selectableItemBackground）
+        val rippleOutValue = TypedValue()
+        dialogContext.theme.resolveAttribute(android.R.attr.selectableItemBackground, rippleOutValue, true)
         val adapter = object : BaseAdapter() {
             override fun getCount(): Int = names.size
             override fun getItem(position: Int): Any = names[position]
@@ -446,7 +483,11 @@ class FloatingWindowService : Service() {
                 val row = LinearLayout(dialogContext).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(18), dp(8), dp(18), dp(8))
+                    setPadding(dp(18), dp(10), dp(10), dp(10))
+                    if (rippleOutValue.resourceId != 0) {
+                        setBackgroundResource(rippleOutValue.resourceId)
+                    }
+                    isClickable = true
                 }
                 val nameView = TextView(dialogContext).apply {
                     text = name
@@ -477,7 +518,7 @@ class FloatingWindowService : Service() {
             }
         }
         listView.adapter = adapter
-        val builder = AlertDialog.Builder(dialogContext)
+        val builder = MaterialAlertDialogBuilder(dialogContext)
             .setTitle(R.string.play_list_title)
             .setView(listView)
             .setNegativeButton(R.string.cancel, null)
@@ -490,11 +531,91 @@ class FloatingWindowService : Service() {
     /* 点击列表中的某条记录开始回放 */
     private fun playMacroByName(name: String) {
         val service = AutoSlideService.getInstance() ?: return
-        if (service.playMacro(name) { showPlaybackFinishedDialog() }) {
-            playListDialog?.dismiss()
-            // 收起面板，让回放过程不遮挡屏幕
-            minimize()
+        playListDialog?.dismiss()
+        // 先进入全屏反馈层，再显示 5..0 倒计时，倒计时结束后才开始回放
+        enterPlaybackMode()
+        showPlaybackCountdown(name)
+    }
+
+    /* 回放前倒计时：屏幕正中间圆形半透明 5 4 3 2 1 0，结束后开始回放 */
+    private fun showPlaybackCountdown(name: String) {
+        val service = AutoSlideService.getInstance() ?: return
+        val circle = TextView(this).apply {
+            text = "5"
+            textSize = 56f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0x99000000.toInt())
+            }
         }
+        // 用独立悬浮窗显示倒计时，避免叠加到全屏反馈层（LinearLayout 里第二个 MATCH_PARENT 子 View 会被压成 0 高度）
+        val countdownParams = WindowManager.LayoutParams(
+            dp(140),
+            dp(140),
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+        }
+        runCatching { windowManager.addView(circle, countdownParams) }
+        playbackCountdownView = circle
+        playbackCountdownJob = serviceScope.launch {
+            for (i in 5 downTo 0) {
+                circle.text = i.toString()
+                delay(1000)
+            }
+            runCatching { windowManager.removeView(circle) }
+            playbackCountdownView = null
+            val started = service.playMacro(
+                name,
+                onFinished = { showPlaybackFinishedDialog() },
+                onActionStart = { input -> playbackFeedbackView?.showAction(input) },
+                onEnd = {
+                    playbackFeedbackView?.clearAction()
+                    exitPlaybackMode()
+                }
+            )
+            if (!started) {
+                Toast.makeText(this@FloatingWindowService, R.string.macro_not_found, Toast.LENGTH_SHORT).show()
+                exitPlaybackMode()
+            }
+        }
+    }
+
+    /* 进入回放模式：复用悬浮窗窗口变成全屏透明反馈层（不新增悬浮窗，避免系统弹警告） */
+    private fun enterPlaybackMode() {
+        controlPanel.visibility = View.GONE
+        expandButton.visibility = View.GONE
+        val feedback = PlaybackFeedbackView(this)
+        (rootView as? ViewGroup)?.addView(
+            feedback,
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        )
+        playbackFeedbackView = feedback
+        layoutParams.width = ViewGroup.LayoutParams.MATCH_PARENT
+        layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
+        layoutParams.x = 0
+        layoutParams.y = 0
+        layoutParams.gravity = Gravity.TOP or Gravity.START
+        layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
+    }
+
+    /* 退出回放模式：移除反馈层，恢复悬浮球/面板 */
+    private fun exitPlaybackMode() {
+        playbackFeedbackView?.let { feedback ->
+            runCatching { (rootView as? ViewGroup)?.removeView(feedback) }
+        }
+        playbackFeedbackView = null
+        layoutParams.width = ViewGroup.LayoutParams.WRAP_CONTENT
+        layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+        layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
+        expand()
     }
 
     /* 回放完毕提示弹窗：圆形 OK 按钮 */
@@ -529,7 +650,7 @@ class FloatingWindowService : Service() {
         content.addView(message)
         content.addView(okButton)
 
-        val dialog = AlertDialog.Builder(dialogContext)
+        val dialog = MaterialAlertDialogBuilder(dialogContext)
             .setView(content)
             .create()
         okButton.setOnClickListener { dialog.dismiss() }
@@ -545,7 +666,7 @@ class FloatingWindowService : Service() {
      * @param listView 列表视图（删除后刷新）
      */
     private fun confirmDeleteMacro(name: String, names: MutableList<String>, listView: ListView) {
-        val builder = AlertDialog.Builder(createDialogContext())
+        val builder = MaterialAlertDialogBuilder(createDialogContext())
             .setTitle(R.string.macro_delete_title)
             .setMessage(getString(R.string.macro_delete_message, name))
             .setPositiveButton(R.string.confirm) { _, _ ->
@@ -580,9 +701,8 @@ class FloatingWindowService : Service() {
      */
     private fun startRecordingTrajectory(name: String) {
         AutoSlideService.getInstance()?.stopSlide()
-        minimize()
-        // 录制期间让悬浮小球不再拦截触摸，避免挡住下方应用
-        setFloatingWindowTouchable(false)
+        // 录制期间完全隐藏悬浮窗（不显示悬浮球）
+        hideFloatingWindow()
         val recordView = InputRecorderView(
             this,
             instructionText = getRecordInstruction(name),
@@ -624,7 +744,7 @@ class FloatingWindowService : Service() {
             recordOverlayView = recordView
         } catch (e: Exception) {
             Log.e("FloatingWindowService", "Failed to add record view", e)
-            setFloatingWindowTouchable(true)
+            showFloatingWindow()
             expand()
         }
     }
@@ -634,18 +754,28 @@ class FloatingWindowService : Service() {
         val recordView = recordOverlayView ?: return
         runCatching { windowManager.removeView(recordView) }
         recordOverlayView = null
-        setFloatingWindowTouchable(true)
+        showFloatingWindow()
     }
 
-    /* 切换悬浮窗（收起的小球）是否可触摸：录制期间放行触摸，避免挡住下方应用 */
-    private fun setFloatingWindowTouchable(touchable: Boolean) {
-        if (!::layoutParams.isInitialized) return
-        layoutParams.flags = if (touchable) {
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-        } else {
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+    /* 完全隐藏悬浮窗（录制/回放期间不显示悬浮球） */
+    private fun hideFloatingWindow() {
+        if (floatingWindowHidden || !::rootView.isInitialized || !::layoutParams.isInitialized) return
+        floatingWindowHidden = true
+        runCatching { windowManager.removeView(rootView) }
+    }
+
+    /* 恢复显示悬浮窗（重新添加并贴到屏幕边缘） */
+    private fun showFloatingWindow() {
+        if (!floatingWindowHidden || !::rootView.isInitialized || !::layoutParams.isInitialized) return
+        if (!isServiceRunning) return
+        floatingWindowHidden = false
+        layoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        runCatching {
+            if (rootView.parent == null) {
+                windowManager.addView(rootView, layoutParams)
+                rootView.post { snapToNearestEdge() }
+            }
         }
-        runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
     }
 
     /**
@@ -838,7 +968,7 @@ class FloatingWindowService : Service() {
      *
      * @param builder 对话框构建器
      */
-    private fun showSystemAlertDialog(builder: AlertDialog.Builder) {
+    private fun showSystemAlertDialog(builder: MaterialAlertDialogBuilder) {
         val dialog = builder.create()
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         dialog.show()

@@ -34,6 +34,9 @@ const val KEY_LAST_REPORTED_VERSION = "last_reported_version"
 // 统计后台地址（Cloudflare Tunnel 绑定域名）
 const val STATS_URL = "https://pve.8450696.shop"
 
+// 聊天室地址（与统计后台同域名，根路径为 Fiora 聊天室）
+const val CHAT_ROOM_URL = "https://pve.8450696.shop"
+
 
 // ==================== 默认值 ====================
 const val DEFAULT_SPEED = 50                        // 默认滑动速度（中等）
@@ -50,11 +53,11 @@ const val DEFAULT_DOUYIN_AUTOPLAY = true            // 默认开启抖音自动�
 
 /**
  * 把关键词文本拆分成关键词列表。
- * 只支持中文逗号（，）分隔；
- * 为了兼容旧版本保存的数据，换行符仍然有效。
+ * 同时支持中文逗号（，）、英文逗号（,）和换行分隔，
+ * 避免用户从别处复制粘贴关键词列表时因英文逗号导致整词匹配失败。
  */
 fun parseKeywords(text: String): List<String> =
-    text.split('，', '\n', '\r').map { it.trim() }.filter { it.isNotBlank() }
+    text.split('，', ',', '\n', '\r').map { it.trim() }.filter { it.isNotBlank() }
 
 // ==================== 滑动模式编号 ====================
 // 主界面四个选项对应的模式值，服务端根据该值决定走哪套滑动逻辑
