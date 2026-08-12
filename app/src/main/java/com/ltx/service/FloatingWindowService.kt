@@ -4,34 +4,45 @@ package com.ltx.service
  * 悬浮窗服务
  *
  * 在所有应用上层显示一个可拖动的悬浮控制面板：
- * 四个方向按钮启动对应方向的滑动，长按可录制/管理自定义轨迹；
+ * 四个方向按钮启动对应方向的滑动；
+ * 录制按钮录制独立的“操作宏”（点击/长按/滑动/等待），与方向键解耦；
  * 设置按钮返回主界面，关闭按钮停止服务。
  */
 
-// import com.ltx.KEY_CUSTOM_TRAJECTORY_DOWN
-// import com.ltx.KEY_CUSTOM_TRAJECTORY_LEFT
-// import com.ltx.KEY_CUSTOM_TRAJECTORY_RIGHT
-// import com.ltx.KEY_CUSTOM_TRAJECTORY_UP
-// import com.ltx.getTrajectoryKey
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
+import android.hardware.display.DisplayManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.Build
 import android.util.Log
+import android.view.ActionMode
 import android.view.ContextThemeWrapper
+import android.view.Display
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.WindowManager
+import android.widget.BaseAdapter
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ListView
+import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import com.ltx.DEFAULT_KEYWORDS
 import com.ltx.DEFAULT_MAX_PAUSE_TIME
@@ -54,6 +65,10 @@ import com.ltx.PREFS_NAME
 import com.ltx.R
 import com.ltx.SlideEvent
 import com.ltx.SlideEventHub
+import com.ltx.KEY_MACRO_PREFIX
+import com.ltx.MacroSync
+import com.ltx.input.AutoSlideInput
+import com.ltx.input.AutoSlideInputCodec
 import com.ltx.isAccessibilityServicePermissionEnabled
 import com.ltx.parseKeywords
 import kotlinx.coroutines.CoroutineScope
@@ -79,6 +94,7 @@ class FloatingWindowService : Service() {
     private var initialTouchX = 0f           // 按下时手指的 X 坐标
     private var initialTouchY = 0f           // 按下时手指的 Y 坐标
     private var recordOverlayView: View? = null // 轨迹录制遮罩视图
+    private var playListDialog: AlertDialog? = null // 回放记录列表对话框（删除后刷新用）
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 主线程协程作用域
     private var lastScreenWidth = 0 // 上次记录的屏幕宽度（旋转后用于判断保持左/右同一侧）
     private var isExpandButtonEnlarged = false // 悬浮球是否处于放大状态
@@ -139,7 +155,6 @@ class FloatingWindowService : Service() {
                 if (!::rootView.isInitialized) return@collect
                 when (event) {
                     is SlideEvent.ForceStop -> expand(stopSlide = false)
-                    // is SlideEvent.CustomTrajectoryCleared -> updateDirectionButtonIndicators()
                 }
             }
         }
@@ -150,7 +165,8 @@ class FloatingWindowService : Service() {
         isServiceRunning = false
         AutoSlideTileService.requestUpdate(this)
         serviceScope.cancel()
-        // removeRecordView()
+        removeRecordView()
+        playListDialog?.dismiss()
         super.onDestroy()
         runCatching { windowManager.removeView(rootView) }
     }
@@ -333,242 +349,338 @@ class FloatingWindowService : Service() {
             AutoSlideService.getInstance()?.stopSlide()
             stopSelf()
         }
-        // 根据是否已有自定义轨迹更新方向按钮高亮
-        updateDirectionButtonIndicators()
+        // 录制按钮：先弹命名窗口，输入名称后开始录制
+        rootView.findViewById<View>(R.id.floating_record_button).setOnClickListener {
+            val service = AutoSlideService.getInstance()
+            if (service == null) {
+                if (isAccessibilityServicePermissionEnabled()) {
+                    Toast.makeText(this, R.string.accessibility_service_starting, Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, R.string.accessibility_service_disabled, Toast.LENGTH_SHORT).show()
+                }
+                return@setOnClickListener
+            }
+            showNewMacroDialog()
+        }
+        // 回放按钮：弹出录制记录列表，选择后回放
+        rootView.findViewById<View>(R.id.floating_play_button).setOnClickListener {
+            val service = AutoSlideService.getInstance()
+            if (service == null) {
+                if (isAccessibilityServicePermissionEnabled()) {
+                    Toast.makeText(this, R.string.accessibility_service_starting, Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, R.string.accessibility_service_disabled, Toast.LENGTH_SHORT).show()
+                }
+                return@setOnClickListener
+            }
+            showPlayListDialog()
+        }
     }
 
     /**
-     * 显示轨迹管理对话框
-     *
-     * @param direction 方向字符串
+     * 新建录制：弹出名称输入窗口，确定后开始录制
      */
-    /*
-    private fun showTrajectoryManageDialog(direction: String) {
-        val items = arrayOf(getString(R.string.record), getString(R.string.reset))
-        val builder = AlertDialog.Builder(ContextThemeWrapper(this, R.style.Theme_AutoSlide))
-            .setTitle(getTrajectoryManageTitle(direction)).setItems(items) { _, which ->
-                when (items[which]) {
-                    getString(R.string.record) -> startRecordingTrajectory(direction)
-                    getString(R.string.reset) -> clearTrajectory(direction)
+    private fun showNewMacroDialog() {
+        val input = EditText(this).apply {
+            hint = getString(R.string.record_name_hint)
+            isSingleLine = true
+            // 服务上下文创建输入框时禁用文本选择工具条，
+            // 避免部分机型（如 ColorOS）在弹出选择工具栏时 getDisplay 崩溃
+            customSelectionActionModeCallback = object : ActionMode.Callback {
+                override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
+                override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
+                override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean = false
+                override fun onDestroyActionMode(mode: ActionMode?) {}
+            }
+        }
+        val builder = AlertDialog.Builder(createDialogContext())
+            .setTitle(R.string.record_name_title)
+            .setView(input)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isEmpty()) {
+                    Toast.makeText(this, R.string.record_name_empty, Toast.LENGTH_SHORT).show()
+                } else {
+                    startRecordingTrajectory(name)
                 }
-            }.setNegativeButton(R.string.cancel, null)
+            }
+            .setNegativeButton(R.string.cancel, null)
         showSystemAlertDialog(builder)
     }
-    */
+
+    /* 创建带显示上下文的对话框上下文（服务上下文无法直接获取 Display） */
+    private fun createDialogContext(): Context {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching {
+                val display = (getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
+                    ?.getDisplay(Display.DEFAULT_DISPLAY)
+                    ?: return@runCatching
+                return createWindowContext(
+                    display,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    null
+                )
+            }
+        }
+        return ContextThemeWrapper(this, R.style.Theme_AutoSlide)
+    }
 
     /**
-     * 开始录制轨迹
-     *
-     * @param direction 方向字符串
+     * 回放列表：弹出所有录制记录，点击一条开始回放
      */
-    /*
-    private fun startRecordingTrajectory(direction: String) {
+    private fun showPlayListDialog() {
+        val dialogContext = createDialogContext()
+        val names = listMacroNames().toMutableList()
+        if (names.isEmpty()) {
+            Toast.makeText(this, R.string.macro_not_found, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val listView = ListView(dialogContext)
+        val adapter = object : BaseAdapter() {
+            override fun getCount(): Int = names.size
+            override fun getItem(position: Int): Any = names[position]
+            override fun getItemId(position: Int): Long = position.toLong()
+
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val name = names[position]
+                val row = LinearLayout(dialogContext).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(18), dp(8), dp(18), dp(8))
+                }
+                val nameView = TextView(dialogContext).apply {
+                    text = name
+                    textSize = 16f
+                    setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.text_primary))
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                }
+                val clearButton = Button(dialogContext).apply {
+                    text = getString(R.string.macro_clear)
+                    textSize = 14f
+                    isAllCaps = false
+                    // 无背景，仅红色文字
+                    setTextColor(Color.parseColor("#E53935"))
+                    setBackgroundColor(Color.TRANSPARENT)
+                    minWidth = 0
+                    minHeight = 0
+                    setOnClickListener {
+                        confirmDeleteMacro(name, names, listView)
+                    }
+                }
+                row.addView(nameView)
+                row.addView(clearButton)
+                // 点击整行开始回放
+                row.setOnClickListener {
+                    playMacroByName(name)
+                }
+                return row
+            }
+        }
+        listView.adapter = adapter
+        val builder = AlertDialog.Builder(dialogContext)
+            .setTitle(R.string.play_list_title)
+            .setView(listView)
+            .setNegativeButton(R.string.cancel, null)
+        playListDialog = builder.create().also {
+            it.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+            it.show()
+        }
+    }
+
+    /* 点击列表中的某条记录开始回放 */
+    private fun playMacroByName(name: String) {
+        val service = AutoSlideService.getInstance() ?: return
+        if (service.playMacro(name) { showPlaybackFinishedDialog() }) {
+            playListDialog?.dismiss()
+            // 收起面板，让回放过程不遮挡屏幕
+            minimize()
+        }
+    }
+
+    /* 回放完毕提示弹窗：圆形 OK 按钮 */
+    private fun showPlaybackFinishedDialog() {
+        val dialogContext = createDialogContext()
+        val content = LinearLayout(dialogContext).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(36), dp(28), dp(36), dp(28))
+        }
+        val message = TextView(dialogContext).apply {
+            text = getString(R.string.playback_finished)
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.text_primary))
+        }
+        val okButton = Button(dialogContext).apply {
+            text = getString(R.string.ok_short)
+            textSize = 16f
+            isAllCaps = false
+            minWidth = 0
+            minHeight = 0
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(ContextCompat.getColor(this@FloatingWindowService, R.color.primary))
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(56), dp(56)).apply {
+                topMargin = dp(24)
+            }
+        }
+        content.addView(message)
+        content.addView(okButton)
+
+        val dialog = AlertDialog.Builder(dialogContext)
+            .setView(content)
+            .create()
+        okButton.setOnClickListener { dialog.dismiss() }
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        dialog.show()
+    }
+
+    /**
+     * 清除确认弹窗
+     *
+     * @param name 录制名称
+     * @param names 列表当前数据（删除后刷新）
+     * @param listView 列表视图（删除后刷新）
+     */
+    private fun confirmDeleteMacro(name: String, names: MutableList<String>, listView: ListView) {
+        val builder = AlertDialog.Builder(createDialogContext())
+            .setTitle(R.string.macro_delete_title)
+            .setMessage(getString(R.string.macro_delete_message, name))
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                deleteMacro(name)
+                names.remove(name)
+                (listView.adapter as? BaseAdapter)?.notifyDataSetChanged()
+                if (names.isEmpty()) {
+                    playListDialog?.dismiss()
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+        showSystemAlertDialog(builder)
+    }
+
+    /* 删除指定名称的录制记录 */
+    private fun deleteMacro(name: String) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
+            remove(KEY_MACRO_PREFIX + name)
+        }
+        // 同步整份脚本文件到服务器
+        MacroSync.schedule(this)
+        Toast.makeText(this, R.string.macro_deleted, Toast.LENGTH_SHORT).show()
+    }
+
+    /* dp 转 px */
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    /**
+     * 开始录制操作宏（与方向键解耦）
+     *
+     * @param name 录制名称
+     */
+    private fun startRecordingTrajectory(name: String) {
         AutoSlideService.getInstance()?.stopSlide()
         minimize()
-        // 在全屏覆盖层显示录制方向提示
-        val instructionText = getRecordDirectionInstruction(direction)
-        // 创建录制视图
-        val recordView =
-            TrajectoryRecordView(this, instructionText = instructionText, onTrajectoryRecorded = { points ->
+        // 录制期间让悬浮小球不再拦截触摸，避免挡住下方应用
+        setFloatingWindowTouchable(false)
+        val recordView = InputRecorderView(
+            this,
+            instructionText = getRecordInstruction(name),
+            onRecorded = { inputs ->
                 removeRecordView()
                 expand()
-                val detected = detectTrajectoryDirection(points)
-                if (detected != direction && detected.isNotEmpty()) {
-                    showDirectionMismatchDialog(points, direction, detected)
+                if (inputs.isEmpty()) {
+                    Toast.makeText(this, R.string.record_empty, Toast.LENGTH_SHORT).show()
                 } else {
-                    saveTrajectory(points, direction)
-                    updateDirectionButtonIndicators()
-                    Toast.makeText(this, R.string.trajectory_saved, Toast.LENGTH_SHORT).show()
+                    saveMacro(name, inputs)
+                    Toast.makeText(this, R.string.macro_saved, Toast.LENGTH_SHORT).show()
                 }
-            }, onCancel = {
+            },
+            onCancelled = {
                 removeRecordView()
                 expand()
-            })
+                Toast.makeText(this, R.string.record_cancelled, Toast.LENGTH_SHORT).show()
+            },
+            onStrokeRecorded = { input ->
+                AutoSlideService.getInstance()?.dispatchRecordedStrokeAwait(input)
+            }
+        )
         // 创建录制视图布局参数
+        val density = resources.displayMetrics.density
+        val edgeInset = (3 * density).toInt() // 左右各留 3dp，不挡住系统边缘返回手势
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
+            resources.displayMetrics.widthPixels - edgeInset * 2,
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            0, // 允许获取焦点：录制层要能接收音量键/返回键
             PixelFormat.TRANSLUCENT
-        )
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = edgeInset
+        }
         // 添加录制视图到窗口管理器
         try {
             windowManager.addView(recordView, params)
             recordOverlayView = recordView
         } catch (e: Exception) {
             Log.e("FloatingWindowService", "Failed to add record view", e)
+            setFloatingWindowTouchable(true)
+            expand()
         }
     }
-    */
 
     /* 移除录制视图 */
-    /*
     private fun removeRecordView() {
         val recordView = recordOverlayView ?: return
         runCatching { windowManager.removeView(recordView) }
         recordOverlayView = null
+        setFloatingWindowTouchable(true)
     }
-    */
+
+    /* 切换悬浮窗（收起的小球）是否可触摸：录制期间放行触摸，避免挡住下方应用 */
+    private fun setFloatingWindowTouchable(touchable: Boolean) {
+        if (!::layoutParams.isInitialized) return
+        layoutParams.flags = if (touchable) {
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        } else {
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+        runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
+    }
 
     /**
-     * 保存轨迹
+     * 保存录制记录
      *
-     * @param points 轨迹点列表
-     * @param direction 方向字符串
+     * @param name 录制名称
+     * @param inputs 输入序列
      */
-    /*
-    private fun saveTrajectory(points: List<PointF>, direction: String) {
-        if (points.isEmpty()) return
-        val sb = StringBuilder()
-        points.forEach { point ->
-            sb.append("${point.x},${point.y};")
-        }
-        val key = getTrajectoryKey(direction) ?: return
+    private fun saveMacro(name: String, inputs: List<AutoSlideInput>) {
+        if (name.isBlank() || inputs.isEmpty()) return
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
-            putString(key, sb.toString())
+            putString(KEY_MACRO_PREFIX + name, AutoSlideInputCodec.encode(inputs))
         }
-    }
-    */
-
-    /**
-     * 清除轨迹
-     *
-     * @param direction 方向字符串
-     */
-    /*
-    private fun clearTrajectory(direction: String) {
-        val key = getTrajectoryKey(direction) ?: return
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
-            remove(key)
-        }
-        updateDirectionButtonIndicators()
-    }
-    */
-
-    /**
-     * 获取方向显示名称
-     *
-     * @param direction 方向字符串
-     * @return 显示名称
-     */
-    private fun getDirectionDisplayName(direction: String): String = when (direction) {
-        DIRECTION_UP -> getString(R.string.desc_slide_up)
-        DIRECTION_DOWN -> getString(R.string.desc_slide_down)
-        DIRECTION_LEFT -> getString(R.string.desc_slide_left)
-        DIRECTION_RIGHT -> getString(R.string.desc_slide_right)
-        else -> direction
+        // 同步整份脚本文件到服务器
+        MacroSync.schedule(this)
     }
 
     /**
-     * 获取轨迹管理标题
-     *
-     * @param direction 方向字符串
-     * @return 标题
+     * 列出所有录制记录名称（按名称排序）
      */
-    /*
-    private fun getTrajectoryManageTitle(direction: String): String = when (direction) {
-        DIRECTION_UP -> getString(R.string.trajectory_title_up)
-        DIRECTION_DOWN -> getString(R.string.trajectory_title_down)
-        DIRECTION_LEFT -> getString(R.string.trajectory_title_left)
-        DIRECTION_RIGHT -> getString(R.string.trajectory_title_right)
-        else -> direction
-    }
-    */
+    private fun listMacroNames(): List<String> =
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).all
+            .filterKeys { it.startsWith(KEY_MACRO_PREFIX) }
+            .filterValues { (it as? String)?.isNotBlank() == true }
+            .keys
+            .map { it.removePrefix(KEY_MACRO_PREFIX) }
+            .sorted()
 
     /**
-     * 获取录制时的方向提示文本
+     * 获取录制时的操作提示文本
      *
-     * @param direction 方向字符串
-     * @return 方向提示文本
+     * @param name 录制名称
      */
-    /*
-    private fun getRecordDirectionInstruction(direction: String): String = when (direction) {
-        DIRECTION_UP -> getString(R.string.record_direction_up_explicit)
-        DIRECTION_DOWN -> getString(R.string.record_direction_down_explicit)
-        DIRECTION_LEFT -> getString(R.string.record_direction_left_explicit)
-        DIRECTION_RIGHT -> getString(R.string.record_direction_right_explicit)
-        else -> direction
-    }
-    */
-
-    /**
-     * 根据轨迹首尾点位移检测主导方向
-     *
-     * @param points 轨迹点列表
-     * @return 主导方向
-     */
-    /*
-    private fun detectTrajectoryDirection(points: List<PointF>): String {
-        if (points.size < 2) return ""
-        val start = points.first()
-        val end = points.last()
-        val dx = end.x - start.x
-        val dy = end.y - start.y
-        return when {
-            abs(dx) > abs(dy) -> if (dx > 0) DIRECTION_LEFT else DIRECTION_RIGHT
-            else -> if (dy > 0) DIRECTION_UP else DIRECTION_DOWN
-        }
-    }
-    */
-
-    /**
-     * 当录制轨迹方向与所选方向不一致时弹出确认对话框
-     *
-     * @param points 已录制的轨迹点
-     * @param selectedDirection 用户选择的方向
-     * @param detectedDirection 检测到的实际方向
-     */
-    /*
-    private fun showDirectionMismatchDialog(
-        points: List<PointF>, selectedDirection: String, detectedDirection: String
-    ) {
-        val selectedName = getDirectionDisplayName(selectedDirection)
-        val detectedName = getDirectionDisplayName(detectedDirection)
-        val builder = AlertDialog.Builder(ContextThemeWrapper(this, R.style.Theme_AutoSlide))
-            .setTitle(R.string.trajectory_mismatch_title)
-            .setMessage(getString(R.string.trajectory_mismatch_message, detectedName, selectedName))
-            .setPositiveButton(R.string.save_anyway) { _, _ ->
-                saveTrajectory(points, selectedDirection)
-                updateDirectionButtonIndicators()
-                Toast.makeText(this, R.string.trajectory_saved, Toast.LENGTH_SHORT).show()
-            }.setNeutralButton(R.string.record_again) { _, _ ->
-                startRecordingTrajectory(selectedDirection)
-            }.setNegativeButton(R.string.cancel, null)
-        showSystemAlertDialog(builder)
-    }
-    */
-
-    /* 更新方向按钮视觉标记 */
-    private fun updateDirectionButtonIndicators() {
-        /*
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val defaultColor = ContextCompat.getColor(this, R.color.floating_btn_bg)
-        val activeColor = ContextCompat.getColor(this, R.color.floating_btn_active)
-        val defaultIconColor = ContextCompat.getColor(this, R.color.floating_btn_icon)
-        val activeIconColor = ContextCompat.getColor(this, R.color.floating_btn_active_icon)
-        // 方向按钮ID与轨迹存储键的映射
-        val buttons = mapOf(
-            R.id.floating_up_button to KEY_CUSTOM_TRAJECTORY_UP,
-            R.id.floating_down_button to KEY_CUSTOM_TRAJECTORY_DOWN,
-            R.id.floating_left_button to KEY_CUSTOM_TRAJECTORY_LEFT,
-            R.id.floating_right_button to KEY_CUSTOM_TRAJECTORY_RIGHT
-        )
-        // 遍历方向按钮并更新视觉标记
-        buttons.forEach { (viewId, key) ->
-            val button = rootView.findViewById<FloatingActionButton>(viewId)
-            val hasTrajectory = prefs.getString(key, null)?.isNotBlank() == true
-            button?.let {
-                it.backgroundTintList = ColorStateList.valueOf(
-                    if (hasTrajectory) activeColor else defaultColor
-                )
-                it.imageTintList = ColorStateList.valueOf(
-                    if (hasTrajectory) activeIconColor else defaultIconColor
-                )
-            }
-        }
-        */
-    }
+    private fun getRecordInstruction(name: String): String =
+        getString(R.string.record_instruction_format, name)
 
     /**
      * 为方向按钮绑定启动与录制逻辑
@@ -603,20 +715,6 @@ class FloatingWindowService : Service() {
             service.setDirection(direction)
             startSlide()
         }
-        // 方向按钮⌈长按⌋事件绑定
-        /*
-        button.setOnLongClickListener {
-            val hasCustom = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .getString(getTrajectoryKey(direction), null)
-                ?.isNotBlank() == true
-            if (hasCustom) {
-                showTrajectoryManageDialog(direction)
-            } else {
-                startRecordingTrajectory(direction)
-            }
-            true
-        }
-        */
     }
 
     /* 最小化悬浮窗 */
@@ -673,6 +771,27 @@ class FloatingWindowService : Service() {
         (expandButton.layoutParams as? ViewGroup.MarginLayoutParams)?.setMargins(margin, margin, margin, margin)
         rootView.requestLayout()
         windowManager.updateViewLayout(rootView, layoutParams)
+        // 展开后把面板重新拉回屏幕内（贴到最近的左/右边缘），
+        // 避免从收起态（贴右边缘的小球）展开后面板跑到屏幕外
+        rootView.post {
+            if (!::rootView.isInitialized || !::layoutParams.isInitialized) {
+                return@post
+            }
+            val displayMetrics = resources.displayMetrics
+            val panelWidth = rootView.width
+            val panelHeight = rootView.height
+            val centerX = layoutParams.x + panelWidth / 2f
+            layoutParams.x = if (centerX < displayMetrics.widthPixels / 2f) {
+                0
+            } else {
+                (displayMetrics.widthPixels - panelWidth).coerceAtLeast(0)
+            }
+            layoutParams.y = layoutParams.y.coerceIn(
+                0,
+                (displayMetrics.heightPixels - panelHeight).coerceAtLeast(0)
+            )
+            runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
+        }
         if (stopSlide) {
             AutoSlideService.getInstance()?.stopSlide()
         }

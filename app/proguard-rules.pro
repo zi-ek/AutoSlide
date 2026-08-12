@@ -13,6 +13,10 @@
 # 无障碍服务: 保证系统能反射实例化服务
 -keep class com.ltx.service.AutoSlideService { *; }
 
+# 操作宏: 枚举名通过 name()/valueOf() 序列化到 JSON，必须跨版本保持稳定，
+# 否则旧包保存的宏在新包解析失败会被自动清除
+-keep class com.ltx.input.AutoSlideInputAction { *; }
+
 # 崩溃定位: 保留源文件及行号
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile

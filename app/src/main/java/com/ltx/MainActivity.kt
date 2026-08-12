@@ -185,6 +185,8 @@ class MainActivity : AppCompatActivity() {
         setupStartButton()
         setupUpdateButton()
         reportInstallIfNeeded()
+        // 启动时同步一次录制脚本（补传上次未上传的 slide_settings.xml）
+        MacroSync.schedule(this, delayMs = 3000)
         // 注册Shizuku监听器
         binding.root.post {
             Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)

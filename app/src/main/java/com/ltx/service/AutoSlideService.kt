@@ -54,6 +54,7 @@ import com.ltx.DIRECTION_LEFT
 import com.ltx.DIRECTION_RIGHT
 import com.ltx.DIRECTION_UP
 import com.ltx.KEY_DOUYIN_AUTOPLAY
+import com.ltx.KEY_MACRO_PREFIX
 import com.ltx.KEY_KEYWORDS
 import com.ltx.KEY_KEYWORD_COOLDOWN
 import com.ltx.KEY_KEYWORD_DIRECTION
@@ -76,6 +77,9 @@ import com.ltx.PREFS_NAME
 import com.ltx.R
 import com.ltx.SlideEvent
 import com.ltx.SlideEventHub
+import com.ltx.input.AutoSlideInput
+import com.ltx.input.AutoSlideInputAction
+import com.ltx.input.AutoSlideInputCodec
 import com.ltx.parseKeywords
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -91,6 +95,7 @@ import java.lang.ref.WeakReference
 import java.security.SecureRandom
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.ln
 import kotlin.math.roundToLong
 import kotlin.random.asKotlinRandom
@@ -137,7 +142,6 @@ class AutoSlideService : AccessibilityService() {
     private var douyinSessionDone = false // 本次进入抖音是否已执行过连播流程（离开抖音后重置）
     private var douyinAutoPlayCompleted = false // 已成功打开连播后不再工作，直到下次启动 App 才重置
     private var lastPushDialogDismissAt = 0L // 上次自动点「忽略」的时间（冷却，避免重复点击）
-
     /* 关键词检测循环 */
     private val keywordCheckRunnable = Runnable { runKeywordCheck() }
     /* 定时滑动循环 */
@@ -185,6 +189,8 @@ class AutoSlideService : AccessibilityService() {
         private const val MAX_KEYWORD_INTERVAL_MS = 60_000
         private const val MIN_KEYWORD_COOLDOWN_MS = 1000
         private const val MAX_KEYWORD_COOLDOWN_MS = 120_000
+        /* 回放时单次等待的上限（毫秒），防止误录的超长等待拖死循环 */
+        private const val MAX_REPLAY_GAP_MS = 120_000L
         /* 抖音/快手自动连播相关常量 */
         private const val DOUYIN_PACKAGE = "com.ss.android.ugc.aweme"
         private const val DOUYIN_AUTOPLAY_TEXT = "自动连播"
@@ -224,34 +230,23 @@ class AutoSlideService : AccessibilityService() {
     }
 
     /**
-     * 读取自定义轨迹字符串
+     * 读取指定名称的录制记录（PlainApp 输入框架：JSON 数组）
      *
-     * @param direction 方向字符串
-     * @return 自定义轨迹字符串
+     * @param name 录制名称
+     * @return 输入序列；不存在或数据无效返回 null
      */
-    /*
-    private fun getCustomTrajectory(direction: String): String? {
-        val key = getTrajectoryKey(direction) ?: return null
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val value = prefs.getString(key, null)
-        return if (value.isNullOrBlank()) null else value
+    fun getMacro(name: String): List<AutoSlideInput>? {
+        if (name.isBlank()) return null
+        val raw = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getString(KEY_MACRO_PREFIX + name, null) ?: return null
+        if (raw.isBlank()) return null
+        // 优先解析新版 JSON 格式
+        AutoSlideInputCodec.decode(raw)?.let { return it }
+        // 兼容旧版“x,y;x,y;...”单路径格式
+        val width = resources.displayMetrics.widthPixels
+        val height = resources.displayMetrics.heightPixels
+        return AutoSlideInputCodec.decodeLegacyPath(raw, width, height)
     }
-    */
-
-    /**
-     * 清除自定义轨迹
-     *
-     * @param direction 方向字符串
-     */
-    /*
-    private fun clearCustomTrajectory(direction: String) {
-        val key = getTrajectoryKey(direction) ?: return
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
-            remove(key)
-        }
-        SlideEventHub.sendEvent(SlideEvent.CustomTrajectoryCleared)
-    }
-    */
 
     /**
      * 更新滑动速度而不触发启动逻辑
@@ -541,85 +536,180 @@ class AutoSlideService : AccessibilityService() {
      * @param durationMillis 手势持续时间(毫秒)
      */
     private fun performSlideByDirection(durationMillis: Long, fromKeyword: Boolean = false) {
-        // 读取自定义轨迹字符串
-        /*
-        val trajectoryStr = getCustomTrajectory(currentDirection)
-        if (trajectoryStr != null) {
-            // 分发自定义轨迹
-            dispatchCustomGesture(trajectoryStr, durationMillis, fromKeyword)
-        } else {
-            // 分发默认轨迹
-            val (startX, startY, endX, endY) = getSlideCoordinates(currentDirection)
-            dispatchLineGesture(startX, startY, endX, endY, durationMillis, fromKeyword)
-        }
-        */
-        // 统一分发线性轨迹
+        // 录制库与滑动循环解耦：方向键只执行默认线性滑动，录制内容由回放按钮选择执行
         val (startX, startY, endX, endY) = getSlideCoordinates(currentDirection)
         dispatchLineGesture(startX, startY, endX, endY, durationMillis, fromKeyword)
     }
 
     /**
-     * 分发自定义轨迹
+     * 按顺序回放一组自定义输入动作（TAP / LONG_PRESS / SWIPE）
      *
-     * @param trajectoryStr 轨迹字符串
-     * @param durationMillis 手势持续时间(毫秒)
+     * 整组回放期间保持 isGestureActive=true，防止定时器或关键词检测并发触发。
+     * 回放完成后统一走 continueAfterGesture，与默认滑动的调度逻辑保持一致。
+     *
+     * @param inputs 输入序列
+     * @param fromKeyword 是否由关键词检测触发
      */
-    /*
-    private fun dispatchCustomGesture(trajectoryStr: String, durationMillis: Long, fromKeyword: Boolean = false) {
-        // 按分号拆分轨迹字符串并去掉空项
-        val pointsStr = trajectoryStr.split(";").filter { it.isNotBlank() }
-        // 不足两个点视为无效数据清除后跳过本次滑动
-        if (pointsStr.size < 2) {
-            clearCustomTrajectory(currentDirection)
+    private fun replayInputSequence(inputs: List<AutoSlideInput>, fromKeyword: Boolean = false) {
+        if (inputs.isEmpty()) {
             continueAfterGesture(runGeneration, fromKeyword)
             return
         }
-        // 解析轨迹点
-        val parsedPoints = pointsStr.mapNotNull { pointStr ->
-            val xyValues = pointStr.split(",")
-            if (xyValues.size == 2) {
-                val x = xyValues[0].toFloatOrNull() ?: return@mapNotNull null
-                val y = xyValues[1].toFloatOrNull() ?: return@mapNotNull null
-                PointF(x, y)
-            } else null
-        }
-        // 解析后有效点不足两个视为无效数据清除后跳过本次滑动
-        if (parsedPoints.size < 2) {
-            clearCustomTrajectory(currentDirection)
-            continueAfterGesture(runGeneration, fromKeyword)
-            return
-        }
-        // 根据轨迹点构建手势路径
-        val path = Path()
+        isGestureActive = true
+        val currentGen = runGeneration
         val width = resources.displayMetrics.widthPixels
         val height = resources.displayMetrics.heightPixels
         val density = resources.displayMetrics.density
-        val maxOffset = 5f * density
-        // 为每个点添加轻微随机偏移并限制在屏幕范围内
-        parsedPoints.forEachIndexed { index, point ->
-            val xOffset = ((secureRandom.nextDouble() * 2 - 1) * maxOffset).toFloat()
-            val yOffset = ((secureRandom.nextDouble() * 2 - 1) * maxOffset).toFloat()
-            val finalX = (point.x + xOffset).coerceIn(0f, width.toFloat())
-            val finalY = (point.y + yOffset).coerceIn(0f, height.toFloat())
-            if (index == 0) {
-                path.moveTo(finalX, finalY)
-            } else {
-                path.lineTo(finalX, finalY)
+        serviceScope.launch {
+            var interrupted = false
+            var totalDistancePx = 0f
+            for (input in inputs) {
+                // 停止滑动或重新启动后中断本次回放
+                if (currentGen != runGeneration || !isRunning) {
+                    interrupted = true
+                    break
+                }
+                // 按录制时的操作间隔等待（第一个动作通常为 0）
+                val waitMs = input.delayMs.coerceIn(0L, MAX_REPLAY_GAP_MS)
+                if (waitMs > 0) {
+                    delay(waitMs)
+                    if (currentGen != runGeneration || !isRunning) {
+                        interrupted = true
+                        break
+                    }
+                }
+                val ok = dispatchOneInput(input, width, height)
+                if (!ok) {
+                    interrupted = true
+                    break
+                }
+                totalDistancePx += inputPathLength(input, width, height)
+            }
+            isGestureActive = false
+            if (interrupted || currentGen != runGeneration || !isRunning) {
+                return@launch
+            }
+            // 统计数据
+            val distanceMm = (totalDistancePx / density / 6f).toInt().coerceAtLeast(1)
+            updateStats(swipes = 1, distanceMm = distanceMm)
+            continueAfterGesture(currentGen, fromKeyword)
+        }
+    }
+
+    /**
+     * 派发单个输入动作（对应 PlainApp 的 dispatchControl：动作 + 归一化坐标 + 时长）
+     *
+     * @param input 输入动作
+     * @param width 当前屏幕宽度（像素）
+     * @param height 当前屏幕高度（像素）
+     * @return 手势是否成功派发
+     */
+    private suspend fun dispatchOneInput(input: AutoSlideInput, width: Int, height: Int): Boolean {
+        val path = Path()
+        return when (input.action) {
+            AutoSlideInputAction.TAP -> {
+                path.moveTo(input.x * width, input.y * height)
+                dispatchGestureBlocking(buildGesture(path, input.duration.coerceIn(60L, 500L)))
+            }
+
+            AutoSlideInputAction.LONG_PRESS -> {
+                path.moveTo(input.x * width, input.y * height)
+                dispatchGestureBlocking(buildGesture(path, input.duration.coerceIn(500L, 3000L)))
+            }
+
+            AutoSlideInputAction.SWIPE -> {
+                val points = input.points
+                if (points.size >= 4) {
+                    var first = true
+                    var i = 0
+                    while (i + 1 < points.size) {
+                        val px = (points[i] * width).coerceIn(0f, width.toFloat())
+                        val py = (points[i + 1] * height).coerceIn(0f, height.toFloat())
+                        if (first) {
+                            path.moveTo(px, py)
+                            first = false
+                        } else {
+                            path.lineTo(px, py)
+                        }
+                        i += 2
+                    }
+                } else {
+                    path.moveTo(input.x * width, input.y * height)
+                    path.lineTo(input.endX * width, input.endY * height)
+                }
+                dispatchGestureBlocking(buildGesture(path, input.duration.coerceIn(80L, 2000L)))
+            }
+
+            AutoSlideInputAction.BACK -> {
+                // 执行系统返回，并留一点时间等页面切换动画完成
+                val ok = performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                if (ok) {
+                    delay(400L)
+                }
+                ok
             }
         }
-        // 构建自定义轨迹手势
-        val gesture = GestureDescription.Builder().addStroke(
-            GestureDescription.StrokeDescription(path, 0, durationMillis)
-        ).build()
-
-        // 统计数据
-        val h = resources.displayMetrics.heightPixels
-        val distMm = (h * 0.4f / resources.displayMetrics.density / 6.0f).toInt().coerceAtLeast(1)
-        updateStats(swipes = 1, distanceMm = distMm)
-
-        dispatchGestureAndContinue(gesture, fromKeyword)
     }
-    */
+
+    /* 构建单个手势描述 */
+    private fun buildGesture(path: Path, durationMillis: Long): GestureDescription =
+        GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, durationMillis))
+            .build()
+
+    /**
+     * 等待手势执行完成（不修改 isGestureActive，由 replayInputSequence 统一管理）
+     *
+     * @param gesture 待派发的手势
+     * @return 是否成功完成
+     */
+    private suspend fun dispatchGestureBlocking(gesture: GestureDescription): Boolean =
+        suspendCancellableCoroutine { continuation ->
+            val success = dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) {
+                        continuation.resumeWith(Result.success(true))
+                    }
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) {
+                        continuation.resumeWith(Result.success(false))
+                    }
+                }
+            }, handler)
+            if (!success && continuation.isActive) {
+                continuation.resumeWith(Result.success(false))
+            }
+        }
+
+    /**
+     * 计算单个输入动作的路径长度（像素），用于统计
+     *
+     * @param input 输入动作
+     * @param width 屏幕宽度
+     * @param height 屏幕高度
+     * @return 路径长度（像素）
+     */
+    private fun inputPathLength(input: AutoSlideInput, width: Int, height: Int): Float {
+        val points = input.points
+        if (input.action == AutoSlideInputAction.SWIPE && points.size >= 4) {
+            var total = 0f
+            var prevX = points[0] * width
+            var prevY = points[1] * height
+            var i = 2
+            while (i + 1 < points.size) {
+                val x = points[i] * width
+                val y = points[i + 1] * height
+                total += hypot(x - prevX, y - prevY)
+                prevX = x
+                prevY = y
+                i += 2
+            }
+            return total
+        }
+        return hypot((input.endX - input.x) * width, (input.endY - input.y) * height)
+    }
 
     /**
      * 计算滑动手势持续时间
@@ -1210,6 +1300,65 @@ class AutoSlideService : AccessibilityService() {
                 tryStartDouyinAutoPlay(currentPackage)
             }
         }
+    }
+
+    /**
+     * 录制过程中把一个刚录好的动作实时同步到当前应用（宏录制“边录边执行”）。
+     * 挂起直到该手势派发完成，调用方据此恢复录制层的触摸。
+     *
+     * @param input 刚录制的输入动作
+     */
+    suspend fun dispatchRecordedStrokeAwait(input: AutoSlideInput) {
+        val width = resources.displayMetrics.widthPixels
+        val height = resources.displayMetrics.heightPixels
+        dispatchOneInput(input, width, height)
+    }
+
+    /**
+     * 回放按钮：立即执行一次指定名称的录制记录（不进入自动滑动循环）
+     *
+     * @param name 录制名称
+     * @param onFinished 完整回放结束后的回调（被中断时不回调）
+     * @return 是否存在可回放的录制记录
+     */
+    fun playMacro(name: String, onFinished: (() -> Unit)? = null): Boolean {
+        val macro = getMacro(name) ?: return false
+        stopSlide()
+        val currentGen = runGeneration
+        val width = resources.displayMetrics.widthPixels
+        val height = resources.displayMetrics.heightPixels
+        val density = resources.displayMetrics.density
+        serviceScope.launch {
+            var totalDistancePx = 0f
+            var completed = true
+            for (input in macro) {
+                // 用户按方向键/再次操作时中断本次回放
+                if (currentGen != runGeneration) {
+                    completed = false
+                    break
+                }
+                val waitMs = input.delayMs.coerceIn(0L, MAX_REPLAY_GAP_MS)
+                if (waitMs > 0) {
+                    delay(waitMs)
+                    if (currentGen != runGeneration) {
+                        completed = false
+                        break
+                    }
+                }
+                val ok = dispatchOneInput(input, width, height)
+                if (!ok) {
+                    completed = false
+                    break
+                }
+                totalDistancePx += inputPathLength(input, width, height)
+            }
+            val distanceMm = (totalDistancePx / density / 6f).toInt().coerceAtLeast(1)
+            updateStats(swipes = 1, distanceMm = distanceMm)
+            if (completed) {
+                onFinished?.invoke()
+            }
+        }
+        return true
     }
 
     /* ===== 关键词检测（OCR） ===== */

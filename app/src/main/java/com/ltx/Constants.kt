@@ -72,28 +72,10 @@ const val DIRECTION_RIGHT = "right" // 向右滑动
 // 关键词触发滑动的默认方向（未设置过或配置无效时使用）
 const val DEFAULT_KEYWORD_DIRECTION = DIRECTION_UP
 
-// ==================== 自定义轨迹 ====================
-// 四个方向的自定义轨迹存储键名，轨迹是一串“x,y;x,y;...”坐标点
-/*
-const val KEY_CUSTOM_TRAJECTORY_UP = "customTrajectory_up"
-const val KEY_CUSTOM_TRAJECTORY_DOWN = "customTrajectory_down"
-const val KEY_CUSTOM_TRAJECTORY_LEFT = "customTrajectory_left"
-const val KEY_CUSTOM_TRAJECTORY_RIGHT = "customTrajectory_right"
-
-/**
- * 根据滑动方向获取对应的轨迹存储键名
- *
- * @param direction 方向字符串（up/down/left/right）
- * @return 轨迹存储键名；方向无效时返回 null
- */
-fun getTrajectoryKey(direction: String): String? = when (direction) {
-    DIRECTION_UP -> KEY_CUSTOM_TRAJECTORY_UP
-    DIRECTION_DOWN -> KEY_CUSTOM_TRAJECTORY_DOWN
-    DIRECTION_LEFT -> KEY_CUSTOM_TRAJECTORY_LEFT
-    DIRECTION_RIGHT -> KEY_CUSTOM_TRAJECTORY_RIGHT
-    else -> null
-}
-*/
+// ==================== 录制库 ====================
+// 支持保存多条录制记录：每条记录以 “macro_名称” 为键存到本地，
+// 值为 PlainApp 输入框架的 JSON 数组（点击/长按/滑动/等待）
+const val KEY_MACRO_PREFIX = "macro_"
 
 /**
  * 兼容读取关键词时间参数（单位：秒）

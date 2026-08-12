@@ -1,6 +1,6 @@
 {
-  "versionCode": 30,
-  "versionName": "2.7.1",
-  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v2.7.1/AutoSlide-v2.7.1.apk",
-  "updateLog": "1. 修复刘海屏/挖孔屏适配：滚动内容不再与状态栏重叠\n2. 适配横屏左右挖孔与手势导航条\n3. 更新弹窗与 UI 优化"
+  "versionCode": 31,
+  "versionName": "3.0.0",
+  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v3.0.0/AutoSlide-v3.0.0.apk",
+  "updateLog": "1. 新增录制库：可保存多条录制记录（点击/长按/滑动/等待），录制时命名保存\n2. 录制过程边录边同步：操作实时执行到真实应用，返回键可录制\n3. 回放列表选择执行，回放完毕提示\n4. 录制脚本自动同步到服务器（每台设备独立保存）\n5. 悬浮窗优化：回放/录制按钮、3dp 边距、音量键控制录制"
 }
