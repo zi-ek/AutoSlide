@@ -312,6 +312,9 @@ class MainActivity : AppCompatActivity() {
             preferences.edit { putString(KEY_SKIP_KEYWORDS, DEFAULT_SKIP_KEYWORDS) }
         }
         binding.skipEditText.setText(skipText)
+        // 恢复自动点击总开关（默认开启）
+        binding.skipEnabledSwitch.isChecked =
+            preferences.getBoolean(KEY_AUTO_TAP_ENABLED, DEFAULT_AUTO_TAP_ENABLED)
         // 检测间隔（秒）
         val keywordInterval = preferences.getInt(KEY_KEYWORD_INTERVAL, DEFAULT_KEYWORD_INTERVAL)
             .coerceIn(1, 10)
@@ -557,6 +560,10 @@ class MainActivity : AppCompatActivity() {
 
     /* 绑定自动点击跳过关键词输入框：输入即保存并实时更新服务 */
     private fun setupSkipControls() {
+        binding.skipEnabledSwitch.setOnCheckedChangeListener { _, isChecked ->
+            preferences.edit { putBoolean(KEY_AUTO_TAP_ENABLED, isChecked) }
+            AutoSlideService.getInstance()?.setAutoTapEnabled(isChecked)
+        }
         binding.skipEditText.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
 

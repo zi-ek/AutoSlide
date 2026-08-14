@@ -45,6 +45,7 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.ziek.autoslide.A11yState
+import com.ziek.autoslide.DEFAULT_AUTO_TAP_ENABLED
 import com.ziek.autoslide.DEFAULT_DOUYIN_AUTOPLAY
 import com.ziek.autoslide.DEFAULT_KEYWORDS
 import com.ziek.autoslide.DEFAULT_KEYWORD_COOLDOWN
@@ -62,6 +63,7 @@ import com.ziek.autoslide.DIRECTION_LEFT
 import com.ziek.autoslide.DIRECTION_RIGHT
 import com.ziek.autoslide.DIRECTION_UP
 import com.ziek.autoslide.KEY_DOUYIN_AUTOPLAY
+import com.ziek.autoslide.KEY_AUTO_TAP_ENABLED
 import com.ziek.autoslide.KEY_FLOATING_DESIRED
 import com.ziek.autoslide.KEY_MACRO_PREFIX
 import com.ziek.autoslide.KEY_KEYWORDS
@@ -166,6 +168,9 @@ open class AutoSlideService : AccessibilityService() {
     /* 自动点击「跳过」的匹配关键词列表（用户可自行添加，OCR 命中后自动点击该文字位置） */
     @Volatile
     private var skipKeywordList: List<String> = parseKeywords(DEFAULT_SKIP_KEYWORDS)
+    /* 自动点击总开关：主页开关控制，关闭后常驻/关键词/回放三条路径全部停止 */
+    @Volatile
+    private var autoTapEnabled = DEFAULT_AUTO_TAP_ENABLED
     /* 无障碍保活窗口：1x1 TYPE_ACCESSIBILITY_OVERLAY，让无障碍服务持有持续窗口（参考 GKD；不是免杀，仅部分 ROM 下有助于保活） */
     private var aliveOverlayView: View? = null
 
@@ -1488,7 +1493,18 @@ private const val SPEED_CURVE_FACTOR = 0.7
             prefs.edit { putString(KEY_SKIP_KEYWORDS, DEFAULT_SKIP_KEYWORDS) }
         }
         skipKeywordList = parseKeywords(skipText)
-        LogX.i(TAG, "Skip config loaded: keywords=${skipKeywordList.size}")
+        autoTapEnabled = prefs.getBoolean(KEY_AUTO_TAP_ENABLED, DEFAULT_AUTO_TAP_ENABLED)
+        LogX.i(TAG, "Skip config loaded: keywords=${skipKeywordList.size}, autoTap=$autoTapEnabled")
+    }
+
+    /**
+     * 更新自动点击总开关（主页开关调用）
+     *
+     * @param enabled true=开启（常驻/关键词/回放倒计时都会自动点击），false=完全停止
+     */
+    fun setAutoTapEnabled(enabled: Boolean) {
+        autoTapEnabled = enabled
+        LogX.i(TAG, "Auto tap enabled: $enabled")
     }
 
     /**
@@ -1626,10 +1642,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
         lastKeywordTriggerAt = now
         updateStats(matches = 1)
         if (skipHit != null) {
-            // 带冷却点击，避免与常驻检测重复点击
-            if (SystemClock.elapsedRealtime() - lastSkipTapAt >= SKIP_TAP_COOLDOWN_MS) {
-                performSkipTap(skipHit.first, skipHit.second)
-            }
+            // 统一交给自动点击入口：开关/自身界面/冷却/手势冲突全部由它判断，三条路径共用一条规则
+            performAutoTap(skipHits)
             scheduleKeywordCheck(keywordCooldownMs.toLong())
         } else {
             LogX.i(TAG, "Keyword matched! Swiping. (Trigger $keywordConsecutiveTriggers/$keywordMaxTriggers)")
@@ -1835,14 +1849,28 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * @return 是否点击了跳过按钮
      */
     suspend fun checkAndTapSkipOnce(): Boolean {
+        // 开关关闭时不再截图识别，完全停止（回放倒计时也走这里）
+        if (!autoTapEnabled) return false
+        val bitmap = captureScreenBitmap()
+        val ocr = if (bitmap != null) recognizeSkipHits(bitmap) else ("" to emptyList())
+        bitmap?.recycle()
+        return performAutoTap(ocr.second)
+    }
+
+    /**
+     * 统一的「自动点击」执行入口：常驻检测 / 关键词检测模式 / 回放倒计时三条路径都汇聚到这里。
+     *
+     * @param hits 命中关键词的文字行中心坐标列表（归一化 0~1）
+     * @return 是否执行了点击
+     */
+    private suspend fun performAutoTap(hits: List<Pair<Float, Float>>): Boolean {
+        // 主页开关：关闭时完全停止自动点击
+        if (!autoTapEnabled) return false
         if (isGestureActive) return false
         // 不扫描 AutoSlide 自己的界面（主界面/聊天室/录制回放），自己页面永远不可能是广告
         if (isAutoSlideWindow()) return false
         if (SystemClock.elapsedRealtime() - lastSkipTapAt < SKIP_TAP_COOLDOWN_MS) return false
-        val bitmap = captureScreenBitmap()
-        val ocr = if (bitmap != null) recognizeSkipHits(bitmap) else ("" to emptyList())
-        bitmap?.recycle()
-        val hit = ocr.second.firstOrNull() ?: return false
+        val hit = hits.firstOrNull() ?: return false
         performSkipTap(hit.first, hit.second)
         return true
     }
