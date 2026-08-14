@@ -30,4 +30,4 @@ server/data
 AI对话文档.md
 
 # 备份压缩包（避免把整包误提交进仓库）
-app.zip
+*.zip
