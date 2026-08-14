@@ -18,10 +18,8 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Paint
 import android.graphics.Typeface
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import android.provider.Settings
 import android.service.quicksettings.TileService
 import android.text.Editable
@@ -190,8 +188,6 @@ class MainActivity : AppCompatActivity() {
         runCatching {
             ContextCompat.startForegroundService(this, Intent(this, StatusService::class.java))
         }
-        // 请求忽略电池优化，降低 Doze/后台休眠导致服务停止的概率（注意：这不是 MIUI 一键清理免杀权限）
-        requestIgnoreBatteryOptimizationsIfNeeded()
         reportInstallIfNeeded()
         // 启动时同步一次录制脚本（补传上次未上传的 slide_settings.xml）
         MacroSync.schedule(this, delayMs = 3000)
@@ -869,29 +865,6 @@ class MainActivity : AppCompatActivity() {
                 startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
             }.setNegativeButton(R.string.cancel, null).show()
         return false
-    }
-
-    /* 请求忽略电池优化：降低 Doze/后台休眠导致服务停止的概率（不是 MIUI 一键清理免杀权限，每天最多弹一次） */
-    private fun requestIgnoreBatteryOptimizationsIfNeeded() {
-        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-        if (powerManager.isIgnoringBatteryOptimizations(packageName)) {
-            return
-        }
-        // 未入白名单时允许再次申请，但每天最多弹一次，避免打扰
-        val lastRequest = preferences.getLong(KEY_LAST_BATTERY_OPT_REQUEST_TIME, 0L)
-        if (System.currentTimeMillis() - lastRequest < 24 * 60 * 60 * 1000L) {
-            return
-        }
-        preferences.edit { putLong(KEY_LAST_BATTERY_OPT_REQUEST_TIME, System.currentTimeMillis()) }
-        try {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
-        } catch (e: Exception) {
-            // 部分机型不支持该申请，忽略
-        }
     }
 
     /* 绑定⌈开始⌋按钮点击事件并执行运行前权限校验 */

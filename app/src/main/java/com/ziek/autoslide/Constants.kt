@@ -24,7 +24,6 @@ const val KEY_KEYWORD_COOLDOWN = "keywordCooldown"      // 关键词触发后的
 const val KEY_KEYWORD_MAX_TRIGGERS = "keywordMaxTriggers" // 同一画面最多连续触发次数
 const val KEY_KEYWORD_DIRECTION = "keywordDirection"    // 关键词触发时的滑动方向
 const val KEY_DOUYIN_AUTOPLAY = "douyinAutoPlay"        // 是否自动打开抖音连播开关（检测到抖音后触发）
-const val KEY_LAST_BATTERY_OPT_REQUEST_TIME = "lastBatteryOptRequestTime" // 上次申请电池优化白名单的时间戳
 // 用户是否希望无障碍服务保持开启（对应 GKD 的 enableAutomator）：
 // 只有为 true 时自愈逻辑才会把被 ROM 关掉的无障碍重新打开，
 // 否则用户在系统设置里手动关闭本服务会被立刻打开，导致根本关不掉
