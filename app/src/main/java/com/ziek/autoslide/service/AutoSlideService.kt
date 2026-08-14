@@ -1579,6 +1579,12 @@ private const val SPEED_CURVE_FACTOR = 0.7
         skipHits: List<Pair<Float, Float>> = emptyList()
     ) {
         if (currentGen != runGeneration || !isRunning || !keywordCheckActive) return
+        // 不扫描 AutoSlide 自己的界面（主界面/聊天室等），自己页面永远不可能是广告
+        if (isAutoSlideWindow()) {
+            LogX.d(TAG, "Current window is AutoSlide itself, skip keyword check")
+            scheduleKeywordCheck(keywordIntervalMs.toLong())
+            return
+        }
         LogX.d(TAG, "OCR text: $text")
         // 已有手势在执行时（例如定时滑动正在进行），本次命中先跳过，等待下一轮检测
         if (isGestureActive) {
@@ -1830,6 +1836,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
      */
     suspend fun checkAndTapSkipOnce(): Boolean {
         if (isGestureActive) return false
+        // 不扫描 AutoSlide 自己的界面（主界面/聊天室/录制回放），自己页面永远不可能是广告
+        if (isAutoSlideWindow()) return false
         if (SystemClock.elapsedRealtime() - lastSkipTapAt < SKIP_TAP_COOLDOWN_MS) return false
         val bitmap = captureScreenBitmap()
         val ocr = if (bitmap != null) recognizeSkipHits(bitmap) else ("" to emptyList())
@@ -1837,6 +1845,13 @@ private const val SPEED_CURVE_FACTOR = 0.7
         val hit = ocr.second.firstOrNull() ?: return false
         performSkipTap(hit.first, hit.second)
         return true
+    }
+
+    /* 当前前台窗口是否属于 AutoSlide 自己（主界面/聊天室/录制回放悬浮窗等），是则跳过广告检测 */
+    private fun isAutoSlideWindow(): Boolean {
+        val pkg = rootInActiveWindow?.packageName?.toString()
+        // 无法确定当前窗口时也跳过，避免误点
+        return pkg == null || pkg == packageName
     }
 
     /**
