@@ -232,6 +232,8 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(ioDispatcher) {
             val hasWriteSecure = hasWriteSecureSettingsPermission()
             val isAccessibilityEnabled = isAccessibilityServicePermissionEnabled()
+            // 记录 AppOps 真实状态（无障碍/悬浮窗/前台服务可能被 ROM 单独限制）
+            AppOpsState.logStatus(this@MainActivity)
             // 有⌈写入安全设置权限⌋时直接开启⌈无障碍服务权限⌋
             if (hasWriteSecure && !isAccessibilityEnabled) {
                 changeAccessibilityServicePermissionState(enable = true)

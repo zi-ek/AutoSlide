@@ -192,6 +192,10 @@ object A11yState {
             LogX.w(TAG, "no WRITE_SECURE_SETTINGS, cannot auto fix a11y service")
             return
         }
+        // AppOps 把无障碍关掉时，改启用列表也救不回来，先打日志暴露原因
+        if (!AppOpsState.isAccessibilityAllowed(app)) {
+            LogX.w(TAG, "accessibility appop restricted, self-heal may not take effect")
+        }
         val names = getSecureA11yServices()
 
         // ---- 情况一：组件不在启用列表里 ----
