@@ -759,7 +759,9 @@
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/skipEnabledSwitch"
                         android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" />
+                        android:layout_height="wrap_content"
+                        app:thumbTint="@color/switch_thumb_color"
+                        app:trackTint="@color/switch_track_color" />
                 </LinearLayout>
 
                 <TextView
