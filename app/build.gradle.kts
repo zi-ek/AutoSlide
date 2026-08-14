@@ -24,12 +24,12 @@ plugins {
 
 android {
     // 命名空间
-    namespace = "com.ltx"
+    namespace = "com.ziek.autoslide"
     // 编译时使用的Android SDK版本
     compileSdk = 37
     defaultConfig {
         // 应用ID: 包名
-        applicationId = "com.ltx"
+        applicationId = "com.ziek.autoslide"
         // 最低支持SDK版本
         minSdk = 26
         // 目标设备的SDK版本

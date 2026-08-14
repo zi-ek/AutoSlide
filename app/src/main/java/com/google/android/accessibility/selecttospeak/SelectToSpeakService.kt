@@ -1,6 +1,6 @@
 package com.google.android.accessibility.selecttospeak
 
-import com.ltx.service.AutoSlideService
+import com.ziek.autoslide.service.AutoSlideService
 
 /**
  * 伪装成 Google 无障碍组件的空壳服务（参考 GKD）：

@@ -3,7 +3,7 @@
      根布局为可拖拽的 DraggableLinearLayout；
      展开时显示控制面板（上/下/左/右方向键 + 设置 + 关闭），
      收起时只显示一个小圆球（floating_expand_button），点击重新展开 -->
-<com.ltx.service.DraggableLinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<com.ziek.autoslide.service.DraggableLinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="wrap_content"
@@ -166,4 +166,4 @@
         android:visibility="gone"
         tools:ignore="ContentDescription" />
 
-</com.ltx.service.DraggableLinearLayout>
+</com.ziek.autoslide.service.DraggableLinearLayout>
