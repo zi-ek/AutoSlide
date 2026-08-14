@@ -95,7 +95,6 @@ import com.ziek.autoslide.input.AutoSlideInputCodec
 import com.ziek.autoslide.parseKeywords
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -162,8 +161,15 @@ open class AutoSlideService : AccessibilityService() {
     /* 常驻「跳过」检测状态 */
     @Volatile
     private var persistentSkipEnabled = true // 常驻检测总开关（通知「停止」后关闭）
-    private var persistentSkipJob: Job? = null // 常驻检测协程
     private var lastSkipTapAt = 0L // 上次点击跳过按钮的时间（冷却用）
+    private var lastOcrAt = 0L // 上次 OCR 兜底识别的时间（节流用）
+    /* 自动点击事件驱动的去抖：连续界面事件合并成一次检查，界面静止时完全不唤醒 */
+    private var autoTapCheckPending = false
+    private val autoTapCheckRunnable = Runnable {
+        autoTapCheckPending = false
+        // 在后台线程执行节点树遍历与 OCR，避免占用主线程
+        serviceScope.launch(Dispatchers.Default) { checkAndTapSkipOnce() }
+    }
     /* 自动点击「跳过」的匹配关键词列表（用户可自行添加，OCR 命中后自动点击该文字位置） */
     @Volatile
     private var skipKeywordList: List<String> = parseKeywords(DEFAULT_SKIP_KEYWORDS)
@@ -211,9 +217,12 @@ open class AutoSlideService : AccessibilityService() {
 private const val MAX_GESTURE_DURATION_MS = 3000L
 private const val NO_PAUSE_GAP_MS = 80L
 private const val GESTURE_CALLBACK_TIMEOUT_MS = 3000L
-private const val SKIP_CHECK_INTERVAL_MS = 2000L
 /* 跳过按钮点击冷却，防止关键词检测与常驻检测重复点击 */
 private const val SKIP_TAP_COOLDOWN_MS = 1500L
+/* 自动点击事件去抖：界面变化事件频繁时合并成一次检查 */
+private const val AUTO_TAP_DEBOUNCE_MS = 150L
+/* OCR 兜底节流：节点树找不到关键词时，最多每 2 秒截图识别一次 */
+private const val SKIP_OCR_FALLBACK_INTERVAL_MS = 2000L
 /* 节点树扫描上限：防止超大节点树导致卡顿（扫到上限还没命中就交给 OCR 兜底） */
 private const val SKIP_NODE_SCAN_LIMIT = 2000
 /* 回放去重：同一位置重复点击的最大间隔（毫秒）与判定距离（dp） */
@@ -546,6 +555,13 @@ private const val SPEED_CURVE_FACTOR = 0.7
         }
         // 自动处理「打开推送通知」弹窗：点一次「忽略」
         maybeDismissPushNotificationDialog()
+        // 自动点击事件驱动：页面/内容变化时触发检查（复用系统已分发的无障碍事件，平时零轮询）
+        if (packageName != this.packageName &&
+            (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        ) {
+            scheduleAutoTapCheck()
+        }
     }
 
     // 无障碍服务被系统中断时回调：无需额外处理
@@ -1500,7 +1516,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
 
     /**
      * 更新自动点击总开关（主页开关调用）。
-     * 自动点击是独立功能：开启后只要无障碍服务在运行就周期检测并点击关键词，
+     * 自动点击是独立功能：开启后由无障碍事件驱动检测并点击关键词（GKD 同款思路），
      * 回放/录制期间也不停止；关闭后完全停止。
      *
      * @param enabled true=开启自动点击，false=完全停止
@@ -1509,10 +1525,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
         autoTapEnabled = enabled
         LogX.i(TAG, "Auto tap enabled: $enabled")
         if (enabled) {
-            ensureAutoTapLoop()
-        } else {
-            persistentSkipJob?.cancel()
-            persistentSkipJob = null
+            // 打开开关时立即检查一次当前界面
+            scheduleAutoTapCheck(0L)
         }
     }
 
@@ -1850,13 +1864,16 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * @return 是否点击了跳过按钮
      */
     suspend fun checkAndTapSkipOnce(): Boolean {
-        // 开关关闭时不再截图识别，完全停止（回放倒计时也走这里）
-        if (!autoTapEnabled) return false
+        // 开关关闭或保活停止时完全停止
+        if (!autoTapEnabled || !persistentSkipEnabled) return false
         // 不扫描 AutoSlide 自己的界面（主界面/聊天室/录制回放），自己页面永远不可能是广告
         if (isAutoSlideWindow()) return false
         // 优先节点树：直接读文字属性，几乎不耗电
         if (tryClickSkipNodeByTree()) return true
-        // 节点树没命中 → 截图 + OCR 兜底
+        // 节点树没命中 → 截图 + OCR 兜底（节流：事件频繁时最多每 2 秒一次）
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastOcrAt < SKIP_OCR_FALLBACK_INTERVAL_MS) return false
+        lastOcrAt = now
         val bitmap = captureScreenBitmap()
         val ocr = if (bitmap != null) recognizeSkipHits(bitmap) else ("" to emptyList())
         bitmap?.recycle()
@@ -1955,27 +1972,27 @@ private const val SPEED_CURVE_FACTOR = 0.7
 
     /**
      * 保活恢复入口：通知「停止」后关闭；StatusService/无障碍服务连接时重新开启。
-     * 循环是否真正运行还取决于主页的自动点击总开关（autoTapEnabled）。
+     * 事件驱动模式下只负责标记状态：真正是否执行还取决于主页的自动点击总开关（autoTapEnabled）。
      */
     fun setPersistentSkipEnabled(enabled: Boolean) {
         persistentSkipEnabled = enabled
         if (enabled) {
-            ensureAutoTapLoop()
-        } else {
-            persistentSkipJob?.cancel()
-            persistentSkipJob = null
+            // 服务连接/保活恢复时立即检查一次当前界面
+            scheduleAutoTapCheck(0L)
         }
     }
 
-    /* 确保自动点击循环在运行：仅当保活未停且主页开关开启时运行，不受录制/回放影响 */
-    private fun ensureAutoTapLoop() {
-        if (persistentSkipJob?.isActive == true) return
-        persistentSkipJob = serviceScope.launch {
-            while (persistentSkipEnabled && autoTapEnabled) {
-                checkAndTapSkipOnce()
-                delay(SKIP_CHECK_INTERVAL_MS)
-            }
-        }
+    /**
+     * 自动点击事件驱动的触发入口：界面变化事件到来时调用。
+     * 去抖合并连续事件；开关/保活未开启时不安排检查。
+     *
+     * @param delayMs 延迟毫秒数（默认 150ms 去抖，0 表示立即）
+     */
+    private fun scheduleAutoTapCheck(delayMs: Long = AUTO_TAP_DEBOUNCE_MS) {
+        if (!autoTapEnabled || !persistentSkipEnabled) return
+        if (autoTapCheckPending) return
+        autoTapCheckPending = true
+        handler.postDelayed(autoTapCheckRunnable, delayMs)
     }
 
     /* 在指定坐标点击「跳过」按钮，并记录点击冷却 */
