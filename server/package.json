@@ -5,6 +5,7 @@
   "description": "AutoSlide 安装统计后台（零依赖）",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/"
   }
 }

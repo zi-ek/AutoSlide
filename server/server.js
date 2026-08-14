@@ -12,59 +12,128 @@
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
+const fsp = require('fs/promises');
 const path = require('path');
 
 const PORT = process.env.PORT || 8080;
-const DATA_DIR = path.join(__dirname, 'data');
+// 数据目录：默认在本文件旁边，测试时用 AUTOSLIDE_DATA_DIR 指到临时目录做隔离
+const DATA_DIR = process.env.AUTOSLIDE_DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'stats.json');
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const MANIFEST_FILE = path.join(UPLOAD_DIR, 'index.json');
 
-function ensureData() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+/* ==================== JSON 文件存储 ==================== */
+
+/**
+ * 带原子写与串行化写队列的 JSON 存储，stats / chat / manifest 三份数据共用。
+ *
+ * 解决三件事：
+ * 1. 原子写：先写临时文件再 rename，进程在写入途中被杀（systemd 重启、断电）
+ *    不会在目标文件上留下截断的半截 JSON；
+ * 2. 串行化：读-改-写整体排队。目前各处 I/O 是同步的、天然不会交错，
+ *    但只要有一处改成异步就会立刻出现并发覆盖，这里提前把边界立住；
+ * 3. 损坏保护：解析失败时把原文件改名留档，而不是静默当成空数据继续写——
+ *    旧实现在这种情况下会把历史统计整个抹掉。
+ */
+class JsonStore {
+  constructor(file, makeDefaults) {
+    this.file = file;
+    this.makeDefaults = makeDefaults;
+    this.queue = Promise.resolve();
   }
-  if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(
-      DATA_FILE,
-      JSON.stringify({ install_count: 0, update_count: 0, unique_devices: 0, devices: [], last_update: null }, null, 2)
+
+  read() {
+    try {
+      return JSON.parse(fs.readFileSync(this.file, 'utf8'));
+    } catch (e) {
+      if (e.code === 'ENOENT') {
+        return this.makeDefaults();
+      }
+      const name = path.basename(this.file);
+      const backup = `${this.file}.corrupt-${Date.now()}`;
+      try {
+        fs.renameSync(this.file, backup);
+        console.error(`[store] ${name} 解析失败，已备份到 ${path.basename(backup)}：${e.message}`);
+      } catch (renameErr) {
+        console.error(`[store] ${name} 解析失败且备份失败：${renameErr.message}`);
+      }
+      return this.makeDefaults();
+    }
+  }
+
+  async writeAtomic(data) {
+    const tmp = `${this.file}.${process.pid}.tmp`;
+    await fsp.mkdir(path.dirname(this.file), { recursive: true });
+    await fsp.writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
+    await fsp.rename(tmp, this.file);
+  }
+
+  /**
+   * 排队执行一次读-改-写。
+   * fn 抛异常时调用方能拿到，但队列自身保持 fulfilled——
+   * 否则一次异常会让之后所有写入永久 reject，直到进程重启。
+   */
+  update(fn) {
+    const task = this.queue.then(async () => {
+      const data = this.read();
+      const result = await fn(data);
+      await this.writeAtomic(data);
+      return result;
+    });
+    this.queue = task.then(
+      () => {},
+      () => {}
     );
+    return task;
   }
 }
+
+const statsStore = new JsonStore(DATA_FILE, () => ({
+  install_count: 0,
+  update_count: 0,
+  unique_devices: 0,
+  devices: [],
+  last_update: null,
+}));
 
 function readStats() {
-  ensureData();
-  try {
-    return dedupeDevices(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
-  } catch (e) {
-    return { install_count: 0, update_count: 0, unique_devices: 0, devices: [], last_update: null };
-  }
+  return dedupeDevices(statsStore.read());
 }
 
-function writeStats(stats) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(stats, null, 2));
-}
-
-// 简易写入队列，避免并发请求互相覆盖
-let writeChain = Promise.resolve();
 function updateStats(fn) {
-  writeChain = writeChain.then(() => {
-    const stats = readStats();
+  return statsStore.update((stats) => {
+    dedupeDevices(stats);
     fn(stats);
-    writeStats(stats);
   });
-  return writeChain;
 }
 
 function readBody(req, maxBytes = 64 * 1024) {
   return new Promise((resolve, reject) => {
     let body = '';
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
+    };
     req.on('data', (c) => {
+      if (settled) return;
       body += c;
-      if (body.length > maxBytes) req.destroy();
+      if (body.length > maxBytes) {
+        // 必须显式 reject。旧实现只 destroy 不 reject：destroy 之后 'end' 不再触发，
+        // 这个 Promise 永远挂起，上游的 await 不返回，连接与内存都释放不掉。
+        fail(new Error(`request body too large (> ${maxBytes} bytes)`));
+        req.destroy();
+      }
     });
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
+    req.on('end', () => {
+      if (!settled) {
+        settled = true;
+        resolve(body);
+      }
+    });
+    req.on('error', fail);
+    req.on('aborted', () => fail(new Error('request aborted')));
   });
 }
 
@@ -73,16 +142,48 @@ function sanitize(name, fallback) {
   return s || fallback;
 }
 
-function readManifest() {
-  try {
-    return JSON.parse(fs.readFileSync(MANIFEST_FILE, 'utf8'));
-  } catch (e) {
-    return { files: [] };
+/**
+ * 拼接并校验路径，确保结果落在 baseDir 之内。
+ *
+ * 只靠 sanitize() 的字符过滤挡不住穿越：它保留了 '.'，所以 '..' 整段能原样通过，
+ * path.join(UPLOAD_DIR, '..', 'chat.json') 就跳到了 data/ 下。
+ * 这里改成解析成绝对路径后校验前缀，从机制上堵死。
+ */
+function safeJoin(baseDir, ...segments) {
+  const base = path.resolve(baseDir);
+  const target = path.resolve(base, ...segments);
+  if (target !== base && !target.startsWith(base + path.sep)) {
+    const err = new Error('path escapes base directory');
+    err.code = 'EPATHESCAPE';
+    throw err;
   }
+  return target;
 }
 
-function writeManifest(manifest) {
-  fs.writeFileSync(MANIFEST_FILE, JSON.stringify(manifest, null, 2));
+/**
+ * 解析上传文件的真实路径，越界或不存在一律返回 null（对外统一表现为 404，不泄露原因）
+ */
+function resolveUploadPath(deviceId, filename) {
+  let filePath;
+  try {
+    filePath = safeJoin(UPLOAD_DIR, deviceId, filename);
+  } catch (e) {
+    return null;
+  }
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    return null;
+  }
+  return filePath;
+}
+
+const manifestStore = new JsonStore(MANIFEST_FILE, () => ({ files: [] }));
+
+function readManifest() {
+  return manifestStore.read();
+}
+
+function updateManifest(fn) {
+  return manifestStore.update(fn);
 }
 
 /* IP 归属地查询缓存：ip -> 归属地 */
@@ -130,24 +231,20 @@ function lookupIpLocation(ip) {
 const CHAT_FILE = path.join(DATA_DIR, 'chat.json');
 const CHAT_MESSAGE_LIMIT = 300;
 
-function ensureChatData() {
-  if (!fs.existsSync(CHAT_FILE)) {
-    fs.writeFileSync(CHAT_FILE, JSON.stringify({ channels: [] }, null, 2));
-  }
-}
+const chatStore = new JsonStore(CHAT_FILE, () => ({ channels: [] }));
 
+/* 只读场景 */
 function readChat() {
-  ensureChatData();
-  try {
-    return JSON.parse(fs.readFileSync(CHAT_FILE, 'utf8'));
-  } catch (e) {
-    return { channels: [] };
-  }
+  return chatStore.read();
 }
 
-function writeChat(chat) {
-  fs.writeFileSync(CHAT_FILE, JSON.stringify(chat, null, 2));
+/* 读-改-写场景：走队列 + 原子写 */
+function updateChat(fn) {
+  return chatStore.update(fn);
 }
+
+/* 聊天图片目录 */
+const CHAT_IMAGE_DIR = path.join(DATA_DIR, 'chat-images');
 
 function genChannelCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -628,14 +725,15 @@ const server = http.createServer(async (req, res) => {
         title = String(p.get('title') || '').trim().slice(0, 50);
         content = String(p.get('content') || '').trim().slice(0, 2000);
       }
-      const chat = readChat();
-      chat.announcement = {
-        title: title || '公告栏',
-        content,
-        updatedAt: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
-      };
-      writeChat(chat);
-      return sendJson(res, 200, { ok: true, announcement: chat.announcement });
+      const announcement = await updateChat((chat) => {
+        chat.announcement = {
+          title: title || '公告栏',
+          content,
+          updatedAt: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+        };
+        return chat.announcement;
+      });
+      return sendJson(res, 200, { ok: true, announcement });
     } catch (e) {
       return sendJson(res, 400, { ok: false, error: String(e.message || e) });
     }
@@ -651,22 +749,23 @@ const server = http.createServer(async (req, res) => {
       if (!name || !deviceId) {
         return sendJson(res, 400, { ok: false, error: 'name and deviceId required' });
       }
-      const chat = readChat();
-      let code = genChannelCode();
-      while (chat.channels.some((c) => c.code === code)) code = genChannelCode();
-      const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
-      const channel = {
-        id: 'ch_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-        code,
-        name,
-        creatorId: deviceId,
-        createdAt: now,
-        members: [{ deviceId, name: deviceName || deviceId, joinedAt: now }],
-        messages: [],
-        lastSeq: 0,
-      };
-      chat.channels.push(channel);
-      writeChat(chat);
+      const channel = await updateChat((chat) => {
+        let code = genChannelCode();
+        while (chat.channels.some((c) => c.code === code)) code = genChannelCode();
+        const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+        const created = {
+          id: 'ch_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+          code,
+          name,
+          creatorId: deviceId,
+          createdAt: now,
+          members: [{ deviceId, name: deviceName || deviceId, joinedAt: now }],
+          messages: [],
+          lastSeq: 0,
+        };
+        chat.channels.push(created);
+        return created;
+      });
       return sendJson(res, 200, { ok: true, channel: chatChannelModel(channel, deviceId) });
     } catch (e) {
       return sendJson(res, 400, { ok: false, error: String(e.message || e) });
@@ -683,15 +782,17 @@ const server = http.createServer(async (req, res) => {
       if (!channelId || !deviceId) {
         return sendJson(res, 400, { ok: false, error: 'channelId and deviceId required' });
       }
-      const chat = readChat();
-      const ch = chat.channels.find((c) => c.id === channelId);
-      if (!ch) return sendJson(res, 404, { ok: false, error: 'channel not found' });
-      const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
-      if (!(ch.members || []).some((m) => m.deviceId === deviceId)) {
-        ch.members.push({ deviceId, name: deviceName || deviceId, joinedAt: now });
-      }
-      writeChat(chat);
-      return sendJson(res, 200, { ok: true, channel: chatChannelModel(ch, deviceId) });
+      const joined = await updateChat((chat) => {
+        const ch = chat.channels.find((c) => c.id === channelId);
+        if (!ch) return null;
+        const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+        if (!(ch.members || []).some((m) => m.deviceId === deviceId)) {
+          ch.members.push({ deviceId, name: deviceName || deviceId, joinedAt: now });
+        }
+        return ch;
+      });
+      if (!joined) return sendJson(res, 404, { ok: false, error: 'channel not found' });
+      return sendJson(res, 200, { ok: true, channel: chatChannelModel(joined, deviceId) });
     } catch (e) {
       return sendJson(res, 400, { ok: false, error: String(e.message || e) });
     }
@@ -734,8 +835,15 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/chat/image') {
     const file = sanitize(url.searchParams.get('file') || '', '');
     if (!file) return sendJson(res, 400, { ok: false, error: 'file required' });
-    const p = path.join(path.join(DATA_DIR, 'chat-images'), file);
-    if (!fs.existsSync(p)) return sendJson(res, 404, { ok: false, error: 'image not found' });
+    let p;
+    try {
+      p = safeJoin(CHAT_IMAGE_DIR, file);
+    } catch (e) {
+      return sendJson(res, 400, { ok: false, error: 'invalid file' });
+    }
+    if (!fs.existsSync(p) || !fs.statSync(p).isFile()) {
+      return sendJson(res, 404, { ok: false, error: 'image not found' });
+    }
     const type = file.endsWith('.png') ? 'image/png'
       : file.endsWith('.gif') ? 'image/gif'
       : file.endsWith('.webp') ? 'image/webp'
@@ -756,43 +864,46 @@ const server = http.createServer(async (req, res) => {
       if (!channelId || !deviceId || (!text && !imageRaw)) {
         return sendJson(res, 400, { ok: false, error: 'channelId, deviceId and text/image required' });
       }
-      const chat = readChat();
-      const ch = chat.channels.find((c) => c.id === channelId);
-      if (!ch) return sendJson(res, 404, { ok: false, error: 'channel not found' });
-      ch.lastSeq = (ch.lastSeq || 0) + 1;
-      let msgType = 'text';
-      let imagePath = '';
+      // 图片先解码校验再进写队列：校验失败时不该已经消耗掉一个 seq
+      let imageBuf = null;
+      let imageExt = 'png';
       if (imageRaw) {
         const m = imageRaw.match(/^data:image\/(png|jpe?g|gif|webp);base64,(.+)$/i);
-        const b64 = m ? m[2] : imageRaw;
-        const buf = Buffer.from(b64, 'base64');
-        if (!buf.length || buf.length > 6 * 1024 * 1024) {
+        imageBuf = Buffer.from(m ? m[2] : imageRaw, 'base64');
+        if (!imageBuf.length || imageBuf.length > 6 * 1024 * 1024) {
           return sendJson(res, 400, { ok: false, error: 'image invalid or too large' });
         }
-        const ext = m ? (m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase()) : 'png';
-        const imageDir = path.join(DATA_DIR, 'chat-images');
-        fs.mkdirSync(imageDir, { recursive: true });
-        const file = ch.id + '_' + ch.lastSeq + '.' + ext;
-        fs.writeFileSync(path.join(imageDir, file), buf);
-        imagePath = '/api/chat/image?file=' + encodeURIComponent(file);
-        msgType = 'image';
+        imageExt = m ? (m[1].toLowerCase() === 'jpeg' ? 'jpg' : m[1].toLowerCase()) : 'png';
       }
-      const msg = {
-        seq: ch.lastSeq,
-        channelId,
-        deviceId,
-        name: deviceName || deviceId,
-        text,
-        type: msgType,
-        image: imagePath,
-        time: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
-      };
-      ch.messages = ch.messages || [];
-      ch.messages.push(msg);
-      if (ch.messages.length > CHAT_MESSAGE_LIMIT) {
-        ch.messages = ch.messages.slice(-CHAT_MESSAGE_LIMIT);
-      }
-      writeChat(chat);
+      const msg = await updateChat((chat) => {
+        const ch = chat.channels.find((c) => c.id === channelId);
+        if (!ch) return null;
+        ch.lastSeq = (ch.lastSeq || 0) + 1;
+        let imagePath = '';
+        if (imageBuf) {
+          fs.mkdirSync(CHAT_IMAGE_DIR, { recursive: true });
+          const file = ch.id + '_' + ch.lastSeq + '.' + imageExt;
+          fs.writeFileSync(safeJoin(CHAT_IMAGE_DIR, file), imageBuf);
+          imagePath = '/api/chat/image?file=' + encodeURIComponent(file);
+        }
+        const created = {
+          seq: ch.lastSeq,
+          channelId,
+          deviceId,
+          name: deviceName || deviceId,
+          text,
+          type: imageBuf ? 'image' : 'text',
+          image: imagePath,
+          time: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }),
+        };
+        ch.messages = ch.messages || [];
+        ch.messages.push(created);
+        if (ch.messages.length > CHAT_MESSAGE_LIMIT) {
+          ch.messages = ch.messages.slice(-CHAT_MESSAGE_LIMIT);
+        }
+        return created;
+      });
+      if (!msg) return sendJson(res, 404, { ok: false, error: 'channel not found' });
       return sendJson(res, 200, { ok: true, message: msg });
     } catch (e) {
       return sendJson(res, 400, { ok: false, error: String(e.message || e) });
@@ -805,11 +916,13 @@ const server = http.createServer(async (req, res) => {
       const payload = JSON.parse((await readBody(req)) || '{}');
       const channelId = String(payload.channelId || '').slice(0, 80);
       const deviceId = String(payload.deviceId || '').slice(0, 64);
-      const chat = readChat();
-      const ch = chat.channels.find((c) => c.id === channelId);
-      if (!ch) return sendJson(res, 404, { ok: false, error: 'channel not found' });
-      ch.members = (ch.members || []).filter((m) => m.deviceId !== deviceId);
-      writeChat(chat);
+      const left = await updateChat((chat) => {
+        const ch = chat.channels.find((c) => c.id === channelId);
+        if (!ch) return false;
+        ch.members = (ch.members || []).filter((m) => m.deviceId !== deviceId);
+        return true;
+      });
+      if (!left) return sendJson(res, 404, { ok: false, error: 'channel not found' });
       return sendJson(res, 200, { ok: true });
     } catch (e) {
       return sendJson(res, 400, { ok: false, error: String(e.message || e) });
@@ -822,22 +935,27 @@ const server = http.createServer(async (req, res) => {
       const payload = JSON.parse((await readBody(req)) || '{}');
       const channelId = String(payload.channelId || '').slice(0, 80);
       const deviceId = String(payload.deviceId || '').slice(0, 64);
-      const chat = readChat();
-      const idx = chat.channels.findIndex((c) => c.id === channelId);
-      if (idx < 0) return sendJson(res, 404, { ok: false, error: 'channel not found' });
-      if (chat.channels[idx].creatorId !== deviceId) {
-        return sendJson(res, 403, { ok: false, error: 'only creator can delete' });
+      const outcome = await updateChat((chat) => {
+        const idx = chat.channels.findIndex((c) => c.id === channelId);
+        if (idx < 0) return { status: 404, error: 'channel not found' };
+        if (chat.channels[idx].creatorId !== deviceId) {
+          return { status: 403, error: 'only creator can delete' };
+        }
+        return { status: 200, removed: chat.channels.splice(idx, 1)[0] };
+      });
+      if (outcome.status !== 200) {
+        return sendJson(res, outcome.status, { ok: false, error: outcome.error });
       }
-      const removed = chat.channels.splice(idx, 1)[0];
-      writeChat(chat);
       // 清理该频道已上传的图片
-      const imageDir = path.join(DATA_DIR, 'chat-images');
-      if (fs.existsSync(imageDir)) {
-        for (const msg of (removed.messages || [])) {
+      if (fs.existsSync(CHAT_IMAGE_DIR)) {
+        for (const msg of outcome.removed.messages || []) {
           if (msg.type === 'image' && msg.image) {
-            const file = String(msg.image).split('file=')[1];
-            if (file) {
-              try { fs.unlinkSync(path.join(imageDir, file)); } catch (e) { /* 忽略 */ }
+            const file = decodeURIComponent(String(msg.image).split('file=')[1] || '');
+            if (!file) continue;
+            try {
+              fs.unlinkSync(safeJoin(CHAT_IMAGE_DIR, file));
+            } catch (e) {
+              /* 文件已不在或路径异常，忽略 */
             }
           }
         }
@@ -856,13 +974,11 @@ const server = http.createServer(async (req, res) => {
       const filename = sanitize(req.headers['x-filename'] || 'slide_settings.xml', 'slide_settings.xml');
       const body = await readBody(req, 2 * 1024 * 1024);
 
-      const deviceDir = path.join(UPLOAD_DIR, deviceId);
-      fs.mkdirSync(deviceDir, { recursive: true });
-      fs.writeFileSync(path.join(deviceDir, filename), body);
+      const targetFile = safeJoin(UPLOAD_DIR, deviceId, filename);
+      fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+      fs.writeFileSync(targetFile, body);
 
       const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
-      const manifest = readManifest();
-      const idx = manifest.files.findIndex((f) => f.deviceId === deviceId && f.filename === filename);
       const record = {
         deviceId,
         deviceName,
@@ -870,13 +986,16 @@ const server = http.createServer(async (req, res) => {
         size: Buffer.byteLength(body),
         updatedAt: now,
       };
-      if (idx >= 0) {
-        manifest.files[idx] = record;
-      } else {
-        manifest.files.push(record);
-      }
-      manifest.files.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-      writeManifest(manifest);
+      await updateManifest((manifest) => {
+        manifest.files = manifest.files || [];
+        const idx = manifest.files.findIndex((f) => f.deviceId === deviceId && f.filename === filename);
+        if (idx >= 0) {
+          manifest.files[idx] = record;
+        } else {
+          manifest.files.push(record);
+        }
+        manifest.files.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+      });
 
       // 上传脚本说明设备在线：顺带刷新统计里的 IP 与最近上报时间
       const clientIp = String(
@@ -920,8 +1039,8 @@ const server = http.createServer(async (req, res) => {
     if (!deviceId || !filename) {
       return sendJson(res, 400, { ok: false, error: 'deviceId and filename required' });
     }
-    const filePath = path.join(UPLOAD_DIR, deviceId, filename);
-    if (!fs.existsSync(filePath)) {
+    const filePath = resolveUploadPath(deviceId, filename);
+    if (!filePath) {
       return sendJson(res, 404, { ok: false, error: 'file not found' });
     }
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -935,8 +1054,8 @@ const server = http.createServer(async (req, res) => {
     if (!deviceId || !filename) {
       return sendJson(res, 400, { ok: false, error: 'deviceId and filename required' });
     }
-    const filePath = path.join(UPLOAD_DIR, deviceId, filename);
-    if (!fs.existsSync(filePath)) {
+    const filePath = resolveUploadPath(deviceId, filename);
+    if (!filePath) {
       return sendJson(res, 404, { ok: false, error: 'file not found' });
     }
     res.writeHead(200, {
@@ -963,5 +1082,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`AutoSlide stats server listening on http://0.0.0.0:${PORT}`);
+  // 打印实际绑定端口（PORT=0 时由系统分配，测试据此拿到端口）
+  console.log(`AutoSlide stats server listening on http://0.0.0.0:${server.address().port}`);
 });

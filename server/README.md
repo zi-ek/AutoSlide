@@ -53,10 +53,12 @@
 
 5. **设为开机自启（systemd）**
    ```bash
-   cp /opt/autoslide-stats/auto-slide-stats.service /etc/systemd/system/
+   cp /opt/autoslide-stats/autoslide-stats.service /etc/systemd/system/
    systemctl daemon-reload
-   systemctl enable --now auto-slide-stats
+   systemctl enable --now autoslide-stats
    ```
+   > unit 名就是 `autoslide-stats`（中间没有连字符），改完代码重启用：
+   > `systemctl restart autoslide-stats`
 
 6. **防火墙/网络**
    - 容器内：`apt install -y ufw && ufw allow 8080`（或 iptables）。
@@ -65,10 +67,20 @@
 
 ## App 端配置
 
-修改 `app/src/main/java/com/ltx/Constants.kt` 里的：
+服务地址不在 Kotlin 代码里，改根目录 `gradle.properties` 的这一行即可：
 
-```kotlin
-const val STATS_URL = "http://你的PVE容器IP:8080"
+```properties
+autoslide.serverBaseUrl=http://你的PVE容器IP:8080
+```
+
+构建时经 `buildConfigField` 注入 `BuildConfig.SERVER_BASE_URL`，由
+`app/src/main/java/com/ziek/autoslide/Constants.kt` 里的 `SERVER_BASE_URL` 统一对外提供，
+统计上报（`/api/report`）、录制脚本备份（`/api/upload`）、聊天室（`/api/chat/*`）三者共用。
+
+也可以不改文件，构建时临时覆盖：
+
+```
+./gradlew assembleRelease -Pautoslide.serverBaseUrl=http://192.168.1.10:8080
 ```
 
 重新编译安装即可。App 会在首次安装和版本升级时上报一次设备信息。
@@ -80,10 +92,11 @@ const val STATS_URL = "http://你的PVE容器IP:8080"
 C:\Users\Administrator\Desktop\AutoSlide-master\server\
 server.js — 后端服务主程序（零依赖）
 package.json — 项目说明/启动脚本
-auto-slide-stats.service — systemd 服务模板
+autoslide-stats.service — systemd 服务模板
+test/smoke.test.js — 冒烟测试（npm test，不需要部署到服务器）
 README.md — 部署说明
 
-PVE 服务器上（正在运行的位置）
+PVE 宿主机上（正在运行的位置，直接跑在宿主机，不在 LXC 容器里）
 服务程序：/opt/autoslide-stats/server.js、package.json
 data/stats.json — 统计数据就存在这里（安装数、设备列表等）
 
