@@ -106,6 +106,7 @@ import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuRemoteProcess
 import java.security.SecureRandom
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.ln
@@ -165,8 +166,8 @@ open class AutoSlideService : AccessibilityService() {
     private var lastOcrAt = 0L // 上次 OCR 兜底识别的时间（节流用）
     /* 自动点击事件驱动的去抖：连续界面事件合并成一次检查，界面静止时完全不唤醒 */
     private var autoTapCheckPending = false
-    @Volatile
-    private var autoTapChecking = false // 互斥：同一时间只允许一个自动点击检查执行，防止并发重复点击
+    /* 互斥：同一时间只允许一个自动点击检查执行，防止并发重复点击（CAS 原子抢占） */
+    private val autoTapChecking = AtomicBoolean(false)
     private val autoTapCheckRunnable = Runnable {
         autoTapCheckPending = false
         // 在后台线程执行节点树遍历与 OCR，避免占用主线程
@@ -1875,8 +1876,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
      */
     suspend fun checkAndTapSkipOnce(): Boolean {
         // 互斥：同一时间只允许一个自动点击检查执行，防止事件并发导致重复点击
-        if (autoTapChecking) return false
-        autoTapChecking = true
+        if (!autoTapChecking.compareAndSet(false, true)) return false
         try {
             // 开关关闭或保活停止时完全停止
             if (!autoTapEnabled || !persistentSkipEnabled) return false
@@ -1898,7 +1898,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
             bitmap?.recycle()
             return performAutoTap(ocr.second)
         } finally {
-            autoTapChecking = false
+            autoTapChecking.set(false)
         }
     }
 
