@@ -650,61 +650,6 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
-     * 按顺序回放一组自定义输入动作（TAP / LONG_PRESS / SWIPE）
-     *
-     * 整组回放期间保持 isGestureActive=true，防止定时器或关键词检测并发触发。
-     * 回放完成后统一走 continueAfterGesture，与默认滑动的调度逻辑保持一致。
-     *
-     * @param inputs 输入序列
-     * @param fromKeyword 是否由关键词检测触发
-     */
-    private fun replayInputSequence(inputs: List<AutoSlideInput>, fromKeyword: Boolean = false) {
-        if (inputs.isEmpty()) {
-            continueAfterGesture(runGeneration, fromKeyword)
-            return
-        }
-        isGestureActive = true
-        val currentGen = runGeneration
-        val width = resources.displayMetrics.widthPixels
-        val height = resources.displayMetrics.heightPixels
-        val density = resources.displayMetrics.density
-        serviceScope.launch {
-            var interrupted = false
-            var totalDistancePx = 0f
-            for (input in inputs) {
-                // 停止滑动或重新启动后中断本次回放
-                if (currentGen != runGeneration || !isRunning) {
-                    interrupted = true
-                    break
-                }
-                // 按录制时的操作间隔等待（第一个动作通常为 0）
-                val waitMs = input.delayMs.coerceIn(0L, MAX_REPLAY_GAP_MS)
-                if (waitMs > 0) {
-                    delay(waitMs)
-                    if (currentGen != runGeneration || !isRunning) {
-                        interrupted = true
-                        break
-                    }
-                }
-                val ok = dispatchOneInput(input, width, height)
-                if (!ok) {
-                    interrupted = true
-                    break
-                }
-                totalDistancePx += inputPathLength(input, width, height)
-            }
-            isGestureActive = false
-            if (interrupted || currentGen != runGeneration || !isRunning) {
-                return@launch
-            }
-            // 统计数据
-            val distanceMm = (totalDistancePx / density / 6f).toInt().coerceAtLeast(1)
-            updateStats(swipes = 1, distanceMm = distanceMm)
-            continueAfterGesture(currentGen, fromKeyword)
-        }
-    }
-
-    /**
      * 派发单个输入动作（对应 PlainApp 的 dispatchControl：动作 + 归一化坐标 + 时长）
      *
      * @param input 输入动作
@@ -766,7 +711,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
             .build()
 
     /**
-     * 等待手势执行完成（不修改 isGestureActive，由 replayInputSequence 统一管理）
+     * 等待手势执行完成（不修改 isGestureActive）
      *
      * @param gesture 待派发的手势
      * @return 是否成功完成
