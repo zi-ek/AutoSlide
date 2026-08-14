@@ -38,10 +38,15 @@
    ```
 
 3. **上传服务代码**
-   把本目录（`server.js`、`package.json`）放到容器 `/opt/autoslide-stats/`：
+
+   > ⚠️ `server.js` 已不再是单文件，实现拆在 `src/` 下。**只传 `server.js` 会启动失败**，
+   > 必须连 `src/` 整个目录一起传。`test/` 和 `data/` 不用传。
+
+   需要传的：`server.js`、`src/`（含 `src/views/`）、`package.json`、`autoslide-stats.service`
    ```bash
    mkdir -p /opt/autoslide-stats
-   # 用 pct push 或 scp 把 server.js 传进去
+   # 用 scp 递归传整个目录，或 rsync 排除掉不需要的
+   rsync -av --exclude data --exclude test ./ root@目标机:/opt/autoslide-stats/
    ```
 
 4. **手动启动验证**
@@ -90,7 +95,17 @@ autoslide.serverBaseUrl=http://你的PVE容器IP:8080
 
 项目里（源码，可随时修改/重新部署）
 C:\Users\Administrator\Desktop\AutoSlide-master\server\
-server.js — 后端服务主程序（零依赖）
+server.js — 入口，只负责装配路由与监听（约 40 行）
+src/config.js — 端口、数据目录、各类上限
+src/store.js — JsonStore：原子写 + 串行化写队列，三份 JSON 数据共用
+src/http.js — 请求体读取、响应封装、客户端 IP、路由表
+src/paths.js — 文件名清洗与路径越界校验（防目录穿越）
+src/ip.js — IP 归属地查询（带缓存上限）
+src/util.js — 时间戳 / HTML 转义 / 字节格式化
+src/stats.js — 统计域：/api/report、/api/stats、统计看板
+src/chat.js — 聊天域：/api/chat/*
+src/uploads.js — 上传域：/api/upload、/api/download、/view、/uploads
+src/views/styles.js、src/views/pages.js — 页面样式与模板
 package.json — 项目说明/启动脚本
 autoslide-stats.service — systemd 服务模板
 test/smoke.test.js — 冒烟测试（npm test，不需要部署到服务器）
