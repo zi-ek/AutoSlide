@@ -223,8 +223,16 @@ private const val SKIP_TAP_COOLDOWN_MS = 1500L
 private const val AUTO_TAP_DEBOUNCE_MS = 150L
 /* OCR 兜底节流：节点树找不到关键词时，最多每 2 秒截图识别一次 */
 private const val SKIP_OCR_FALLBACK_INTERVAL_MS = 2000L
+/* 节点树重试延迟：广告按钮刚出现时节点树往往还没填充文字，等 0.5 秒再查一次 */
+private const val NODE_TREE_RETRY_DELAY_MS = 500L
 /* 节点树扫描上限：防止超大节点树导致卡顿（扫到上限还没命中就交给 OCR 兜底） */
 private const val SKIP_NODE_SCAN_LIMIT = 2000
+/* 跳过文字最大长度：防止把正文长句当成按钮（GKD 同款） */
+private const val SKIP_TEXT_MAX_LENGTH = 10
+/* 排除词清单：这些文字即使含关键词也不算跳过按钮（GKD 同款防误触） */
+private val SKIP_EXCLUDE_WORDS = listOf(
+    "搜索", "历史记录", "在搜", "阅读并同意", "书签", "选好了", "设置", "完成", "下一步", "跳过片"
+)
 /* 回放去重：同一位置重复点击的最大间隔（毫秒）与判定距离（dp） */
 private const val DUPLICATE_TAP_MAX_GAP_MS = 200L
 private const val DUPLICATE_TAP_DISTANCE_DP = 8f
@@ -1870,6 +1878,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
         if (isAutoSlideWindow()) return false
         // 优先节点树：直接读文字属性，几乎不耗电
         if (tryClickSkipNodeByTree()) return true
+        // 广告刚出现时节点树往往还没填充文字，延迟 0.5 秒重试一次再决定是否 OCR
+        delay(NODE_TREE_RETRY_DELAY_MS)
+        if (!autoTapEnabled || !persistentSkipEnabled) return false
+        if (isAutoSlideWindow()) return false
+        if (tryClickSkipNodeByTree()) return true
         // 节点树没命中 → 截图 + OCR 兜底（节流：事件频繁时最多每 2 秒一次）
         val now = SystemClock.elapsedRealtime()
         if (now - lastOcrAt < SKIP_OCR_FALLBACK_INTERVAL_MS) return false
@@ -1893,8 +1906,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
             val root = rootInActiveWindow ?: return false
             val keywords = skipKeywordList.filter { it.isNotBlank() }
             if (keywords.isEmpty()) return false
-            val keywordsLower = keywords.map { it.lowercase() }
-            val target = findSkipNodeByBfs(root, keywordsLower) ?: return false
+            val target = findSkipNodeByBfs(root) ?: return false
             val clickable = findClickableSelfOrAncestor(target)
             val clicked = clickable != null && clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             if (!clicked) return false
@@ -1907,25 +1919,15 @@ private const val SPEED_CURVE_FACTOR = 0.7
         }
     }
 
-    /* BFS 遍历节点树，返回第一个文本/描述命中关键词的节点（限制扫描数量避免卡顿） */
-    private fun findSkipNodeByBfs(
-        root: AccessibilityNodeInfo,
-        keywordsLower: List<String>
-    ): AccessibilityNodeInfo? {
+    /* BFS 遍历节点树，返回第一个命中跳过关键词的节点（限制扫描数量避免卡顿） */
+    private fun findSkipNodeByBfs(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
         var scanned = 0
         while (queue.isNotEmpty() && scanned < SKIP_NODE_SCAN_LIMIT) {
             val node = queue.removeFirst()
             scanned++
-            val text = runCatching { node.text?.toString() }.getOrNull()
-            val desc = runCatching { node.contentDescription?.toString() }.getOrNull()
-            if (keywordsLower.any { keyword ->
-                    (text != null && text.lowercase().contains(keyword)) ||
-                        (desc != null && desc.lowercase().contains(keyword))
-                }) {
-                return node
-            }
+            if (matchesSkipNode(node)) return node
             val childCount = runCatching { node.childCount }.getOrDefault(0)
             for (i in 0 until childCount) {
                 val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
@@ -1933,6 +1935,63 @@ private const val SPEED_CURVE_FACTOR = 0.7
             }
         }
         return null
+    }
+
+    /**
+     * 节点是否命中跳过关键词（GKD 同款匹配规则）：
+     * 1) 文本/描述含关键词，且长度 < 10、对用户可见、尺寸像按钮（防正文长句误触）
+     * 2) 关键词含「跳过/skip」语义时，控件 id 是 SDK 跳过按钮（如穿山甲 tt_splash_skip_btn）也算命中
+     * 3) 命中排除词清单的节点直接跳过（搜索框/设置项/下一步等）
+     */
+    private fun matchesSkipNode(node: AccessibilityNodeInfo): Boolean {
+        val text = runCatching { node.text?.toString() }.getOrNull()
+        val desc = runCatching { node.contentDescription?.toString() }.getOrNull()
+        // 排除词：搜索框、设置项、正文引导等，即使含关键词也不算跳过按钮
+        if (text != null && SKIP_EXCLUDE_WORDS.any { text.contains(it) }) return false
+        if (desc != null && SKIP_EXCLUDE_WORDS.any { desc.contains(it) }) return false
+        val visible = runCatching { node.isVisibleToUser }.getOrDefault(false)
+        if (!visible) return false
+
+        // 文本匹配：含关键词 + 长度 < 10 + 尺寸像按钮
+        if (text != null && text.length < SKIP_TEXT_MAX_LENGTH &&
+            skipKeywordList.any { text.lowercase().contains(it.lowercase()) } &&
+            isSkipButtonSize(node)
+        ) {
+            return true
+        }
+        // 描述匹配：含关键词 + 长度 < 10
+        if (desc != null && desc.length < SKIP_TEXT_MAX_LENGTH &&
+            skipKeywordList.any { desc.lowercase().contains(it.lowercase()) }
+        ) {
+            return true
+        }
+        // id 匹配：关键词含跳过/skip 时，SDK 跳过按钮 id 也算命中
+        if (isSkipIntentKeyword()) {
+            val id = runCatching { node.viewIdResourceName }.getOrNull() ?: return false
+            val lowerId = id.lowercase()
+            if (lowerId.endsWith("tt_splash_skip_btn") ||
+                (lowerId.contains("skip") &&
+                    !lowerId.contains("video") && !lowerId.contains("head") && !lowerId.contains("tail"))
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /* 用户关键词是否包含「跳过/skip」语义（决定是否启用控件 id 匹配） */
+    private fun isSkipIntentKeyword(): Boolean =
+        skipKeywordList.any { kw ->
+            val k = kw.lowercase()
+            k.contains("skip") || k.contains("跳过") || k.contains("跳過")
+        }
+
+    /* 尺寸像按钮：宽 <= 500px 且高 <= 300px（GKD 全局开屏规则同款，防把大块文字当按钮） */
+    private fun isSkipButtonSize(node: AccessibilityNodeInfo): Boolean {
+        val bounds = Rect()
+        runCatching { node.getBoundsInScreen(bounds) }
+        if (bounds.isEmpty) return false
+        return bounds.width() <= 500 && bounds.height() <= 300
     }
 
     /* 返回节点本身或最近的可点击祖先 */
