@@ -162,13 +162,12 @@ open class AutoSlideService : AccessibilityService() {
     /* 常驻「跳过」检测状态 */
     @Volatile
     private var persistentSkipEnabled = true // 常驻检测总开关（通知「停止」后关闭）
-    private var skipDetectionSuppressed = false // 录制/回放期间暂停常驻检测
     private var persistentSkipJob: Job? = null // 常驻检测协程
     private var lastSkipTapAt = 0L // 上次点击跳过按钮的时间（冷却用）
     /* 自动点击「跳过」的匹配关键词列表（用户可自行添加，OCR 命中后自动点击该文字位置） */
     @Volatile
     private var skipKeywordList: List<String> = parseKeywords(DEFAULT_SKIP_KEYWORDS)
-    /* 自动点击总开关：主页开关控制，关闭后常驻/关键词/回放三条路径全部停止 */
+    /* 自动点击总开关：主页开关控制，开启时始终检测并点击关键词，关闭时完全停止 */
     @Volatile
     private var autoTapEnabled = DEFAULT_AUTO_TAP_ENABLED
     /* 无障碍保活窗口：1x1 TYPE_ACCESSIBILITY_OVERLAY，让无障碍服务持有持续窗口（参考 GKD；不是免杀，仅部分 ROM 下有助于保活） */
@@ -1498,13 +1497,21 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
-     * 更新自动点击总开关（主页开关调用）
+     * 更新自动点击总开关（主页开关调用）。
+     * 自动点击是独立功能：开启后只要无障碍服务在运行就周期检测并点击关键词，
+     * 回放/录制期间也不停止；关闭后完全停止。
      *
-     * @param enabled true=开启（常驻/关键词/回放倒计时都会自动点击），false=完全停止
+     * @param enabled true=开启自动点击，false=完全停止
      */
     fun setAutoTapEnabled(enabled: Boolean) {
         autoTapEnabled = enabled
         LogX.i(TAG, "Auto tap enabled: $enabled")
+        if (enabled) {
+            ensureAutoTapLoop()
+        } else {
+            persistentSkipJob?.cancel()
+            persistentSkipJob = null
+        }
     }
 
     /**
@@ -1579,20 +1586,18 @@ private const val SPEED_CURVE_FACTOR = 0.7
             if (currentGen != runGeneration || !isRunning) {
                 return@launch
             }
-            handleKeywordCheckResult(ocrResult.first, currentGen, ocrResult.second)
+            handleKeywordCheckResult(ocrResult.first, currentGen)
         }
     }
 
     /**
-     * 处理一次 OCR 识别结果：优先点击广告「跳过」按钮，其次按用户关键词滑动。
+     * 处理一次 OCR 识别结果：仅按用户关键词滑动（自动点击已独立成单独功能，不在这里处理）。
      *
      * @param text 识别出的屏幕文字
-     * @param skipHits 「跳过」文字行的中心坐标列表（归一化 0~1）
      */
     private suspend fun handleKeywordCheckResult(
         text: String,
-        currentGen: Int,
-        skipHits: List<Pair<Float, Float>> = emptyList()
+        currentGen: Int
     ) {
         if (currentGen != runGeneration || !isRunning || !keywordCheckActive) return
         // 不扫描 AutoSlide 自己的界面（主界面/聊天室等），自己页面永远不可能是广告
@@ -1617,10 +1622,9 @@ private const val SPEED_CURVE_FACTOR = 0.7
             scheduleKeywordCheck(remaining)
             return
         }
-        // 优先「跳过」广告按钮，其次用户关键词；都没有则重置连续触发计数
-        val skipHit = skipHits.firstOrNull()
+        // 仅按用户关键词匹配；未命中则重置连续触发计数
         val keywordMatched = matchesKeyword(text)
-        if (skipHit == null && !keywordMatched) {
+        if (!keywordMatched) {
             keywordConsecutiveTriggers = 0
             lastTriggeredTextHash = null
             LogX.d(TAG, "Keyword not matched. Next check in ${keywordIntervalMs}ms")
@@ -1641,14 +1645,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
         keywordConsecutiveTriggers++
         lastKeywordTriggerAt = now
         updateStats(matches = 1)
-        if (skipHit != null) {
-            // 统一交给自动点击入口：开关/自身界面/冷却/手势冲突全部由它判断，三条路径共用一条规则
-            performAutoTap(skipHits)
-            scheduleKeywordCheck(keywordCooldownMs.toLong())
-        } else {
-            LogX.i(TAG, "Keyword matched! Swiping. (Trigger $keywordConsecutiveTriggers/$keywordMaxTriggers)")
-            performSlideByDirection(calculateGestureDurationMillis(), fromKeyword = true)
-        }
+        LogX.i(TAG, "Keyword matched! Swiping. (Trigger $keywordConsecutiveTriggers/$keywordMaxTriggers)")
+        performSlideByDirection(calculateGestureDurationMillis(), fromKeyword = true)
     }
 
     /**
@@ -1844,7 +1842,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
-     * 执行一次「跳过」检测并点击（供回放倒计时等场景调用）。
+     * 自动点击独立功能：执行一次截图识别并按关键词点击。
      *
      * @return 是否点击了跳过按钮
      */
@@ -1858,7 +1856,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
-     * 统一的「自动点击」执行入口：常驻检测 / 关键词检测模式 / 回放倒计时三条路径都汇聚到这里。
+     * 「自动点击」执行入口：命中关键词且满足条件时执行点击。
+     * 不检查手势互斥，回放/滑动期间只要开关开启都会执行（广告出现时点击优先）。
      *
      * @param hits 命中关键词的文字行中心坐标列表（归一化 0~1）
      * @return 是否执行了点击
@@ -1866,7 +1865,6 @@ private const val SPEED_CURVE_FACTOR = 0.7
     private suspend fun performAutoTap(hits: List<Pair<Float, Float>>): Boolean {
         // 主页开关：关闭时完全停止自动点击
         if (!autoTapEnabled) return false
-        if (isGestureActive) return false
         // 不扫描 AutoSlide 自己的界面（主界面/聊天室/录制回放），自己页面永远不可能是广告
         if (isAutoSlideWindow()) return false
         if (SystemClock.elapsedRealtime() - lastSkipTapAt < SKIP_TAP_COOLDOWN_MS) return false
@@ -1883,28 +1881,28 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
-     * 常驻「跳过」检测开关：通知「停止」后关闭；StatusService 启动时重新开启。
+     * 保活恢复入口：通知「停止」后关闭；StatusService/无障碍服务连接时重新开启。
+     * 循环是否真正运行还取决于主页的自动点击总开关（autoTapEnabled）。
      */
     fun setPersistentSkipEnabled(enabled: Boolean) {
         persistentSkipEnabled = enabled
-        if (enabled && persistentSkipJob?.isActive != true) {
-            persistentSkipJob = serviceScope.launch {
-                while (persistentSkipEnabled) {
-                    // 录制/回放期间暂停，避免干扰用户正在录/放的操作
-                    if (!skipDetectionSuppressed) {
-                        checkAndTapSkipOnce()
-                    }
-                    delay(SKIP_CHECK_INTERVAL_MS)
-                }
-            }
+        if (enabled) {
+            ensureAutoTapLoop()
+        } else {
+            persistentSkipJob?.cancel()
+            persistentSkipJob = null
         }
     }
 
-    /**
-     * 录制/回放期间暂停常驻「跳过」检测，由 FloatingWindowService 调用。
-     */
-    fun setSkipDetectionSuppressed(suppressed: Boolean) {
-        skipDetectionSuppressed = suppressed
+    /* 确保自动点击循环在运行：仅当保活未停且主页开关开启时运行，不受录制/回放影响 */
+    private fun ensureAutoTapLoop() {
+        if (persistentSkipJob?.isActive == true) return
+        persistentSkipJob = serviceScope.launch {
+            while (persistentSkipEnabled && autoTapEnabled) {
+                checkAndTapSkipOnce()
+                delay(SKIP_CHECK_INTERVAL_MS)
+            }
+        }
     }
 
     /* 在指定坐标点击「跳过」按钮，并记录点击冷却 */

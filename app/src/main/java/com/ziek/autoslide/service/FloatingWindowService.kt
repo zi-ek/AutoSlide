@@ -578,18 +578,10 @@ class FloatingWindowService : Service() {
             val autoLaunchJob = launch {
                 runCatching { service.autoFindAndOpenAppByName(name) }
             }
-            // 倒计时期间持续检测并点击启动广告「跳过」按钮
-            val skipJob = launch {
-                while (true) {
-                    runCatching { service.checkAndTapSkipOnce() }
-                    delay(1000)
-                }
-            }
             for (i in 10 downTo 0) {
                 circle.text = i.toString()
                 delay(1000)
             }
-            skipJob.cancel()
             runCatching { windowManager.removeView(circle) }
             playbackCountdownView = null
             // 倒计时结束但 App 还在翻页查找时，最多再等 30 秒（多页桌面翻页+OCR 较慢）
@@ -612,8 +604,6 @@ class FloatingWindowService : Service() {
 
     /* 进入回放模式：复用悬浮窗窗口变成全屏透明反馈层（不新增悬浮窗，避免系统弹警告） */
     private fun enterPlaybackMode() {
-        // 回放期间暂停常驻跳过检测，由回放倒计时的跳过任务负责
-        AutoSlideService.getInstance()?.setSkipDetectionSuppressed(true)
         controlPanel.visibility = View.GONE
         expandButton.visibility = View.GONE
         val feedback = PlaybackFeedbackView(this)
@@ -636,7 +626,6 @@ class FloatingWindowService : Service() {
 
     /* 退出回放模式：移除反馈层，恢复悬浮球/面板 */
     private fun exitPlaybackMode() {
-        AutoSlideService.getInstance()?.setSkipDetectionSuppressed(false)
         playbackFeedbackView?.let { feedback ->
             runCatching { (rootView as? ViewGroup)?.removeView(feedback) }
         }
@@ -743,8 +732,6 @@ class FloatingWindowService : Service() {
      */
     private fun startRecordingTrajectory(name: String) {
         AutoSlideService.getInstance()?.stopSlide()
-        // 录制期间暂停常驻跳过检测，避免干扰录制
-        AutoSlideService.getInstance()?.setSkipDetectionSuppressed(true)
         // 录制期间完全隐藏悬浮窗（不显示悬浮球）
         hideFloatingWindow()
         val recordView = InputRecorderView(
@@ -792,7 +779,6 @@ class FloatingWindowService : Service() {
             recordOverlayView = recordView
         } catch (e: Exception) {
             LogX.e("FloatingWindowService", "Failed to add record view", e)
-            AutoSlideService.getInstance()?.setSkipDetectionSuppressed(false)
             showFloatingWindow()
             expand()
         }
@@ -803,7 +789,6 @@ class FloatingWindowService : Service() {
         val recordView = recordOverlayView ?: return
         runCatching { windowManager.removeView(recordView) }
         recordOverlayView = null
-        AutoSlideService.getInstance()?.setSkipDetectionSuppressed(false)
         showFloatingWindow()
     }
 
