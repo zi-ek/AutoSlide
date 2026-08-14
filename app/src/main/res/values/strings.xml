@@ -99,6 +99,9 @@
     <string name="keyword_empty_warning">请先输入至少一个关键词</string>
     <string name="keyword_need_android_11">关键词检测需要 Android 11 及以上版本，或已授权的 Shizuku</string>
     <string name="keyword_ocr_failed">OCR 识别失败，请检查 Google Play 服务是否可用</string>
+    <string name="title_skip_settings">自动点击</string>
+    <string name="skip_settings_desc">识别到屏幕出现以下文字时自动点击该文字位置，用于跳过启动广告等场景。用中文逗号分隔，可自行添加关键词。</string>
+    <string name="skip_hint">关键词（用中文逗号分隔）</string>
     <string name="douyin_auto_play">开启自动连播</string>
     <string name="douyin_auto_play_switch">抖音自动连播开关</string>
     <string name="douyin_auto_play_need_accessibility">开启抖音自动连播需要先开启无障碍服务权限</string>

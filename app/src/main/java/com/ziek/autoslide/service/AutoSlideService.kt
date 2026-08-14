@@ -55,6 +55,7 @@ import com.ziek.autoslide.DEFAULT_KEYWORD_MAX_TRIGGERS
 import com.ziek.autoslide.DEFAULT_MAX_PAUSE_TIME
 import com.ziek.autoslide.DEFAULT_MIN_PAUSE_TIME
 import com.ziek.autoslide.DEFAULT_PAUSE_TIME
+import com.ziek.autoslide.DEFAULT_SKIP_KEYWORDS
 import com.ziek.autoslide.DEFAULT_SPEED
 import com.ziek.autoslide.DIRECTION_DOWN
 import com.ziek.autoslide.DIRECTION_LEFT
@@ -73,6 +74,7 @@ import com.ziek.autoslide.KEY_MAX_PAUSE_TIME
 import com.ziek.autoslide.KEY_MIN_PAUSE_TIME
 import com.ziek.autoslide.KEY_PAUSE_MODE
 import com.ziek.autoslide.KEY_PAUSE_TIME
+import com.ziek.autoslide.KEY_SKIP_KEYWORDS
 import com.ziek.autoslide.KEY_SPEED
 import com.ziek.autoslide.KEY_STATS_KEYWORD_MATCHES
 import com.ziek.autoslide.KEY_STATS_SAVED_DISTANCE
@@ -161,6 +163,9 @@ open class AutoSlideService : AccessibilityService() {
     private var skipDetectionSuppressed = false // 录制/回放期间暂停常驻检测
     private var persistentSkipJob: Job? = null // 常驻检测协程
     private var lastSkipTapAt = 0L // 上次点击跳过按钮的时间（冷却用）
+    /* 自动点击「跳过」的匹配关键词列表（用户可自行添加，OCR 命中后自动点击该文字位置） */
+    @Volatile
+    private var skipKeywordList: List<String> = parseKeywords(DEFAULT_SKIP_KEYWORDS)
     /* 无障碍保活窗口：1x1 TYPE_ACCESSIBILITY_OVERLAY，让无障碍服务持有持续窗口（参考 GKD；不是免杀，仅部分 ROM 下有助于保活） */
     private var aliveOverlayView: View? = null
 
@@ -420,6 +425,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         instance = this
         registerScreenOffReceiver()
         loadKeywordConfig()
+        loadSkipConfig()
         loadKeywordDirection()
         douyinAutoPlayCompleted = false
         douyinSessionDone = false
@@ -1471,6 +1477,32 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
+     * 从本地配置读取自动点击「跳过」按钮的匹配关键词列表
+     */
+    private fun loadSkipConfig() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        var skipText = prefs.getString(KEY_SKIP_KEYWORDS, DEFAULT_SKIP_KEYWORDS) ?: DEFAULT_SKIP_KEYWORDS
+        if (skipText.isBlank()) {
+            // 跳过关键词为空时自动恢复默认关键词
+            skipText = DEFAULT_SKIP_KEYWORDS
+            prefs.edit { putString(KEY_SKIP_KEYWORDS, DEFAULT_SKIP_KEYWORDS) }
+        }
+        skipKeywordList = parseKeywords(skipText)
+        LogX.i(TAG, "Skip config loaded: keywords=${skipKeywordList.size}")
+    }
+
+    /**
+     * 实时更新自动点击「跳过」按钮的匹配关键词（主界面输入时调用）
+     *
+     * @param keywords 跳过关键词文本（用中文逗号/英文逗号/换行分隔）
+     */
+    fun updateSkipConfig(keywords: String) {
+        val parsed = parseKeywords(keywords)
+        skipKeywordList = parsed.ifEmpty { parseKeywords(DEFAULT_SKIP_KEYWORDS) }
+        LogX.i(TAG, "Skip config updated: keywords=${skipKeywordList.size}")
+    }
+
+    /**
      * 读取关键词触发方向并应用到当前滑动方向
      */
     private fun loadKeywordDirection() {
@@ -1617,6 +1649,22 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
+     * 判断 OCR 识别出的单行文字是否命中任一跳过关键词（不区分大小写，适配 Skip Ad 等英文按钮）
+     *
+     * @param lineText 单行识别文字
+     * @return 是否命中
+     */
+    private fun matchesSkipKeyword(lineText: String): Boolean {
+        if (skipKeywordList.isEmpty() || lineText.isBlank()) {
+            return false
+        }
+        val haystack = lineText.lowercase()
+        return skipKeywordList.any { keyword ->
+            keyword.isNotEmpty() && haystack.contains(keyword.lowercase())
+        }
+    }
+
+    /**
      * 截取当前屏幕
      *
      * @return 屏幕位图，失败时返回 null
@@ -1710,11 +1758,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
-     * 使用 ML Kit 中文模型识别位图文字，并返回所有包含「跳过」的文字行中心坐标（归一化 0~1）。
-     * 用于自动点击 App 启动广告的「跳过」按钮。
+     * 使用 ML Kit 中文模型识别位图文字，并返回所有命中「跳过关键词」的文字行中心坐标（归一化 0~1）。
+     * 用于自动点击 App 启动广告的「跳过」按钮（关键词列表由用户在主页配置，默认「跳过」）。
      *
      * @param bitmap 屏幕位图
-     * @return (完整识别文字, 「跳过」文字行的中心坐标列表)
+     * @return (完整识别文字, 命中文字行的中心坐标列表)
      */
     private suspend fun recognizeSkipHits(bitmap: Bitmap): Pair<String, List<Pair<Float, Float>>> =
         withContext(Dispatchers.IO) {
@@ -1729,7 +1777,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 val hits = mutableListOf<Pair<Float, Float>>()
                 for (block in result.textBlocks) {
                     for (line in block.lines) {
-                        if (line.text.contains("跳过")) {
+                        if (matchesSkipKeyword(line.text)) {
                             val box = line.boundingBox
                             if (box != null) {
                                 hits += (box.centerX().toFloat() / width).coerceIn(0f, 1f) to

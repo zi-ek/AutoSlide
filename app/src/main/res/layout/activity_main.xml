@@ -2,7 +2,7 @@
 <!-- 主界面布局：
      整页放在可滚动容器里，从上到下依次是：
      顶部工具栏 -> 必要权限卡片 -> 滑动设置卡片（模式按钮/停顿时间/速度） ->
-     关键词检测分区（仅关键词检测模式显示）-> 开始按钮 -> 检查更新按钮 -->
+     关键词检测分区（仅关键词检测模式显示）-> 自动点击跳过卡片 -> 开始按钮 -> 检查更新按钮 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
@@ -720,6 +720,61 @@
                             android:minLines="3" />
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!--自动点击跳过卡片：OCR 识别到关键词时自动点击该文字位置-->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/skipSettingsCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/margin_medium"
+            android:layout_marginTop="@dimen/margin_medium"
+            app:cardBackgroundColor="@color/surface"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp"
+            app:strokeWidth="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="@dimen/margin_medium">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/title_skip_settings"
+                    android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_size_subtitle"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_small"
+                    android:text="@string/skip_settings_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/skipInputLayout"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_small"
+                    android:hint="@string/skip_hint"
+                    android:maxWidth="488dp"
+                    tools:ignore="VisualLintTextFieldSize">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/skipEditText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="top"
+                        android:inputType="textMultiLine|textCapSentences"
+                        android:minLines="2" />
+                </com.google.android.material.textfield.TextInputLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

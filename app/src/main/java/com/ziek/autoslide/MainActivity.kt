@@ -174,6 +174,7 @@ class MainActivity : AppCompatActivity() {
         setupPauseControls()
         setupSpeedControl()
         setupKeywordControls()
+        setupSkipControls()
         binding.accessibilityServicePermissionSwitch.setOnCheckedChangeListener(accessibilitySwitchListener)
         binding.overlayPermissionSwitch.setOnCheckedChangeListener(overlaySwitchListener)
         binding.douyinAutoPlaySwitch.setOnCheckedChangeListener { _, isChecked ->
@@ -303,6 +304,14 @@ class MainActivity : AppCompatActivity() {
         binding.keywordEditText.setText(keywordText)
         binding.keywordIgnoreCaseSwitch.isChecked =
             preferences.getBoolean(KEY_KEYWORD_IGNORE_CASE, DEFAULT_KEYWORD_IGNORE_CASE)
+        // 恢复自动点击跳过关键词
+        var skipText = preferences.getString(KEY_SKIP_KEYWORDS, DEFAULT_SKIP_KEYWORDS) ?: DEFAULT_SKIP_KEYWORDS
+        if (skipText.isBlank()) {
+            // 跳过关键词为空时自动恢复默认关键词
+            skipText = DEFAULT_SKIP_KEYWORDS
+            preferences.edit { putString(KEY_SKIP_KEYWORDS, DEFAULT_SKIP_KEYWORDS) }
+        }
+        binding.skipEditText.setText(skipText)
         // 检测间隔（秒）
         val keywordInterval = preferences.getInt(KEY_KEYWORD_INTERVAL, DEFAULT_KEYWORD_INTERVAL)
             .coerceIn(1, 10)
@@ -544,6 +553,21 @@ class MainActivity : AppCompatActivity() {
             binding.keywordMoreContainer.isVisible = !show
             binding.keywordMoreArrow.animate().rotation(if (show) 0f else 180f).setDuration(200).start()
         }
+    }
+
+    /* 绑定自动点击跳过关键词输入框：输入即保存并实时更新服务 */
+    private fun setupSkipControls() {
+        binding.skipEditText.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+
+            override fun afterTextChanged(s: Editable?) {
+                val keywords = s?.toString() ?: ""
+                preferences.edit { putString(KEY_SKIP_KEYWORDS, keywords) }
+                AutoSlideService.getInstance()?.updateSkipConfig(keywords)
+            }
+        })
     }
 
     /* 处理⌈无障碍服务权限⌋开关打开动作 */

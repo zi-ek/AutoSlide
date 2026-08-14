@@ -23,6 +23,7 @@ const val KEY_KEYWORD_INTERVAL = "keywordInterval"      // 关键词检测间隔
 const val KEY_KEYWORD_COOLDOWN = "keywordCooldown"      // 关键词触发后的冷却时间（秒）
 const val KEY_KEYWORD_MAX_TRIGGERS = "keywordMaxTriggers" // 同一画面最多连续触发次数
 const val KEY_KEYWORD_DIRECTION = "keywordDirection"    // 关键词触发时的滑动方向
+const val KEY_SKIP_KEYWORDS = "skipKeywords"         // 自动点击「跳过」按钮的匹配关键词列表（用中文逗号分隔）
 const val KEY_DOUYIN_AUTOPLAY = "douyinAutoPlay"        // 是否自动打开抖音连播开关（检测到抖音后触发）
 // 用户是否希望无障碍服务保持开启（对应 GKD 的 enableAutomator）：
 // 只有为 true 时自愈逻辑才会把被 ROM 关掉的无障碍重新打开，
@@ -55,6 +56,8 @@ const val DEFAULT_KEYWORD_IGNORE_CASE = true        // 默认忽略大小写
 const val DEFAULT_KEYWORD_INTERVAL = 2           // 默认每 2 秒检测一次
 const val DEFAULT_KEYWORD_COOLDOWN = 3           // 默认触发后冷却 3 秒
 const val DEFAULT_KEYWORD_MAX_TRIGGERS = 3          // 默认同一画面最多触发 3 次
+// 默认自动点击「跳过」按钮的匹配关键词（用中文逗号分隔）
+const val DEFAULT_SKIP_KEYWORDS = "跳过"
 const val DEFAULT_DOUYIN_AUTOPLAY = true            // 默认开启抖音自动连播
 
 /**
