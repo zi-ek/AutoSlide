@@ -165,6 +165,8 @@ open class AutoSlideService : AccessibilityService() {
     private var lastOcrAt = 0L // 上次 OCR 兜底识别的时间（节流用）
     /* 自动点击事件驱动的去抖：连续界面事件合并成一次检查，界面静止时完全不唤醒 */
     private var autoTapCheckPending = false
+    @Volatile
+    private var autoTapChecking = false // 互斥：同一时间只允许一个自动点击检查执行，防止并发重复点击
     private val autoTapCheckRunnable = Runnable {
         autoTapCheckPending = false
         // 在后台线程执行节点树遍历与 OCR，避免占用主线程
@@ -1872,25 +1874,32 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * @return 是否点击了跳过按钮
      */
     suspend fun checkAndTapSkipOnce(): Boolean {
-        // 开关关闭或保活停止时完全停止
-        if (!autoTapEnabled || !persistentSkipEnabled) return false
-        // 不扫描 AutoSlide 自己的界面（主界面/聊天室/录制回放），自己页面永远不可能是广告
-        if (isAutoSlideWindow()) return false
-        // 优先节点树：直接读文字属性，几乎不耗电
-        if (tryClickSkipNodeByTree()) return true
-        // 广告刚出现时节点树往往还没填充文字，延迟 0.5 秒重试一次再决定是否 OCR
-        delay(NODE_TREE_RETRY_DELAY_MS)
-        if (!autoTapEnabled || !persistentSkipEnabled) return false
-        if (isAutoSlideWindow()) return false
-        if (tryClickSkipNodeByTree()) return true
-        // 节点树没命中 → 截图 + OCR 兜底（节流：事件频繁时最多每 2 秒一次）
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastOcrAt < SKIP_OCR_FALLBACK_INTERVAL_MS) return false
-        lastOcrAt = now
-        val bitmap = captureScreenBitmap()
-        val ocr = if (bitmap != null) recognizeSkipHits(bitmap) else ("" to emptyList())
-        bitmap?.recycle()
-        return performAutoTap(ocr.second)
+        // 互斥：同一时间只允许一个自动点击检查执行，防止事件并发导致重复点击
+        if (autoTapChecking) return false
+        autoTapChecking = true
+        try {
+            // 开关关闭或保活停止时完全停止
+            if (!autoTapEnabled || !persistentSkipEnabled) return false
+            // 不扫描 AutoSlide 自己的界面（主界面/聊天室/录制回放），自己页面永远不可能是广告
+            if (isAutoSlideWindow()) return false
+            // 优先节点树：直接读文字属性，几乎不耗电
+            if (tryClickSkipNodeByTree()) return true
+            // 广告刚出现时节点树往往还没填充文字，延迟 0.5 秒重试一次再决定是否 OCR
+            delay(NODE_TREE_RETRY_DELAY_MS)
+            if (!autoTapEnabled || !persistentSkipEnabled) return false
+            if (isAutoSlideWindow()) return false
+            if (tryClickSkipNodeByTree()) return true
+            // 节点树没命中 → 截图 + OCR 兜底（节流：事件频繁时最多每 2 秒一次）
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastOcrAt < SKIP_OCR_FALLBACK_INTERVAL_MS) return false
+            lastOcrAt = now
+            val bitmap = captureScreenBitmap()
+            val ocr = if (bitmap != null) recognizeSkipHits(bitmap) else ("" to emptyList())
+            bitmap?.recycle()
+            return performAutoTap(ocr.second)
+        } finally {
+            autoTapChecking = false
+        }
     }
 
     /**
