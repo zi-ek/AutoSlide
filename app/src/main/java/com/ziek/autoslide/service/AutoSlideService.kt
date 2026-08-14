@@ -161,7 +161,7 @@ open class AutoSlideService : AccessibilityService() {
     private var skipDetectionSuppressed = false // 录制/回放期间暂停常驻检测
     private var persistentSkipJob: Job? = null // 常驻检测协程
     private var lastSkipTapAt = 0L // 上次点击跳过按钮的时间（冷却用）
-    /* 无障碍保活窗口：1x1 TYPE_ACCESSIBILITY_OVERLAY，防止 MIUI 一键清理时杀掉进程（参考 GKD） */
+    /* 无障碍保活窗口：1x1 TYPE_ACCESSIBILITY_OVERLAY，让无障碍服务持有持续窗口（参考 GKD；不是免杀，仅部分 ROM 下有助于保活） */
     private var aliveOverlayView: View? = null
 
     /* 更新统计数据 */
@@ -425,7 +425,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         douyinSessionDone = false
         // 无障碍服务连接后开启常驻「跳过」检测（点开始/启动滑动时 StatusService 也会再次开启）
         setPersistentSkipEnabled(true)
-        // 添加 1x1 无障碍保活窗口，让 MIUI 清理后台时保留本 App（参考 GKD）
+        // 添加 1x1 无障碍保活窗口（参考 GKD；对普通清理有辅助作用，对 force-stop 无效）
         addAliveOverlayView()
         // 自动启动常驻服务（参考 GKD：无障碍一连接就拉起前台服务，MIUI 清理时保留）
         runCatching {

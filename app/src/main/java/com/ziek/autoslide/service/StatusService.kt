@@ -79,7 +79,8 @@ class StatusService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 重新开启常驻跳过检测（可能之前被通知「停止」关闭过）
+        // 恢复常驻「跳过」检测：StatusService 是常驻载体，被系统重启后把检测重新打开
+        // （职责划分：StatusService 管常驻与健康检查，AutoSlideService 管无障碍自动化）
         AutoSlideService.getInstance()?.setPersistentSkipEnabled(true)
         // 被系统 START_STICKY 重启时也走一次自愈：此时无障碍多半也一起被杀了
         A11yState.fixRestartA11yService()
@@ -90,10 +91,20 @@ class StatusService : Service() {
             refreshHandler.postDelayed(refreshRunnable, REFRESH_INTERVAL_MS)
             START_STICKY
         } catch (e: Exception) {
-            // Android 14+ 若系统限制「特殊用途前台服务」，静默退出常驻，不影响正常使用
-            LogX.e("StatusService", "startForeground failed", e)
-            stopSelf()
-            START_NOT_STICKY
+            // Android 14+ 若系统限制「特殊用途前台服务」，不要直接放弃：
+            // 先降级用无类型的前台服务重试一次，仍失败才退出常驻。
+            LogX.e("StatusService", "startForeground specialUse failed, retry plain", e)
+            return try {
+                @Suppress("DEPRECATION")
+                startForeground(NOTIFICATION_ID, buildNotification())
+                refreshHandler.removeCallbacks(refreshRunnable)
+                refreshHandler.postDelayed(refreshRunnable, REFRESH_INTERVAL_MS)
+                START_STICKY
+            } catch (e2: Exception) {
+                LogX.e("StatusService", "startForeground fallback failed too", e2)
+                stopSelf()
+                START_NOT_STICKY
+            }
         }
     }
 
