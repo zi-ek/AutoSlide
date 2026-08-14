@@ -214,6 +214,8 @@ private const val GESTURE_CALLBACK_TIMEOUT_MS = 3000L
 private const val SKIP_CHECK_INTERVAL_MS = 2000L
 /* 跳过按钮点击冷却，防止关键词检测与常驻检测重复点击 */
 private const val SKIP_TAP_COOLDOWN_MS = 1500L
+/* 节点树扫描上限：防止超大节点树导致卡顿（扫到上限还没命中就交给 OCR 兜底） */
+private const val SKIP_NODE_SCAN_LIMIT = 2000
 /* 回放去重：同一位置重复点击的最大间隔（毫秒）与判定距离（dp） */
 private const val DUPLICATE_TAP_MAX_GAP_MS = 200L
 private const val DUPLICATE_TAP_DISTANCE_DP = 8f
@@ -1842,17 +1844,88 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
-     * 自动点击独立功能：执行一次截图识别并按关键词点击。
+     * 自动点击独立功能：优先在无障碍节点树中查找关键词并点击（零 OCR 开销、即时响应），
+     * 节点树中找不到时才截图 + OCR 兜底（适配自绘界面等没有节点文字的场景）。
      *
      * @return 是否点击了跳过按钮
      */
     suspend fun checkAndTapSkipOnce(): Boolean {
         // 开关关闭时不再截图识别，完全停止（回放倒计时也走这里）
         if (!autoTapEnabled) return false
+        // 不扫描 AutoSlide 自己的界面（主界面/聊天室/录制回放），自己页面永远不可能是广告
+        if (isAutoSlideWindow()) return false
+        // 优先节点树：直接读文字属性，几乎不耗电
+        if (tryClickSkipNodeByTree()) return true
+        // 节点树没命中 → 截图 + OCR 兜底
         val bitmap = captureScreenBitmap()
         val ocr = if (bitmap != null) recognizeSkipHits(bitmap) else ("" to emptyList())
         bitmap?.recycle()
         return performAutoTap(ocr.second)
+    }
+
+    /**
+     * 在无障碍节点树中查找命中关键词的节点并点击。
+     * 优先点击节点本身或最近的可点击祖先；节点点击失败时返回 false 交给 OCR 兜底。
+     *
+     * @return 是否已通过节点树完成点击
+     */
+    private fun tryClickSkipNodeByTree(): Boolean {
+        // 冷却期内不重复点击
+        if (SystemClock.elapsedRealtime() - lastSkipTapAt < SKIP_TAP_COOLDOWN_MS) return false
+        return try {
+            val root = rootInActiveWindow ?: return false
+            val keywords = skipKeywordList.filter { it.isNotBlank() }
+            if (keywords.isEmpty()) return false
+            val keywordsLower = keywords.map { it.lowercase() }
+            val target = findSkipNodeByBfs(root, keywordsLower) ?: return false
+            val clickable = findClickableSelfOrAncestor(target)
+            val clicked = clickable != null && clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            if (!clicked) return false
+            lastSkipTapAt = SystemClock.elapsedRealtime()
+            LogX.i(TAG, "Skip node clicked: text=${target.text}, desc=${target.contentDescription}")
+            true
+        } catch (e: Throwable) {
+            LogX.w(TAG, "Node tree tap failed, fallback to OCR", e)
+            false
+        }
+    }
+
+    /* BFS 遍历节点树，返回第一个文本/描述命中关键词的节点（限制扫描数量避免卡顿） */
+    private fun findSkipNodeByBfs(
+        root: AccessibilityNodeInfo,
+        keywordsLower: List<String>
+    ): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var scanned = 0
+        while (queue.isNotEmpty() && scanned < SKIP_NODE_SCAN_LIMIT) {
+            val node = queue.removeFirst()
+            scanned++
+            val text = runCatching { node.text?.toString() }.getOrNull()
+            val desc = runCatching { node.contentDescription?.toString() }.getOrNull()
+            if (keywordsLower.any { keyword ->
+                    (text != null && text.lowercase().contains(keyword)) ||
+                        (desc != null && desc.lowercase().contains(keyword))
+                }) {
+                return node
+            }
+            val childCount = runCatching { node.childCount }.getOrDefault(0)
+            for (i in 0 until childCount) {
+                val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
+                queue.add(child)
+            }
+        }
+        return null
+    }
+
+    /* 返回节点本身或最近的可点击祖先 */
+    private fun findClickableSelfOrAncestor(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var current: AccessibilityNodeInfo? = node
+        while (current != null) {
+            if (current.isClickable) return current
+            current = runCatching { current.parent }.getOrNull()
+        }
+        return null
     }
 
     /**
