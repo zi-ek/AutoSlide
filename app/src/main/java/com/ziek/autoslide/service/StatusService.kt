@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.ziek.autoslide.A11yState
+import com.ziek.autoslide.LogX
 import com.ziek.autoslide.MainActivity
 import com.ziek.autoslide.R
 
@@ -90,6 +91,7 @@ class StatusService : Service() {
             START_STICKY
         } catch (e: Exception) {
             // Android 14+ 若系统限制「特殊用途前台服务」，静默退出常驻，不影响正常使用
+            LogX.e("StatusService", "startForeground failed", e)
             stopSelf()
             START_NOT_STICKY
         }
@@ -119,6 +121,7 @@ class StatusService : Service() {
             startForegroundInternal(buildNotification())
         } catch (e: Exception) {
             // 刷新失败不影响，下一轮再试
+            LogX.w("StatusService", "refresh foreground failed", e)
         }
     }
 

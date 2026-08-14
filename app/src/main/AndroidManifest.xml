@@ -17,6 +17,10 @@
     <uses-permission
         android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
+    <!-- 仅用于诊断 AppOps 权限状态（GKD 同款），不提供任何免杀能力 -->
+    <uses-permission
+        android:name="android.permission.GET_APP_OPS_STATS"
+        tools:ignore="ProtectedPermissions" />
 
     <!-- 允许枚举桌面应用：回放前按录制名称直接调用对应 App，无需 OCR 翻页 -->
     <queries>

@@ -32,7 +32,6 @@ import android.provider.Settings
 import com.ziek.autoslide.LogX
 import android.view.Display
 import android.view.Gravity
-import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -419,10 +418,6 @@ private const val SPEED_CURVE_FACTOR = 0.7
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        // 重新开启按键过滤，用于录制时拦截音量键
-        serviceInfo = serviceInfo.apply {
-            flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
-        }
         registerScreenOffReceiver()
         loadKeywordConfig()
         loadKeywordDirection()
@@ -543,13 +538,6 @@ private const val SPEED_CURVE_FACTOR = 0.7
 
     // 无障碍服务被系统中断时回调：无需额外处理
     override fun onInterrupt() = Unit
-
-    /**
-     * 物理按键回调
-     */
-    override fun onKeyEvent(event: KeyEvent): Boolean {
-        return super.onKeyEvent(event)
-    }
 
     /* 强制停止滑动并恢复悬浮窗面板 */
     private fun forceStop() {

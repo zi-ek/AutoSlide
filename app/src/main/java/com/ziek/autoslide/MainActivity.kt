@@ -190,7 +190,7 @@ class MainActivity : AppCompatActivity() {
         runCatching {
             ContextCompat.startForegroundService(this, Intent(this, StatusService::class.java))
         }
-        // 申请电池优化白名单（参考 GKD），让 MIUI 一键清理时保留本 App
+        // 请求忽略电池优化，降低 Doze/后台休眠导致服务停止的概率（注意：这不是 MIUI 一键清理免杀权限）
         requestIgnoreBatteryOptimizationsIfNeeded()
         reportInstallIfNeeded()
         // 启动时同步一次录制脚本（补传上次未上传的 slide_settings.xml）
@@ -869,7 +869,7 @@ class MainActivity : AppCompatActivity() {
         return false
     }
 
-    /* 申请电池优化白名单：让 MIUI 一键清理时保留本 App（参考 GKD，只弹一次） */
+    /* 请求忽略电池优化：降低 Doze/后台休眠导致服务停止的概率（不是 MIUI 一键清理免杀权限，每天最多弹一次） */
     private fun requestIgnoreBatteryOptimizationsIfNeeded() {
         val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         if (powerManager.isIgnoringBatteryOptimizations(packageName)) {
