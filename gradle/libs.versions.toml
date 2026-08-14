@@ -1,0 +1,36 @@
+# ==================== 版本目录 ====================
+# 集中管理所有依赖的版本号，app/build.gradle.kts 通过 libs.xxx 引用
+
+[versions]
+agp = "9.3.1"                 # Android Gradle Plugin 版本
+kotlin = "2.4.10"              # Kotlin 版本（与 GKD 一致；priv-core/loc 0.7.1 均要求 2.4.10 编译器）
+appcompat = "1.7.1"            # AndroidX AppCompat
+material = "1.14.0"            # Material Components
+shizuku = "13.1.5"             # Shizuku（免 root 提权执行 shell 命令）
+coroutines = "1.11.0"          # Kotlin 协程
+mlkit = "16.0.1"               # ML Kit 文字识别（中文 OCR）
+privkit = "0.3.4"              # Priv Kit 自管理特权运行时（替代原始 Shizuku 反射执行 pm grant）
+loc = "0.7.1"                  # kotlin-loc 编译器插件，为关键日志自动补上 文件:行号
+
+[libraries]
+# ---- UI 基础库 ----
+appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+# ---- Shizuku（用于授予写入安全设置权限/截图）----
+shizuku-api = { group = "dev.rikka.shizuku", name = "api", version.ref = "shizuku" }
+shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref = "shizuku" }
+# ---- Priv Kit：自管理特权运行时，承担 Shizuku 外部启动 + WRITE_SECURE_SETTINGS 自动授权 ----
+priv-core = { group = "io.github.priv-kit", name = "priv-core", version.ref = "privkit" }
+# ---- kotlin-loc：日志文件行号注入 ----
+loc-annotation = { group = "li.songe.loc", name = "loc-annotation", version.ref = "loc" }
+# ---- 协程 ----
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+# ---- OCR：ML Kit 中文文字识别（模型随 APK 打包）----
+mlkit-text-recognition-chinese = { group = "com.google.mlkit", name = "text-recognition-chinese", version.ref = "mlkit" }
+
+# ==================== 插件 ====================
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" } # Android 应用插件
+kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" } # 把 KGP 2.4.10 带上类路径，驱动 AGP 内置 Kotlin 升级（GKD 同款思路，不引入 Compose）
+loc = { id = "li.songe.loc", version.ref = "loc" } # kotlin-loc 编译器插件

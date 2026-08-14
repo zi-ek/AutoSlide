@@ -1,0 +1,33 @@
+*.iml
+.gradle
+.kotlin
+app/src/androidTest
+app/src/test
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# 正式签名（私密，不要提交）
+keystore.properties
+*.jks
+
+# IDE 本地配置（Android Studio 自动生成，不需要进仓库）
+/.idea/
+
+# 运行数据 / 私人文档（不需要进仓库）
+stats.json
+server/data
+AI对话文档.md
+
+# 备份压缩包（避免把整包误提交进仓库）
+app.zip

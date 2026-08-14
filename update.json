@@ -1,0 +1,6 @@
+{
+  "versionCode": 32,
+  "versionName": "3.1.0",
+  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v3.1.0/AutoSlide-v3.1.0.apk",
+  "updateLog": "1. 新增联网反馈：公开频道直接加入、创建频道、多人聊天\n2. 聊天支持发送图片、公告栏（后台可编辑）\n3. 频道支持删除（仅创建者）、成员列表、退出\n4. 回放新增 5..0 圆形倒计时\n5. 聊天界面全面美化（卡片、气泡、头像）\n6. 修复一加等新系统输入法遮挡、状态栏重叠问题"
+}

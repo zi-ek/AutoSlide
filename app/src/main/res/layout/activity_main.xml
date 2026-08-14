@@ -1,0 +1,775 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主界面布局：
+     整页放在可滚动容器里，从上到下依次是：
+     顶部工具栏 -> 必要权限卡片 -> 滑动设置卡片（模式按钮/停顿时间/速度） ->
+     关键词检测分区（仅关键词检测模式显示）-> 开始按钮 -> 检查更新按钮 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/window_background"
+    android:orientation="vertical">
+
+    <!-- 固定顶部的数据统计卡片，不随页面滚动 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <!--数据统计卡片-->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/statisticsCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/margin_medium"
+            android:layout_marginTop="@dimen/margin_medium"
+            app:cardBackgroundColor="@color/surface"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp"
+            app:strokeWidth="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="@dimen/margin_medium">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/title_statistics"
+                        android:textColor="@color/text_primary"
+                        android:textSize="@dimen/text_size_subtitle"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/chatRoomText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_chat_room_circle"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:paddingHorizontal="14dp"
+                        android:paddingVertical="7dp"
+                        android:text="@string/chat_room"
+                        android:textColor="@color/on_primary"
+                        android:textSize="15sp"
+                        android:textStyle="bold"
+                        tools:ignore="ClickableViewAccessibility" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_small"
+                    android:orientation="horizontal"
+                    android:baselineAligned="false">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/totalSwipesText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/primary"
+                            android:textSize="20sp"
+                            android:textStyle="bold"
+                            tools:text="128" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/total_swipes_label"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/keywordMatchesText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/primary"
+                            android:textSize="20sp"
+                            android:textStyle="bold"
+                            tools:text="45" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/keyword_matches_label"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/savedDistanceText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/primary"
+                            android:textSize="20sp"
+                            android:textStyle="bold"
+                            tools:text="15.5 米" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/saved_distance_label"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </LinearLayout>
+
+    <!-- 可滚动区域：从必要权限卡片开始 -->
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingBottom="@dimen/margin_large">
+
+        <!--权限设置卡片-->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/permissionCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/margin_medium"
+            android:layout_marginTop="@dimen/margin_medium"
+            app:cardBackgroundColor="@color/surface"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp"
+            app:strokeWidth="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="@dimen/margin_medium">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/title_required_permission"
+                    android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_size_subtitle"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_small"
+                    android:orientation="horizontal"
+                    android:baselineAligned="false">
+
+                    <!--无障碍服务权限-->
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/accessibilityServicePermissionSwitch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="23dp"
+                            android:contentDescription="@string/accessibility_service_permission_switch"
+                            app:thumbTint="@color/switch_thumb_color"
+                            app:trackTint="@color/switch_track_color" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="21dp"
+                            android:text="@string/bind_accessibility_service"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <!--分割线-->
+                    <View
+                        android:layout_width="1dp"
+                        android:layout_height="match_parent"
+                        android:layout_marginVertical="8dp"
+                        android:background="#1A000000" />
+
+                    <!--悬浮窗权限-->
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/overlayPermissionSwitch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="21dp"
+                            android:contentDescription="@string/overlay_permission_switch"
+                            app:thumbTint="@color/switch_thumb_color"
+                            app:trackTint="@color/switch_track_color" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/overlay_permission_title"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!--保活提示：点击查看「无感保活」说明（磁贴复活机制）-->
+                <TextView
+                    android:id="@+id/keepAliveHintText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="@dimen/margin_small"
+                    android:text="@string/keep_alive_hint_text"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="12sp"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/settingsCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/margin_medium"
+            android:layout_marginTop="@dimen/margin_medium"
+            app:cardBackgroundColor="@color/surface"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="0dp"
+            app:strokeWidth="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="@dimen/margin_medium">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/title_slide_settings"
+                    android:textColor="@color/text_primary"
+                    android:textSize="@dimen/text_size_subtitle"
+                    android:textStyle="bold" />
+
+                <com.google.android.material.button.MaterialButtonToggleGroup
+                    android:id="@+id/pauseModeToggleGroup"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_small"
+                    app:checkedButton="@id/btnKeywordPause"
+                    app:selectionRequired="true"
+                    app:singleSelection="true">
+                    <!--关键词检测（默认选中，排在第一）-->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnKeywordPause"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:paddingHorizontal="0dp"
+                        android:text="@string/keyword_detection"
+                        android:textColor="@color/toggle_btn_text"
+                        app:backgroundTint="@color/toggle_btn_bg"
+                        app:cornerRadius="14dp"
+                        tools:ignore="VisualLintButtonSize" />
+                    <!--不停顿-->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnNoPause"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:paddingHorizontal="0dp"
+                        android:text="@string/pause_mode_none"
+                        android:textColor="@color/toggle_btn_text"
+                        app:backgroundTint="@color/toggle_btn_bg"
+                        app:cornerRadius="14dp"
+                        tools:ignore="VisualLintButtonSize" />
+                    <!--固定时间-->
+                    <!--随机时间-->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnFixedPause"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:paddingHorizontal="0dp"
+                        android:text="@string/pause_mode_fixed"
+                        android:textColor="@color/toggle_btn_text"
+                        app:backgroundTint="@color/toggle_btn_bg"
+                        app:cornerRadius="14dp"
+                        tools:ignore="VisualLintButtonSize" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnRandomPause"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:paddingHorizontal="0dp"
+                        android:text="@string/pause_mode_random"
+                        android:textColor="@color/toggle_btn_text"
+                        app:backgroundTint="@color/toggle_btn_bg"
+                        app:cornerRadius="14dp"
+                        tools:ignore="VisualLintButtonSize" />
+
+                </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                <!--统一的停顿时间配置区域-->
+                <LinearLayout
+                    android:id="@+id/pauseTimeContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_small"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/pauseTimeLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="@dimen/text_size_body"
+                            tools:text="@string/pause_time" />
+
+                        <TextView
+                            android:id="@+id/pauseTimeValueText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:textColor="@color/primary"
+                            android:textSize="@dimen/text_size_body"
+                            android:textStyle="bold"
+                            tools:text="1" />
+                    </LinearLayout>
+
+                    <!--滑动选择区域-->
+                    <FrameLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/margin_small">
+
+                        <!-- 固定时间单向滑动条 -->
+                        <com.google.android.material.slider.Slider
+                            android:id="@+id/pauseTimeSlider"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:stepSize="1.0"
+                            android:value="1.0"
+                            android:valueFrom="1.0"
+                            android:valueTo="50.0"
+                            android:visibility="gone"
+                            app:thumbColor="@color/primary"
+                            app:tickColor="@android:color/transparent"
+                            app:tickVisible="false"
+                            app:trackColorActive="@color/primary"
+                            app:trackColorInactive="@color/switch_track_unchecked"
+                            app:trackHeight="4dp" />
+
+                        <!-- 随机时间范围滑动条 -->
+                        <com.google.android.material.slider.RangeSlider
+                            android:id="@+id/randomPauseTimeSlider"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:stepSize="1.0"
+                            android:valueFrom="1.0"
+                            android:valueTo="50.0"
+                            android:visibility="gone"
+                            app:thumbColor="@color/primary"
+                            app:tickColor="@android:color/transparent"
+                            app:tickVisible="false"
+                            app:trackColorActive="@color/primary"
+                            app:trackColorInactive="@color/switch_track_unchecked"
+                            app:trackHeight="4dp" />
+                    </FrameLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/speedTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_small"
+                    android:text="@string/setting_slide_speed"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="@dimen/text_size_body" />
+                <!--滑动速度滑动条-->
+                <LinearLayout
+                    android:id="@+id/speedContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_small"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:baselineAligned="false">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/speed_label_slow"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="14sp" />
+
+                    <com.google.android.material.slider.Slider
+                        android:id="@+id/speedSlider"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:stepSize="1.0"
+                        android:value="50.0"
+                        android:valueFrom="1.0"
+                        android:valueTo="100.0"
+                        app:thumbColor="@color/primary"
+                        app:tickColor="@android:color/transparent"
+                        app:tickVisible="false"
+                        app:trackColorActive="@color/primary"
+                        app:trackColorInactive="@color/switch_track_unchecked"
+                        app:trackHeight="4dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/speed_label_fast"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/margin_small"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:baselineAligned="false">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/douyin_auto_play"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="@dimen/text_size_body" />
+                    <!--自动连播开关-->
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/douyinAutoPlaySwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        android:contentDescription="@string/douyin_auto_play_switch"
+                        app:thumbTint="@color/switch_thumb_color"
+                        app:trackTint="@color/switch_track_color" />
+                </LinearLayout>
+
+                <!--关键词检测设置（仅关键词检测模式显示）-->
+                <LinearLayout
+                    android:id="@+id/keywordCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:visibility="gone"
+                        android:baselineAligned="false">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/keyword_ignore_case"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="@dimen/text_size_body" />
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/keywordIgnoreCaseSwitch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            app:thumbTint="@color/switch_thumb_color"
+                            app:trackTint="@color/switch_track_color" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/keywordMoreHeader"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/margin_small"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingVertical="4dp">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/keyword_more"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="@dimen/text_size_body" />
+
+                        <TextView
+                            android:id="@+id/keywordMoreArrow"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/keyword_more_arrow"
+                            android:textColor="@color/floating_btn_bg"
+                            android:textSize="36sp" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/keywordMoreContainer"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:visibility="gone">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/margin_small"
+                        android:baselineAligned="false"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/keyword_interval"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="@dimen/text_size_body" />
+
+                        <TextView
+                            android:id="@+id/keywordIntervalValueText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/primary"
+                            android:textSize="@dimen/text_size_body"
+                            android:textStyle="bold"
+                            tools:text="5" />
+                    </LinearLayout>
+
+                    <com.google.android.material.slider.Slider
+                        android:id="@+id/keywordIntervalSlider"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:stepSize="1.0"
+                        android:value="5.0"
+                        android:valueFrom="1.0"
+                        android:valueTo="10.0"
+                        app:thumbColor="@color/primary"
+                        app:tickColor="@android:color/transparent"
+                        app:tickVisible="false"
+                        app:trackColorActive="@color/primary"
+                        app:trackColorInactive="@color/switch_track_unchecked"
+                        app:trackHeight="4dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/margin_small"
+                        android:orientation="horizontal"
+                        android:baselineAligned="false">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/keyword_cooldown"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="@dimen/text_size_body" />
+
+                        <TextView
+                            android:id="@+id/keywordCooldownValueText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/primary"
+                            android:textSize="@dimen/text_size_body"
+                            android:textStyle="bold"
+                            tools:text="3" />
+                    </LinearLayout>
+
+                    <com.google.android.material.slider.Slider
+                        android:id="@+id/keywordCooldownSlider"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:stepSize="1.0"
+                        android:value="3.0"
+                        android:valueFrom="1.0"
+                        android:valueTo="20.0"
+                        app:thumbColor="@color/primary"
+                        app:tickColor="@android:color/transparent"
+                        app:tickVisible="false"
+                        app:trackColorActive="@color/primary"
+                        app:trackColorInactive="@color/switch_track_unchecked"
+                        app:trackHeight="4dp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/margin_small"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/keyword_max_triggers"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="@dimen/text_size_body" />
+
+                        <TextView
+                            android:id="@+id/keywordMaxTriggerValueText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/primary"
+                            android:textSize="@dimen/text_size_body"
+                            android:textStyle="bold"
+                            tools:text="3" />
+                    </LinearLayout>
+
+                    <com.google.android.material.slider.Slider
+                        android:id="@+id/keywordMaxTriggerSlider"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:stepSize="1.0"
+                        android:value="3.0"
+                        android:valueFrom="1.0"
+                        android:valueTo="10.0"
+                        app:thumbColor="@color/primary"
+                        app:tickColor="@android:color/transparent"
+                        app:tickVisible="false"
+                        app:trackColorActive="@color/primary"
+                        app:trackColorInactive="@color/switch_track_unchecked"
+                        app:trackHeight="4dp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/margin_small"
+                        android:text="@string/keyword_detection"
+                        android:textColor="@color/text_primary"
+                        android:textSize="@dimen/text_size_subtitle"
+                        android:textStyle="bold" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/keywordInputLayout"
+                        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/margin_small"
+                        android:hint="@string/keyword_hint"
+                        android:maxWidth="488dp"
+                        tools:ignore="VisualLintTextFieldSize">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/keywordEditText"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:gravity="top"
+                            android:inputType="textMultiLine|textCapSentences"
+                            android:minLines="3" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!--开始按钮-->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/startButton"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:layout_marginHorizontal="@dimen/margin_medium"
+            android:layout_marginTop="@dimen/margin_large"
+            android:text="@string/start"
+            android:textColor="@color/on_primary"
+            android:textSize="18sp"
+            app:backgroundTint="@color/primary"
+            app:cornerRadius="32dp"
+            tools:ignore="VisualLintButtonSize" />
+
+        <!--检查更新按钮-->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/checkUpdateButton"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/margin_medium"
+            android:text="@string/check_update"
+            android:textColor="@color/text_secondary"
+            app:cornerRadius="18dp" />
+
+        <!--微信打赏二维码-->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/margin_medium"
+            android:text="@string/donate_tip"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <ImageView
+            android:id="@+id/wxImageView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/margin_small"
+            android:adjustViewBounds="true"
+            android:contentDescription="@string/donate_qr_desc"
+            android:maxWidth="220dp"
+            android:maxHeight="220dp"
+            android:src="@mipmap/wx" />
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+</LinearLayout>
