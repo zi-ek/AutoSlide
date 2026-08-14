@@ -2,6 +2,7 @@ package com.ziek.autoslide.chat
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import com.ziek.autoslide.SERVER_BASE_URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -41,10 +42,10 @@ data class ChatAnnouncement(
     val updatedAt: String,
 )
 
-/** 聊天后端：走 pve.8450696.shop 的 Cloudflare Tunnel，全部接口基于 JSON */
+/** 聊天后端：走 Cloudflare Tunnel 反代，全部接口基于 JSON。地址来自 [SERVER_BASE_URL] */
 object ChatApi {
-    private const val SERVER = "https://pve.8450696.shop"
-    private const val BASE = "$SERVER/api/chat"
+    // 依赖非 const 的 SERVER_BASE_URL，因此只能是 val
+    private val BASE = "$SERVER_BASE_URL/api/chat"
     private const val TIMEOUT_MS = 10000
 
     suspend fun createChannel(name: String, deviceId: String, deviceName: String): ChatChannel =
@@ -187,7 +188,7 @@ object ChatApi {
         image = o.optString("image"),
     )
 
-    fun imageUrl(path: String): String = SERVER + path
+    fun imageUrl(path: String): String = SERVER_BASE_URL + path
 
     private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
 }

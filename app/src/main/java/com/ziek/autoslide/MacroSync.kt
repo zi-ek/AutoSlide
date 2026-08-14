@@ -60,7 +60,7 @@ object MacroSync {
             if (bytes.isEmpty()) {
                 return
             }
-            val url = java.net.URL(STATS_URL + "/api/upload")
+            val url = java.net.URL(SERVER_BASE_URL + "/api/upload")
             val connection = url.openConnection() as java.net.HttpURLConnection
             connection.requestMethod = "POST"
             connection.connectTimeout = 5000

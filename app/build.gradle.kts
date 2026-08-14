@@ -7,6 +7,10 @@ import java.io.InputStreamReader
 // 版本名称（APK 输出文件名也使用它）
 val appVersionName = "3.1.0"
 
+// 后端服务地址：来自 gradle.properties 的 autoslide.serverBaseUrl，
+// 经 buildConfigField 注入 BuildConfig，代码里只认 Constants.SERVER_BASE_URL 这一个来源
+val serverBaseUrl = providers.gradleProperty("autoslide.serverBaseUrl").getOrElse("")
+
 // 正式签名配置：从 keystore.properties 读取（该文件包含密码，不要提交到仓库）
 val keystoreProperties = Properties().apply {
     val f = rootProject.file("keystore.properties")
@@ -38,6 +42,8 @@ android {
         versionCode = 32
         // 版本名称
         versionName = appVersionName
+        // 后端服务地址（统计 / 脚本备份 / 聊天室共用）
+        buildConfigField("String", "SERVER_BASE_URL", "\"$serverBaseUrl\"")
     }
     signingConfigs {
         create("release") {
@@ -77,6 +83,8 @@ android {
         viewBinding = true
         // 启用 AIDL（priv-kit 通过 Shizuku UserService 桥接需要）
         aidl = true
+        // 启用 BuildConfig（AGP 8 起默认关闭），用于注入后端服务地址
+        buildConfig = true
     }
     buildToolsVersion = "36.0.0"
 }

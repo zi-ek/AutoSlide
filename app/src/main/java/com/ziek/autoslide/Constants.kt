@@ -43,8 +43,12 @@ const val KEY_STATS_KEYWORD_MATCHES = "stats_keyword_matches"
 const val KEY_STATS_SAVED_DISTANCE = "stats_saved_distance"
 const val KEY_IS_REPORTED = "is_reported"
 const val KEY_LAST_REPORTED_VERSION = "last_reported_version"
-// 统计后台地址（Cloudflare Tunnel 绑定域名）
-const val STATS_URL = "https://pve.8450696.shop"
+// ==================== 后端服务 ====================
+// 统计上报、录制脚本备份、聊天室共用同一台后端（Cloudflare Tunnel 绑定域名）。
+// 地址在 gradle.properties 的 autoslide.serverBaseUrl 里配置，构建时注入 BuildConfig，
+// 全工程只有这一个来源——换服务器不需要动任何 Kotlin 代码。
+// 注意：这里不能用 const val，因为 BuildConfig 是 Java 静态字段，不构成 Kotlin 编译期常量。
+val SERVER_BASE_URL: String = BuildConfig.SERVER_BASE_URL
 
 // ==================== 默认值 ====================
 const val DEFAULT_SPEED = 50                        // 默认滑动速度（中等）

@@ -978,7 +978,7 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val url = java.net.URL(STATS_URL + "/api/report")
+                val url = java.net.URL(SERVER_BASE_URL + "/api/report")
                 val connection = url.openConnection() as java.net.HttpURLConnection
                 connection.requestMethod = "POST"
                 connection.connectTimeout = 5000
