@@ -586,7 +586,7 @@ class FloatingWindowService : Service() {
             gravity = Gravity.CENTER_VERTICAL
             addView(
                 importButton,
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 3f)
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
             )
             addView(
                 cancelButton,
