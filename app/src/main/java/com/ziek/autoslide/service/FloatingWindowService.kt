@@ -500,7 +500,7 @@ class FloatingWindowService : Service() {
                 val row = LinearLayout(dialogContext).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(18), dp(10), dp(10), dp(10))
+                    setPadding(dp(18), dp(0), dp(10), dp(0))
                     if (rippleOutValue.resourceId != 0) {
                         setBackgroundResource(rippleOutValue.resourceId)
                     }
@@ -542,8 +542,8 @@ class FloatingWindowService : Service() {
                     }
                 }
                 row.addView(nameView)
-                row.addView(clearButton)
                 row.addView(exportButton)
+                row.addView(clearButton)
                 // 点击整行开始回放
                 row.setOnClickListener {
                     playMacroByName(name)
