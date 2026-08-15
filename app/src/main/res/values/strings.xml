@@ -53,6 +53,10 @@
     <string name="macro_import_success">导入成功，配置已生效</string>
     <string name="macro_import_failed">导入失败，请确认选择的是 slide_settings.xml</string>
     <string name="macro_import_cancelled">已取消导入</string>
+    <string name="macro_loop_title">回放设置</string>
+    <string name="macro_loop_hint">循环次数（1-99）</string>
+    <string name="macro_loop_invalid">请输入 1-99 之间的次数</string>
+    <string name="macro_loop_total">共 %1$d 次</string>
     <string name="macro_delete_title">确认清除</string>
     <string name="macro_delete_message">确定要清除录制「%1$s」吗？</string>
     <string name="macro_deleted">录制已清除</string>

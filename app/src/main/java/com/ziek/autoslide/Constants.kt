@@ -95,6 +95,7 @@ const val DEFAULT_KEYWORD_DIRECTION = DIRECTION_UP
 // 支持保存多条录制记录：每条记录以 “macro_名称” 为键存到本地，
 // 值为 PlainApp 输入框架的 JSON 数组（点击/长按/滑动/等待）
 const val KEY_MACRO_PREFIX = "macro_"
+const val KEY_MACRO_LOOP_COUNT = "macroLoopCount"     // 回放时记住上次使用的循环次数
 
 /**
  * 兼容读取关键词时间参数（单位：秒）
