@@ -543,16 +543,7 @@ class FloatingWindowService : Service() {
                 }
                 row.addView(nameView)
                 row.addView(clearButton)
-                row.addView(
-                    exportButton,
-                    LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        // 清除与导出之间保持 10dp 间距
-                        marginStart = dp(10)
-                    }
-                )
+                row.addView(exportButton)
                 // 点击整行开始回放
                 row.setOnClickListener {
                     playMacroByName(name)
@@ -598,23 +589,6 @@ class FloatingWindowService : Service() {
         playListDialog = builder.create().also {
             it.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
             it.show()
-            // 缩小「导入配置」与底部「取消」按钮的间距
-            it.window?.decorView?.post {
-                runCatching {
-                    // buttonPanel 是系统隐藏 id，运行时动态获取
-                    val panelId = android.content.res.Resources.getSystem()
-                        .getIdentifier("buttonPanel", "id", "android")
-                    if (panelId != 0) {
-                        val panel = it.window?.decorView?.findViewById<View>(panelId)
-                        panel?.setPadding(
-                            panel.paddingLeft,
-                            dp(2),
-                            panel.paddingRight,
-                            panel.paddingBottom
-                        )
-                    }
-                }
-            }
         }
     }
 
