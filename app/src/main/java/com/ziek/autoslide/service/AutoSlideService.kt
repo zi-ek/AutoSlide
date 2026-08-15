@@ -192,8 +192,14 @@ open class AutoSlideService : AccessibilityService() {
             if (swipes > 0) putInt(KEY_STATS_TOTAL_SWIPES, prefs.getInt(KEY_STATS_TOTAL_SWIPES, 0) + swipes)
             if (matches > 0) putInt(KEY_STATS_KEYWORD_MATCHES, prefs.getInt(KEY_STATS_KEYWORD_MATCHES, 0) + matches)
             if (distanceMm > 0) putInt(KEY_STATS_SAVED_DISTANCE, prefs.getInt(KEY_STATS_SAVED_DISTANCE, 0) + distanceMm)
-        }
     }
+}
+
+/* 录制时采集的控件名片：控件 id 与文字（回放时用于跨设备定位） */
+private data class NodeTargetInfo(
+    val text: String,
+    val id: String
+)
 
     private fun runSlide() {
         if (!isRunning) {
@@ -741,6 +747,45 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 true
             }
         }
+    }
+
+    /**
+     * 智能派发输入动作（跨设备/布局变化定位）：
+     * 点击/长按优先按控件定位（id/文字）→ 找不到再按 OCR 画面文字定位 → 最后退回录制坐标。
+     *
+     * @param input 输入动作
+     * @param width 当前屏幕宽度（像素）
+     * @param height 当前屏幕高度（像素）
+     * @return 手势是否成功派发
+     */
+    private suspend fun dispatchOneInputSmart(input: AutoSlideInput, width: Int, height: Int): Boolean {
+        if (input.action == AutoSlideInputAction.TAP || input.action == AutoSlideInputAction.LONG_PRESS) {
+            // 1) 节点树控件定位（id 优先，其次文字）
+            val target = findNodeByTarget(input.targetId, input.targetText)
+            if (target != null) {
+                val bounds = Rect()
+                runCatching { target.getBoundsInScreen(bounds) }
+                if (!bounds.isEmpty) {
+                    return dispatchOneInput(
+                        input.copy(
+                            x = bounds.centerX().toFloat() / width,
+                            y = bounds.centerY().toFloat() / height
+                        ),
+                        width,
+                        height
+                    )
+                }
+            }
+            // 2) OCR 画面文字定位（节点树没有的画面文字，如视频上的「继续观看」）
+            if (input.targetText.isNotEmpty()) {
+                val pos = findOcrTextPosition(input.targetText)
+                if (pos != null) {
+                    return dispatchOneInput(input.copy(x = pos.first, y = pos.second), width, height)
+                }
+            }
+        }
+        // 3) 退回录制坐标
+        return dispatchOneInput(input, width, height)
     }
 
     /* 构建单个手势描述 */
@@ -1481,7 +1526,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
                     }
                 }
                 onActionStart?.invoke(input)
-                val ok = dispatchOneInput(input, width, height)
+                val ok = dispatchOneInputSmart(input, width, height)
                 if (!ok) {
                     LogX.w(TAG, "PlayMacro action failed: ${input.action} at (${input.x},${input.y})")
                     completed = false
@@ -1976,6 +2021,187 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 "" to emptyList()
             }
         }
+
+    /**
+     * 录制时采集点击位置的「控件名片」：
+     * 优先节点树（id/文字），节点树没有时用 OCR 识别该位置的画面文字。
+     * 回放时用名片跨设备定位。
+     *
+     * @param input 刚录制的点击/长按动作
+     * @return 带控件名片的动作（无名片时原样返回）
+     */
+    suspend fun enrichInputTarget(input: AutoSlideInput): AutoSlideInput {
+        if (input.action != AutoSlideInputAction.TAP && input.action != AutoSlideInputAction.LONG_PRESS) {
+            return input
+        }
+        if (input.targetId.isNotEmpty() || input.targetText.isNotEmpty()) {
+            return input
+        }
+        val width = resources.displayMetrics.widthPixels
+        val height = resources.displayMetrics.heightPixels
+        val xPx = (input.x * width).toInt()
+        val yPx = (input.y * height).toInt()
+        // 1) 节点树控件
+        val nodeInfo = findNodeInfoAt(xPx, yPx)
+        if (nodeInfo != null) {
+            return input.copy(targetId = nodeInfo.id, targetText = nodeInfo.text)
+        }
+        // 2) OCR 画面文字
+        val bitmap = captureScreenBitmap() ?: return input
+        try {
+            val textAt = recognizeTextAt(bitmap, xPx, yPx)
+            return if (textAt != null) input.copy(targetText = textAt) else input
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    /* 查找屏幕坐标点对应的最小控件（取面积最小的命中节点，避免选中整个容器） */
+    private fun findNodeInfoAt(xPx: Int, yPx: Int): NodeTargetInfo? {
+        val root = rootInActiveWindow ?: return null
+        var best: AccessibilityNodeInfo? = null
+        var bestArea = Int.MAX_VALUE
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var scanned = 0
+        while (queue.isNotEmpty() && scanned < SKIP_NODE_SCAN_LIMIT) {
+            val node = queue.removeFirst()
+            scanned++
+            val bounds = Rect()
+            runCatching { node.getBoundsInScreen(bounds) }
+            if (bounds.isEmpty || !bounds.contains(xPx, yPx)) continue
+            val area = bounds.width() * bounds.height()
+            if (area < bestArea) {
+                bestArea = area
+                best = node
+            }
+            val childCount = runCatching { node.childCount }.getOrDefault(0)
+            for (i in 0 until childCount) {
+                val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
+                queue.add(child)
+            }
+        }
+        var node = best ?: return null
+        // 节点本身没有文字/id 时，向上找最近一个有文字/id 的祖先
+        var guard = 0
+        while (guard < 8) {
+            val text = runCatching { node.text?.toString() }.getOrNull()?.takeIf { it.isNotBlank() }
+                ?: runCatching { node.contentDescription?.toString() }.getOrNull()?.takeIf { it.isNotBlank() }
+            val id = runCatching { node.viewIdResourceName }.getOrNull()?.takeIf { it.isNotBlank() }
+            if (text != null || id != null) {
+                return NodeTargetInfo(text ?: "", id ?: "")
+            }
+            node = runCatching { node.parent }.getOrNull() ?: return null
+            guard++
+        }
+        return null
+    }
+
+    /* OCR 识别屏幕坐标点所在文字行（录制时采集画面文字名片） */
+    private suspend fun recognizeTextAt(bitmap: Bitmap, xPx: Int, yPx: Int): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val recognizer = textRecognizer ?: TextRecognition.getClient(
+                    ChineseTextRecognizerOptions.Builder().build()
+                ).also { textRecognizer = it }
+                val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
+                for (block in result.textBlocks) {
+                    for (line in block.lines) {
+                        val box = line.boundingBox
+                        if (box != null && box.contains(xPx, yPx)) {
+                            val text = line.text.trim()
+                            if (text.isNotEmpty()) return@withContext text
+                        }
+                    }
+                }
+                null
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+    /* 回放定位：按 id（精确）或文字（包含，不区分大小写）在节点树中查找可见控件 */
+    private fun findNodeByTarget(targetId: String, targetText: String): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        // id 优先：精确匹配
+        if (targetId.isNotEmpty()) {
+            findNodeByBfs(root) { node ->
+                val id = runCatching { node.viewIdResourceName }.getOrNull()
+                id.equals(targetId, ignoreCase = true)
+            }?.let { return it }
+        }
+        // 文字匹配：text/desc 包含目标文字
+        if (targetText.isNotEmpty()) {
+            val targetLower = targetText.lowercase()
+            findNodeByBfs(root) { node ->
+                val text = runCatching { node.text?.toString() }.getOrNull()
+                val desc = runCatching { node.contentDescription?.toString() }.getOrNull()
+                text?.lowercase()?.contains(targetLower) == true ||
+                    desc?.lowercase()?.contains(targetLower) == true
+            }?.let { return it }
+        }
+        return null
+    }
+
+    /* BFS 遍历节点树，返回第一个满足条件且可见、有位置的节点 */
+    private fun findNodeByBfs(
+        root: AccessibilityNodeInfo,
+        condition: (AccessibilityNodeInfo) -> Boolean
+    ): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var scanned = 0
+        while (queue.isNotEmpty() && scanned < SKIP_NODE_SCAN_LIMIT) {
+            val node = queue.removeFirst()
+            scanned++
+            if (!runCatching { node.isVisibleToUser }.getOrDefault(false)) continue
+            val bounds = Rect()
+            runCatching { node.getBoundsInScreen(bounds) }
+            if (bounds.isEmpty) continue
+            if (condition(node)) return node
+            val childCount = runCatching { node.childCount }.getOrDefault(0)
+            for (i in 0 until childCount) {
+                val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
+                queue.add(child)
+            }
+        }
+        return null
+    }
+
+    /* 回放定位：OCR 在整屏找包含目标文字的行，返回归一化中心坐标 */
+    private suspend fun findOcrTextPosition(targetText: String): Pair<Float, Float>? {
+        if (targetText.isBlank()) return null
+        val bitmap = captureScreenBitmap() ?: return null
+        try {
+            val targetLower = targetText.lowercase()
+            val width = bitmap.width.coerceAtLeast(1).toFloat()
+            val height = bitmap.height.coerceAtLeast(1).toFloat()
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    val recognizer = textRecognizer ?: TextRecognition.getClient(
+                        ChineseTextRecognizerOptions.Builder().build()
+                    ).also { textRecognizer = it }
+                    Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            if (result != null) {
+                for (block in result.textBlocks) {
+                    for (line in block.lines) {
+                        val box = line.boundingBox
+                        if (box != null && line.text.lowercase().contains(targetLower)) {
+                            return (box.centerX().toFloat() / width).coerceIn(0f, 1f) to
+                                (box.centerY().toFloat() / height).coerceIn(0f, 1f)
+                        }
+                    }
+                }
+            }
+            return null
+        } finally {
+            bitmap.recycle()
+        }
+    }
 
     /**
      * 回放前自动回桌面查找并打开与录制名称匹配的 App。

@@ -266,15 +266,23 @@ class InputRecorderView(
     }
 
     /**
-     * 把一个刚录好的动作实时同步到下方应用。
+     * 把一个刚录好的动作实时同步到下方应用，并异步采集点击位置的控件名片
+     * （id/文字，供回放时跨设备定位）。
      * 派发期间把录制层设为不可触摸，避免注入的手势被录制层自己截获造成循环。
      */
     private fun liveDispatchLastStroke() {
-        val input = recordedInputs.lastOrNull() ?: return
+        val index = recordedInputs.lastIndex
+        if (index < 0) return
         setWindowTouchable(false)
         recorderScope.launch {
             try {
-                onStrokeRecorded(input)
+                val original = recordedInputs[index]
+                val enriched = AutoSlideService.getInstance()?.enrichInputTarget(original) ?: original
+                // 用索引更新，避免录制者已继续录入新动作时改错条目
+                if (index < recordedInputs.size) {
+                    recordedInputs[index] = enriched
+                }
+                onStrokeRecorded(enriched)
             } finally {
                 setWindowTouchable(true)
             }

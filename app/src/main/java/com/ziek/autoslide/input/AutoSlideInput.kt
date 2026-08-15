@@ -37,6 +37,8 @@ enum class AutoSlideInputAction {
  * @param waitText WAIT_FOR 要等待的文字
  * @param waitDisappear true=等文字消失，false=等文字出现
  * @param waitTimeoutMs 等待超时时间（毫秒），超时后回放中止
+ * @param targetId 录制时点击位置的控件 id（回放时优先按控件定位，找不到则退回坐标）
+ * @param targetText 录制时点击位置的控件文字/OCR 识别文字（回放时按文字定位）
  */
 data class AutoSlideInput(
     val action: AutoSlideInputAction,
@@ -49,7 +51,9 @@ data class AutoSlideInput(
     val points: List<Float> = emptyList(),
     val waitText: String = "",
     val waitDisappear: Boolean = false,
-    val waitTimeoutMs: Long = 30_000L
+    val waitTimeoutMs: Long = 30_000L,
+    val targetId: String = "",
+    val targetText: String = ""
 ) {
     /* 序列化为 JSON 对象 */
     fun toJson(): JSONObject = JSONObject().apply {
@@ -63,6 +67,8 @@ data class AutoSlideInput(
         put("waitText", waitText)
         put("waitDisappear", waitDisappear)
         put("waitTimeout", waitTimeoutMs)
+        put("targetId", targetId)
+        put("targetText", targetText)
         if (points.isNotEmpty()) {
             put("points", JSONArray().apply { points.forEach { put(it.toDouble()) } })
         }
@@ -85,7 +91,9 @@ data class AutoSlideInput(
                     } ?: emptyList(),
                     waitText = obj.optString("waitText", ""),
                     waitDisappear = obj.optBoolean("waitDisappear", false),
-                    waitTimeoutMs = obj.optLong("waitTimeout", 30_000L).coerceIn(1_000L, 120_000L)
+                    waitTimeoutMs = obj.optLong("waitTimeout", 30_000L).coerceIn(1_000L, 120_000L),
+                    targetId = obj.optString("targetId", ""),
+                    targetText = obj.optString("targetText", "")
                 )
             } catch (e: Exception) {
                 Log.e("AutoSlideInputCodec", "fromJson failed, action=${obj.optString("action")}", e)
