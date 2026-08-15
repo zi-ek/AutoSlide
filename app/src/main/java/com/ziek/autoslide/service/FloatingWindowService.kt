@@ -586,11 +586,15 @@ class FloatingWindowService : Service() {
             gravity = Gravity.CENTER_VERTICAL
             addView(
                 importButton,
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f)
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2f).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                }
             )
             addView(
                 cancelButton,
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                }
             )
         }
         val listContainer = LinearLayout(dialogContext).apply {
