@@ -171,8 +171,6 @@ open class AutoSlideService : AccessibilityService() {
     /* 宏回放等待期间暂停自动点击：避免两个功能同时截图触发系统截图间隔限制 */
     @Volatile
     private var macroWaitingForOcr = false
-    /* 回放 OCR 定位的节流时间戳 */
-    private var lastMacroOcrPositionAt = 0L
     private val autoTapCheckRunnable = Runnable {
         autoTapCheckPending = false
         // 在后台线程执行节点树遍历与 OCR，避免占用主线程
@@ -1492,15 +1490,12 @@ private const val SPEED_CURVE_FACTOR = 0.7
         val height = resources.displayMetrics.heightPixels
         val density = resources.displayMetrics.density
         serviceScope.launch {
-            // 整个回放期间暂停自动点击，避免两个功能抢截图/手势冲突
-            macroWaitingForOcr = true
-            try {
-                var totalDistancePx = 0f
-                var completed = true
-                var prevInput: AutoSlideInput? = null
-                /* 等待条件满足后，跳过下一个动作的固定延迟，让宏立即继续 */
-                var skipNextDelay = false
-                for (input in macro) {
+            var totalDistancePx = 0f
+            var completed = true
+            var prevInput: AutoSlideInput? = null
+            /* 等待条件满足后，跳过下一个动作的固定延迟，让宏立即继续 */
+            var skipNextDelay = false
+            for (input in macro) {
                 // 用户按方向键/再次操作时中断本次回放
                 if (currentGen != runGeneration) {
                     completed = false
@@ -1548,17 +1543,14 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 }
                 totalDistancePx += inputPathLength(input, width, height)
                 prevInput = input
-                }
-                val distanceMm = (totalDistancePx / density / 6f).toInt().coerceAtLeast(1)
-                updateStats(swipes = 1, distanceMm = distanceMm)
-                if (completed) {
-                    onFinished?.invoke()
-                }
-                onEnd?.invoke()
-                LogX.i(TAG, "PlayMacro end: name=$name, completed=$completed")
-            } finally {
-                macroWaitingForOcr = false
             }
+            val distanceMm = (totalDistancePx / density / 6f).toInt().coerceAtLeast(1)
+            updateStats(swipes = 1, distanceMm = distanceMm)
+            if (completed) {
+                onFinished?.invoke()
+            }
+            onEnd?.invoke()
+            LogX.i(TAG, "PlayMacro end: name=$name, completed=$completed")
         }
         return true
     }
@@ -1668,22 +1660,13 @@ private const val SPEED_CURVE_FACTOR = 0.7
                         lastOcrAt = now
                         val bitmap = captureScreenBitmap()
                         if (bitmap != null) {
-                            val lines = recognizeScreenTextLines(bitmap)
+                            val screenText = recognizeScreenText(bitmap)
                             bitmap.recycle()
-                            // 逐行匹配并限制行长：避免把「已领取成功」这类长句误判成弹窗
-                            ocrExists = lines.any { line ->
-                                val clean = line.replace(" ", "").replace("\u00A0", "")
-                                clean.contains(text) &&
-                                    clean.length <= text.length + 4 &&
-                                    clean.length >= text.length - 2
-                            }
+                            ocrExists = screenText.contains(text)
                         }
                     }
                 }
                 val exists = nodeExists || ocrExists
-                if (exists) {
-                    LogX.i(TAG, "Macro wait matched: text=$text, via=${if (nodeExists) "node" else "ocr"}")
-                }
                 if (input.waitDisappear) {
                     // 等消失：当前已经不存在即满足
                     if (!exists) return true
@@ -1701,24 +1684,17 @@ private const val SPEED_CURVE_FACTOR = 0.7
         }
     }
 
-    /* 使用 ML Kit 中文模型识别整屏文字，返回所有文字行（宏等待条件的 OCR 兜底） */
-    private suspend fun recognizeScreenTextLines(bitmap: Bitmap): List<String> = withContext(Dispatchers.IO) {
+    /* 使用 ML Kit 中文模型识别整屏文字（宏等待条件的 OCR 兜底） */
+    private suspend fun recognizeScreenText(bitmap: Bitmap): String = withContext(Dispatchers.IO) {
         try {
             val recognizer = textRecognizer ?: TextRecognition.getClient(
                 ChineseTextRecognizerOptions.Builder().build()
             ).also { textRecognizer = it }
             val image = InputImage.fromBitmap(bitmap, 0)
-            val result = Tasks.await(recognizer.process(image))
-            buildList {
-                for (block in result.textBlocks) {
-                    for (line in block.lines) {
-                        add(line.text)
-                    }
-                }
-            }
+            Tasks.await(recognizer.process(image)).text
         } catch (e: Exception) {
             LogX.w(TAG, "Macro wait OCR failed", e)
-            emptyList()
+            ""
         }
     }
 
@@ -2074,9 +2050,19 @@ private const val SPEED_CURVE_FACTOR = 0.7
         val height = resources.displayMetrics.heightPixels
         val xPx = (input.x * width).toInt()
         val yPx = (input.y * height).toInt()
-        // 只从节点树采集控件名片（不截图 OCR，避免录制时频繁截图把无障碍服务搞崩）
+        // 1) 节点树控件
         val nodeInfo = findNodeInfoAt(xPx, yPx)
-        return if (nodeInfo != null) input.copy(targetId = nodeInfo.id, targetText = nodeInfo.text) else input
+        if (nodeInfo != null) {
+            return input.copy(targetId = nodeInfo.id, targetText = nodeInfo.text)
+        }
+        // 2) OCR 画面文字
+        val bitmap = captureScreenBitmap() ?: return input
+        try {
+            val textAt = recognizeTextAt(bitmap, xPx, yPx)
+            return if (textAt != null) input.copy(targetText = textAt) else input
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     /* 查找屏幕坐标点对应的最小控件（取面积最小的命中节点，避免选中整个容器） */
@@ -2119,6 +2105,29 @@ private const val SPEED_CURVE_FACTOR = 0.7
         }
         return null
     }
+
+    /* OCR 识别屏幕坐标点所在文字行（录制时采集画面文字名片） */
+    private suspend fun recognizeTextAt(bitmap: Bitmap, xPx: Int, yPx: Int): String? =
+        withContext(Dispatchers.IO) {
+            try {
+                val recognizer = textRecognizer ?: TextRecognition.getClient(
+                    ChineseTextRecognizerOptions.Builder().build()
+                ).also { textRecognizer = it }
+                val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
+                for (block in result.textBlocks) {
+                    for (line in block.lines) {
+                        val box = line.boundingBox
+                        if (box != null && box.contains(xPx, yPx)) {
+                            val text = line.text.trim()
+                            if (text.isNotEmpty()) return@withContext text
+                        }
+                    }
+                }
+                null
+            } catch (e: Exception) {
+                null
+            }
+        }
 
     /* 回放定位：按 id（精确）或文字（包含，不区分大小写）在节点树中查找可见控件 */
     private fun findNodeByTarget(targetId: String, targetText: String): AccessibilityNodeInfo? {
@@ -2171,10 +2180,6 @@ private const val SPEED_CURVE_FACTOR = 0.7
     /* 回放定位：OCR 在整屏找包含目标文字的行，返回归一化中心坐标 */
     private suspend fun findOcrTextPosition(targetText: String): Pair<Float, Float>? {
         if (targetText.isBlank()) return null
-        // 节流：回放中最多每 2 秒做一次 OCR 定位，避免频繁截图压垮无障碍服务
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastMacroOcrPositionAt < SKIP_OCR_FALLBACK_INTERVAL_MS) return null
-        lastMacroOcrPositionAt = now
         val bitmap = captureScreenBitmap() ?: return null
         try {
             val targetLower = targetText.lowercase()
