@@ -43,6 +43,15 @@ class PlaybackFeedbackView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
     }
 
+    /* 等待条件提示文字画笔 */
+    private val waitPaint = Paint().apply {
+        color = Color.GREEN
+        textSize = 32f
+        isAntiAlias = true
+        textAlign = Paint.Align.CENTER
+        setShadowLayer(5f, 0f, 0f, Color.BLACK)
+    }
+
     /* 窗口挂载后记录画布在屏幕上的位置 */
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -101,6 +110,15 @@ class PlaybackFeedbackView(context: Context) : View(context) {
             }
 
             AutoSlideInputAction.BACK -> Unit // 返回动作不画标记
+
+            AutoSlideInputAction.WAIT_FOR -> {
+                val label = if (input.waitDisappear) {
+                    "等待消失：${input.waitText}"
+                } else {
+                    "等待出现：${input.waitText}"
+                }
+                canvas.drawText(label, width / 2f, height * 0.35f, waitPaint)
+            }
         }
     }
 }

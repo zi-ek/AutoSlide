@@ -23,6 +23,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.Button
 import android.widget.TextView
 import androidx.core.graphics.toColorInt
 import com.ziek.autoslide.input.AutoSlideInput
@@ -41,6 +42,7 @@ import kotlin.math.sqrt
  * @param onRecorded 录制完成回调（非空输入序列）
  * @param onCancelled 取消回调
  * @param onStrokeRecorded 每录完一个动作后的实时同步回调（挂起函数，等派发完成再恢复触摸）
+ * @param onAddWaitFor 点击「等待」按钮的回调（由外层弹出输入窗口，确认后调用 [addWaitForAction]）
  */
 @SuppressLint("ViewConstructor")
 class InputRecorderView(
@@ -48,7 +50,8 @@ class InputRecorderView(
     private val instructionText: String,
     private val onRecorded: (List<AutoSlideInput>) -> Unit,
     private val onCancelled: () -> Unit,
-    private val onStrokeRecorded: suspend (AutoSlideInput) -> Unit
+    private val onStrokeRecorded: suspend (AutoSlideInput) -> Unit,
+    private val onAddWaitFor: () -> Unit
 ) : FrameLayout(context) {
 
     private val screenWidth: Int
@@ -67,6 +70,8 @@ class InputRecorderView(
     private val currentPoints = mutableListOf<Float>()
     /* 已录制的完整笔画（每个动作一条，归一化 x,y 交替），用于持续显示录制结果 */
     private val recordedStrokes = mutableListOf<List<Float>>()
+    /* 已插入的等待条件标记（绿色文字显示在屏幕上） */
+    private val recordedWaitMarks = mutableListOf<String>()
     /* 当前手势的起点与按下时间 */
     private var startX = 0f
     private var startY = 0f
@@ -97,6 +102,15 @@ class InputRecorderView(
         setShadowLayer(5f, 0f, 0f, Color.BLACK)
     }
 
+    /* 等待条件标记画笔：绿色圆角提示 */
+    private val waitMarkPaint = Paint().apply {
+        color = Color.GREEN
+        textSize = 28f
+        isAntiAlias = true
+        textAlign = Paint.Align.CENTER
+        setShadowLayer(5f, 0f, 0f, Color.BLACK)
+    }
+
     /* 绘制当前轨迹的视图 */
     private val drawView = object : View(context) {
         override fun onDraw(canvas: Canvas) {
@@ -115,6 +129,12 @@ class InputRecorderView(
             if (!touching && recordedInputs.isNotEmpty()) {
                 val countText = "已录制 ${recordedInputs.size} 个动作，可继续操作，按音量上↑键保存"
                 canvas.drawText(countText, w / 2f, h - 5f * density, hintPaint)
+            }
+            // 绘制已插入的等待条件标记（从屏幕上方往下排，不遮挡底部操作区）
+            var markY = 100f * density
+            for (mark in recordedWaitMarks) {
+                canvas.drawText(mark, w / 2f, markY, waitMarkPaint)
+                markY += 40f * density
             }
         }
     }
@@ -153,7 +173,50 @@ class InputRecorderView(
         )
         addView(drawView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
+        // 右上角「等待」按钮：插入“等屏幕出现/消失指定文字”的条件步骤
+        val waitButton = Button(context).apply {
+            text = "＋等待"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#CC2E7D32"))
+            isClickable = true
+            setOnClickListener { onAddWaitFor() }
+        }
+        addView(
+            waitButton,
+            LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.END or Gravity.TOP
+                topMargin = dp(64)
+                marginEnd = dp(12)
+            }
+        )
+
         setOnTouchListener { _, event -> handleTouch(event) }
+    }
+
+    /**
+     * 插入一条等待条件动作（由外层弹窗确认后调用）。
+     * 该动作不会实时派发给下方应用，只在回放时生效。
+     *
+     * @param text 要等待的文字
+     * @param disappear true=等文字消失，false=等文字出现
+     * @param click true=文字出现后自动点击它
+     */
+    fun addWaitForAction(text: String, disappear: Boolean, click: Boolean) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        recordedInputs.add(
+            AutoSlideInput(
+                action = AutoSlideInputAction.WAIT_FOR,
+                delayMs = 0L,
+                waitText = trimmed,
+                waitDisappear = disappear,
+                waitClick = click
+            )
+        )
+        val mark = if (disappear) "等待消失：$trimmed" else "等待出现：$trimmed"
+        recordedWaitMarks.add(mark)
+        drawView.invalidate()
     }
 
     /* 窗口挂载后请求焦点并记录画布位置 */

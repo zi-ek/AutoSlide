@@ -48,6 +48,13 @@
     <string name="macro_delete_title">确认清除</string>
     <string name="macro_delete_message">确定要清除录制「%1$s」吗？</string>
     <string name="macro_deleted">录制已清除</string>
+    <string name="wait_for_title">插入等待条件</string>
+    <string name="wait_for_text_hint">要等待的文字</string>
+    <string name="wait_for_appear">等文字出现</string>
+    <string name="wait_for_disappear">等文字消失</string>
+    <string name="wait_for_click">出现后自动点击它</string>
+    <string name="wait_for_empty">请输入等待文字</string>
+    <string name="wait_for_timeout">等待「%1$s」超时，回放已中止</string>
     <string name="desc_record">录制操作宏</string>
     <string name="desc_play">回放操作宏</string>
     <string name="macro_not_found">还没有录制记录，请先点录制按钮新建</string>

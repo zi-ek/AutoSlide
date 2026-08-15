@@ -220,6 +220,8 @@ open class AutoSlideService : AccessibilityService() {
 private const val MAX_GESTURE_DURATION_MS = 3000L
 private const val NO_PAUSE_GAP_MS = 80L
 private const val GESTURE_CALLBACK_TIMEOUT_MS = 3000L
+/* 宏回放等待条件：节点树轮询间隔（毫秒） */
+private const val MACRO_WAIT_POLL_INTERVAL_MS = 300L
 /* 跳过按钮点击冷却，防止关键词检测与常驻检测重复点击 */
 private const val SKIP_TAP_COOLDOWN_MS = 1500L
 /* 自动点击事件去抖：界面变化事件频繁时合并成一次检查 */
@@ -727,6 +729,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
                     delay(400L)
                 }
                 ok
+            }
+
+            AutoSlideInputAction.WAIT_FOR -> {
+                // 等待条件由 playMacro 专门处理，不会走到这里（防御分支）
+                true
             }
         }
     }
@@ -1432,6 +1439,17 @@ private const val SPEED_CURVE_FACTOR = 0.7
                     completed = false
                     break
                 }
+                // 等待条件：等屏幕出现/消失指定文字，满足后继续（或点击），超时中止回放
+                if (input.action == AutoSlideInputAction.WAIT_FOR) {
+                    onActionStart?.invoke(input)
+                    val waitOk = waitForMacroCondition(input, currentGen)
+                    if (!waitOk) {
+                        completed = false
+                        break
+                    }
+                    prevInput = input
+                    continue
+                }
                 // 回放去重：同一位置超短间隔的重复点击只执行一次
                 if (isDuplicateTap(prevInput, input, width, height, density)) {
                     prevInput = input
@@ -1538,6 +1556,86 @@ private const val SPEED_CURVE_FACTOR = 0.7
         if (enabled) {
             // 打开开关时立即检查一次当前界面
             scheduleAutoTapCheck(0L)
+        }
+    }
+
+    /**
+     * 宏回放等待条件：轮询无障碍节点树，等待指定文字出现/消失。
+     * 等待文字出现且勾选「点击」时，找到后自动点击该文字。
+     *
+     * @param input WAIT_FOR 动作
+     * @param currentGen 当前运行代数（用于检测回放中断）
+     * @return true=条件满足；false=超时或回放被中断
+     */
+    private suspend fun waitForMacroCondition(input: AutoSlideInput, currentGen: Int): Boolean {
+        val text = input.waitText.trim()
+        if (text.isEmpty()) return true
+        val timeoutAt = SystemClock.elapsedRealtime() + input.waitTimeoutMs.coerceIn(1_000L, 120_000L)
+        while (SystemClock.elapsedRealtime() < timeoutAt) {
+            if (currentGen != runGeneration) return false
+            val root = rootInActiveWindow
+            val exists = root != null && findTextNodeInTree(root, text) != null
+            if (input.waitDisappear) {
+                // 等消失：当前已经不存在即满足
+                if (!exists) return true
+            } else {
+                // 等出现：找到后按需点击，然后继续
+                if (exists && root != null) {
+                    if (input.waitClick) {
+                        tryClickNodeByText(root, text)
+                    }
+                    return true
+                }
+            }
+            delay(MACRO_WAIT_POLL_INTERVAL_MS)
+        }
+        LogX.w(TAG, "Macro wait timeout: text=$text, disappear=${input.waitDisappear}")
+        Toast.makeText(this, getString(R.string.wait_for_timeout, text), Toast.LENGTH_LONG).show()
+        return false
+    }
+
+    /* BFS 查找第一个文本/描述包含目标文字的节点（不区分大小写） */
+    private fun findTextNodeInTree(root: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
+        val target = text.lowercase()
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var scanned = 0
+        while (queue.isNotEmpty() && scanned < SKIP_NODE_SCAN_LIMIT) {
+            val node = queue.removeFirst()
+            scanned++
+            val nodeText = runCatching { node.text?.toString() }.getOrNull()
+            val nodeDesc = runCatching { node.contentDescription?.toString() }.getOrNull()
+            if (nodeText?.lowercase()?.contains(target) == true ||
+                nodeDesc?.lowercase()?.contains(target) == true
+            ) {
+                return node
+            }
+            val childCount = runCatching { node.childCount }.getOrDefault(0)
+            for (i in 0 until childCount) {
+                val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
+                queue.add(child)
+            }
+        }
+        return null
+    }
+
+    /* 点击文字节点：优先点击节点本身或可点击祖先，失败则按节点中心坐标点击 */
+    private suspend fun tryClickNodeByText(root: AccessibilityNodeInfo, text: String) {
+        val target = findTextNodeInTree(root, text) ?: return
+        val clickable = findClickableSelfOrAncestor(target)
+        val clicked = clickable != null &&
+            runCatching { clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK) }.getOrDefault(false)
+        if (clicked) {
+            LogX.i(TAG, "Macro wait click: $text")
+            return
+        }
+        // 节点点击失败：用文字中心坐标兜底
+        val bounds = Rect()
+        runCatching { target.getBoundsInScreen(bounds) }
+        if (!bounds.isEmpty) {
+            val width = resources.displayMetrics.widthPixels
+            val height = resources.displayMetrics.heightPixels
+            performSkipTap(bounds.centerX().toFloat() / width, bounds.centerY().toFloat() / height)
         }
     }
 

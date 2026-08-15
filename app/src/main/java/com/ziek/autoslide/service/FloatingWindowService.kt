@@ -38,9 +38,12 @@ import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.BaseAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -734,7 +737,8 @@ class FloatingWindowService : Service() {
         AutoSlideService.getInstance()?.stopSlide()
         // 录制期间完全隐藏悬浮窗（不显示悬浮球）
         hideFloatingWindow()
-        val recordView = InputRecorderView(
+        lateinit var recordView: InputRecorderView
+        recordView = InputRecorderView(
             this,
             instructionText = getRecordInstruction(name),
             onRecorded = { inputs ->
@@ -754,6 +758,9 @@ class FloatingWindowService : Service() {
             },
             onStrokeRecorded = { input ->
                 AutoSlideService.getInstance()?.dispatchRecordedStrokeAwait(input)
+            },
+            onAddWaitFor = {
+                showWaitForDialog(recordView)
             }
         )
         // 创建录制视图布局参数
@@ -782,6 +789,63 @@ class FloatingWindowService : Service() {
             showFloatingWindow()
             expand()
         }
+    }
+
+    /* 弹出「插入等待条件」窗口：输入文字、选择出现/消失、是否点击 */
+    private fun showWaitForDialog(recordView: InputRecorderView) {
+        val dialogContext = createDialogContext()
+        val inputLayout = TextInputLayout(dialogContext).apply {
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+            hint = getString(R.string.wait_for_text_hint)
+        }
+        val input = TextInputEditText(inputLayout.context).apply {
+            isSingleLine = true
+            // 服务上下文创建输入框时禁用文本选择工具条，
+            // 避免部分机型（如 ColorOS）在弹出选择工具栏时 getDisplay 崩溃
+            customSelectionActionModeCallback = object : ActionMode.Callback {
+                override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
+                override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
+                override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean = false
+                override fun onDestroyActionMode(mode: ActionMode?) {}
+            }
+        }
+        inputLayout.addView(input)
+
+        val appearRadio = RadioButton(dialogContext).apply {
+            text = getString(R.string.wait_for_appear)
+            isChecked = true
+        }
+        val disappearRadio = RadioButton(dialogContext).apply {
+            text = getString(R.string.wait_for_disappear)
+        }
+        val radioGroup = RadioGroup(dialogContext).apply {
+            orientation = RadioGroup.VERTICAL
+            addView(appearRadio)
+            addView(disappearRadio)
+        }
+        val clickCheck = CheckBox(dialogContext).apply {
+            text = getString(R.string.wait_for_click)
+        }
+        val container = LinearLayout(dialogContext).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(12), dp(24), 0)
+            addView(inputLayout)
+            addView(radioGroup)
+            addView(clickCheck)
+        }
+        MaterialAlertDialogBuilder(dialogContext)
+            .setTitle(R.string.wait_for_title)
+            .setView(container)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                val text = input.text.toString().trim()
+                if (text.isEmpty()) {
+                    Toast.makeText(this, R.string.wait_for_empty, Toast.LENGTH_SHORT).show()
+                } else {
+                    recordView.addWaitForAction(text, disappearRadio.isChecked, clickCheck.isChecked)
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     /* 移除录制视图 */

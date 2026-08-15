@@ -19,7 +19,8 @@ enum class AutoSlideInputAction {
     TAP,        // 点击
     LONG_PRESS, // 长按
     SWIPE,      // 滑动（含路径点）
-    BACK        // 返回（系统返回键/边缘滑动返回）
+    BACK,       // 返回（系统返回键/边缘滑动返回）
+    WAIT_FOR    // 等待条件：等屏幕出现/消失指定文字（宏回放时使用）
 }
 
 /**
@@ -33,6 +34,10 @@ enum class AutoSlideInputAction {
  * @param duration 手势持续时间（毫秒）
  * @param delayMs 执行本动作前的等待时间（毫秒），由录制时的操作间隔生成
  * @param points SWIPE 的完整路径点，x,y 交替且归一化到 0~1；点击/长按为空
+ * @param waitText WAIT_FOR 要等待的文字
+ * @param waitDisappear true=等文字消失，false=等文字出现
+ * @param waitClick true=文字出现后自动点击它
+ * @param waitTimeoutMs 等待超时时间（毫秒），超时后回放中止
  */
 data class AutoSlideInput(
     val action: AutoSlideInputAction,
@@ -42,7 +47,11 @@ data class AutoSlideInput(
     val endY: Float = 0.5f,
     val duration: Long = 300L,
     val delayMs: Long = 150L,
-    val points: List<Float> = emptyList()
+    val points: List<Float> = emptyList(),
+    val waitText: String = "",
+    val waitDisappear: Boolean = false,
+    val waitClick: Boolean = false,
+    val waitTimeoutMs: Long = 30_000L
 ) {
     /* 序列化为 JSON 对象 */
     fun toJson(): JSONObject = JSONObject().apply {
@@ -53,6 +62,10 @@ data class AutoSlideInput(
         put("endY", endY.toDouble())
         put("duration", duration)
         put("delay", delayMs)
+        put("waitText", waitText)
+        put("waitDisappear", waitDisappear)
+        put("waitClick", waitClick)
+        put("waitTimeout", waitTimeoutMs)
         if (points.isNotEmpty()) {
             put("points", JSONArray().apply { points.forEach { put(it.toDouble()) } })
         }
@@ -72,7 +85,11 @@ data class AutoSlideInput(
                     delayMs = obj.optLong("delay", 150L).coerceIn(0L, 120_000L),
                     points = obj.optJSONArray("points")?.let { arr ->
                         (0 until arr.length()).map { arr.getDouble(it).toFloat() }
-                    } ?: emptyList()
+                    } ?: emptyList(),
+                    waitText = obj.optString("waitText", ""),
+                    waitDisappear = obj.optBoolean("waitDisappear", false),
+                    waitClick = obj.optBoolean("waitClick", false),
+                    waitTimeoutMs = obj.optLong("waitTimeout", 30_000L).coerceIn(1_000L, 120_000L)
                 )
             } catch (e: Exception) {
                 Log.e("AutoSlideInputCodec", "fromJson failed, action=${obj.optString("action")}", e)
