@@ -569,11 +569,34 @@ class FloatingWindowService : Service() {
                 startActivity(intent)
             }
         }
+        val cancelButton = Button(dialogContext).apply {
+            text = getString(R.string.cancel)
+            textSize = 14f
+            isAllCaps = false
+            setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.text_secondary))
+            setBackgroundColor(Color.TRANSPARENT)
+            minWidth = 0
+            minHeight = 0
+            setOnClickListener { playListDialog?.dismiss() }
+        }
+        // 底部按钮行：导入配置 + 取消 并排
+        val bottomRow = LinearLayout(dialogContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(
+                importButton,
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            )
+            addView(
+                cancelButton,
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            )
+        }
         val listContainer = LinearLayout(dialogContext).apply {
             orientation = LinearLayout.VERTICAL
             addView(listView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             addView(
-                importButton,
+                bottomRow,
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
@@ -585,7 +608,6 @@ class FloatingWindowService : Service() {
         val builder = MaterialAlertDialogBuilder(dialogContext)
             .setTitle(R.string.play_list_title)
             .setView(listContainer)
-            .setNegativeButton(R.string.cancel, null)
         playListDialog = builder.create().also {
             it.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
             it.show()
