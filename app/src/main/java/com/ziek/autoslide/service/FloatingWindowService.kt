@@ -61,6 +61,7 @@ import com.ziek.autoslide.DIRECTION_DOWN
 import com.ziek.autoslide.DIRECTION_LEFT
 import com.ziek.autoslide.DIRECTION_RIGHT
 import com.ziek.autoslide.DIRECTION_UP
+import com.ziek.autoslide.ImportSettingsActivity
 import com.ziek.autoslide.KEY_KEYWORDS
 import com.ziek.autoslide.KEY_MAX_PAUSE_TIME
 import com.ziek.autoslide.KEY_MIN_PAUSE_TIME
@@ -543,9 +544,37 @@ class FloatingWindowService : Service() {
             }
         }
         listView.adapter = adapter
+        val importButton = Button(dialogContext).apply {
+            text = getString(R.string.macro_import)
+            textSize = 14f
+            isAllCaps = false
+            setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.primary))
+            setBackgroundColor(Color.TRANSPARENT)
+            minWidth = 0
+            minHeight = 0
+            setOnClickListener {
+                playListDialog?.dismiss()
+                val intent = Intent(this@FloatingWindowService, ImportSettingsActivity::class.java)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+            }
+        }
+        val listContainer = LinearLayout(dialogContext).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(listView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(
+                importButton,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(2)
+                }
+            )
+        }
         val builder = MaterialAlertDialogBuilder(dialogContext)
             .setTitle(R.string.play_list_title)
-            .setView(listView)
+            .setView(listContainer)
             .setNegativeButton(R.string.cancel, null)
         playListDialog = builder.create().also {
             it.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)

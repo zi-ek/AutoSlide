@@ -55,6 +55,11 @@
             android:name=".chat.ChatActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+        <!-- 导入配置中转页：透明无 UI，选完文件自动关闭 -->
+        <activity
+            android:name=".ImportSettingsActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AutoSlide.Translucent" />
 
         <service
             android:name="com.google.android.accessibility.selecttospeak.SelectToSpeakService"

@@ -463,9 +463,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         super.onServiceConnected()
         instance = this
         registerScreenOffReceiver()
-        loadKeywordConfig()
-        loadSkipConfig()
-        loadKeywordDirection()
+        reloadConfig()
         douyinAutoPlayCompleted = false
         douyinSessionDone = false
         // 无障碍服务连接后开启常驻「跳过」检测（点开始/启动滑动时 StatusService 也会再次开启）
@@ -480,6 +478,17 @@ private const val SPEED_CURVE_FACTOR = 0.7
         // 否则用户看到的依然是「App 被清理了」
         restoreFloatingWindowIfNeeded()
         // 不再启动固定间隔轮询，改为在 onAccessibilityEvent 里事件驱动触发，省电
+    }
+
+    /**
+     * 重新加载本地配置（导入 slide_settings.xml 后调用）：
+     * 关键词、跳过自动点击、滑动方向等立即生效。
+     */
+    fun reloadConfig() {
+        loadKeywordConfig()
+        loadSkipConfig()
+        loadKeywordDirection()
+        LogX.i(TAG, "Config reloaded")
     }
 
     /* 服务销毁时停止滑动并释放单例 */
