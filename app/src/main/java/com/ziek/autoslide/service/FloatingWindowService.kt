@@ -556,7 +556,9 @@ class FloatingWindowService : Service() {
             text = getString(R.string.macro_import)
             textSize = 14f
             isAllCaps = false
-            gravity = Gravity.RIGHT // 文字靠右，贴近取消按钮
+            // 文字靠右贴近取消按钮；必须显式带上 CENTER_VERTICAL，
+            // 否则 setGravity 会把垂直分量重置成 TOP，导致文字比取消高一截
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
             setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.primary))
             setBackgroundColor(Color.TRANSPARENT)
             minWidth = 0
