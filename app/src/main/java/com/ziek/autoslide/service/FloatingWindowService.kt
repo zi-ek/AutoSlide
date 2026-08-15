@@ -521,6 +521,8 @@ class FloatingWindowService : Service() {
                     setBackgroundColor(Color.TRANSPARENT)
                     minWidth = 0
                     minHeight = 0
+                    // 收窄左内边距，让导出能贴过来（Button 默认左右各有约 20dp 内边距）
+                    setPadding(dp(6), paddingTop, paddingRight, paddingBottom)
                     setOnClickListener {
                         confirmDeleteMacro(name, names, listView)
                     }
@@ -533,6 +535,8 @@ class FloatingWindowService : Service() {
                     setBackgroundColor(Color.TRANSPARENT)
                     minWidth = 0
                     minHeight = 0
+                    // 收窄右内边距，把导出向右推去贴近清除
+                    setPadding(paddingLeft, paddingTop, dp(6), paddingBottom)
                     setOnClickListener {
                         playListDialog?.dismiss()
                         // 临时隐藏悬浮窗，避免遮挡系统分享面板；12 秒后自动恢复
