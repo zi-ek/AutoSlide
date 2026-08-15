@@ -130,6 +130,7 @@ class FloatingWindowService : Service() {
     /* 创建服务根视图并添加到窗口管理器 */
     override fun onCreate() {
         super.onCreate()
+        instance = this
         isServiceRunning = true
         // 记录「悬浮窗应处于显示状态」，供进程被清理后复活时自动恢复；
         // 只有用户点关闭/设置按钮或磁贴关闭时才会清除
@@ -185,6 +186,7 @@ class FloatingWindowService : Service() {
 
     /* 服务销毁时移除悬浮窗 */
     override fun onDestroy() {
+        instance = null
         isServiceRunning = false
         AutoSlideTileService.requestUpdate(this)
         serviceScope.cancel()
@@ -531,7 +533,13 @@ class FloatingWindowService : Service() {
                     setBackgroundColor(Color.TRANSPARENT)
                     minWidth = 0
                     minHeight = 0
-                    setOnClickListener { exportSlideSettings() }
+                    setOnClickListener {
+                        playListDialog?.dismiss()
+                        // 临时隐藏悬浮窗，避免遮挡系统分享面板；12 秒后自动恢复
+                        hideForExternalPicker()
+                        mainHandler.postDelayed({ restoreAfterExternalPicker() }, EXTERNAL_PICKER_RESTORE_DELAY_MS)
+                        exportSlideSettings()
+                    }
                 }
                 row.addView(nameView)
                 row.addView(clearButton)
@@ -554,6 +562,8 @@ class FloatingWindowService : Service() {
             minHeight = 0
             setOnClickListener {
                 playListDialog?.dismiss()
+                // 临时隐藏悬浮窗，避免遮挡系统文件选择器；完成后由导入页恢复
+                hideForExternalPicker()
                 val intent = Intent(this@FloatingWindowService, ImportSettingsActivity::class.java)
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
@@ -929,6 +939,20 @@ class FloatingWindowService : Service() {
         runCatching { windowManager.removeView(rootView) }
     }
 
+    /* 导出/导入时临时隐藏悬浮窗，避免遮挡系统分享面板/文件选择器 */
+    private var externalPickerHidden = false
+
+    fun hideForExternalPicker() {
+        externalPickerHidden = true
+        hideFloatingWindow()
+    }
+
+    fun restoreAfterExternalPicker() {
+        if (!externalPickerHidden) return
+        externalPickerHidden = false
+        showFloatingWindow()
+    }
+
     /* 恢复显示悬浮窗（重新添加并贴到屏幕边缘） */
     private fun showFloatingWindow() {
         if (!floatingWindowHidden || !::rootView.isInitialized || !::layoutParams.isInitialized) return
@@ -1167,8 +1191,14 @@ class FloatingWindowService : Service() {
     }
 
     companion object {
+        /* 导出分享后悬浮窗自动恢复的延迟（毫秒） */
+        private const val EXTERNAL_PICKER_RESTORE_DELAY_MS = 12_000L
         // 悬浮窗服务是否正在运行（供磁贴等模块查询）
         private var isServiceRunning = false
+        // 当前服务实例（供导入中转页完成后恢复悬浮窗）
+        @Volatile
+        var instance: FloatingWindowService? = null
+            private set
 
         /**
          * 获取悬浮窗服务运行状态

@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.ziek.autoslide.service.AutoSlideService
+import com.ziek.autoslide.service.FloatingWindowService
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.StringReader
@@ -33,6 +34,8 @@ class ImportSettingsActivity : AppCompatActivity() {
                 AutoSlideService.getInstance()?.reloadConfig()
             }
         }
+        // 导入流程结束，恢复被临时隐藏的悬浮窗
+        FloatingWindowService.instance?.restoreAfterExternalPicker()
         finish()
     }
 
@@ -40,6 +43,12 @@ class ImportSettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         // 打开系统文件选择器，选择导出的 slide_settings.xml
         filePicker.launch(arrayOf("*/*"))
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // 兜底恢复：无论正常/异常结束，悬浮窗都要回来（幂等）
+        FloatingWindowService.instance?.restoreAfterExternalPicker()
     }
 
     /* 读取选择的文件并逐键合并写入配置 */
