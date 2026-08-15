@@ -559,6 +559,8 @@ class FloatingWindowService : Service() {
             // 文字靠右贴近取消按钮；必须显式带上 CENTER_VERTICAL，
             // 否则 setGravity 会把垂直分量重置成 TOP，导致文字比取消高一截
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            // 对齐动作录制弹窗的确定/取消：m3_btn_padding_top/bottom = 6dp
+            setPadding(paddingLeft, dp(6), paddingRight, dp(6))
             setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.primary))
             setBackgroundColor(Color.TRANSPARENT)
             minWidth = 0
@@ -576,6 +578,8 @@ class FloatingWindowService : Service() {
             text = getString(R.string.cancel)
             textSize = 14f
             isAllCaps = false
+            // 对齐动作录制弹窗的确定/取消：m3_btn_padding_top/bottom = 6dp
+            setPadding(paddingLeft, dp(6), paddingRight, dp(6))
             setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.text_secondary))
             setBackgroundColor(Color.TRANSPARENT)
             minWidth = 0
@@ -608,7 +612,10 @@ class FloatingWindowService : Service() {
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply {
-                    topMargin = dp(2)
+                    // 这个弹窗没有系统的正/负按钮，按钮栏整体缺失，
+                    // 手动补回 MDC 按钮栏的外部间距：ButtonBarLayout 2dp + MaterialButton inset 4dp
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
                 }
             )
         }
