@@ -845,7 +845,7 @@ class FloatingWindowService : Service() {
                 }
             }
             .setNegativeButton(R.string.cancel, null)
-            .show()
+            .let { showSystemAlertDialog(it) }
     }
 
     /* 移除录制视图 */
