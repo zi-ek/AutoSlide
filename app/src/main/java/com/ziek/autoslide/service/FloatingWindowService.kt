@@ -556,6 +556,7 @@ class FloatingWindowService : Service() {
             text = getString(R.string.macro_import)
             textSize = 14f
             isAllCaps = false
+            gravity = Gravity.RIGHT // 文字靠右，贴近取消按钮
             setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.primary))
             setBackgroundColor(Color.TRANSPARENT)
             minWidth = 0
