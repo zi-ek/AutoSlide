@@ -45,6 +45,10 @@
     <string name="ok_short">OK</string>
     <string name="macro_saved">操作宏已保存</string>
     <string name="macro_clear">清除</string>
+    <string name="macro_export">导出</string>
+    <string name="macro_export_title">导出 slide_settings.xml</string>
+    <string name="macro_export_failed">导出失败</string>
+    <string name="macro_export_not_found">没有找到配置文件</string>
     <string name="macro_delete_title">确认清除</string>
     <string name="macro_delete_message">确定要清除录制「%1$s」吗？</string>
     <string name="macro_deleted">录制已清除</string>

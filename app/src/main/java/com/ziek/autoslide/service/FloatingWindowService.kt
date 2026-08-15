@@ -47,6 +47,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
@@ -80,6 +81,7 @@ import com.ziek.autoslide.input.AutoSlideInputCodec
 import com.ziek.autoslide.isAccessibilityServicePermissionEnabled
 import com.ziek.autoslide.parseKeywords
 import kotlinx.coroutines.CoroutineScope
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -520,8 +522,19 @@ class FloatingWindowService : Service() {
                         confirmDeleteMacro(name, names, listView)
                     }
                 }
+                val exportButton = Button(dialogContext).apply {
+                    text = getString(R.string.macro_export)
+                    textSize = 14f
+                    isAllCaps = false
+                    setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.primary))
+                    setBackgroundColor(Color.TRANSPARENT)
+                    minWidth = 0
+                    minHeight = 0
+                    setOnClickListener { exportSlideSettings() }
+                }
                 row.addView(nameView)
                 row.addView(clearButton)
+                row.addView(exportButton)
                 // 点击整行开始回放
                 row.setOnClickListener {
                     playMacroByName(name)
@@ -537,6 +550,35 @@ class FloatingWindowService : Service() {
         playListDialog = builder.create().also {
             it.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
             it.show()
+        }
+    }
+
+    /* 导出 slide_settings.xml（宏 + 全部设置）到系统分享面板，方便拷贝到其它设备 */
+    private fun exportSlideSettings() {
+        try {
+            val src = File(getFilesDir().parentFile, "shared_prefs/slide_settings.xml")
+            if (!src.exists()) {
+                Toast.makeText(this, R.string.macro_export_not_found, Toast.LENGTH_SHORT).show()
+                return
+            }
+            val exportDir = File(cacheDir, "export").apply { mkdirs() }
+            val dst = File(exportDir, "slide_settings.xml")
+            src.copyTo(dst, overwrite = true)
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", dst)
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/xml"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_TEXT, getString(R.string.macro_export_title))
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(
+                Intent.createChooser(shareIntent, getString(R.string.macro_export_title)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
+        } catch (e: Exception) {
+            LogX.e("FloatingWindowService", "Export slide_settings failed", e)
+            Toast.makeText(this, R.string.macro_export_failed, Toast.LENGTH_SHORT).show()
         }
     }
 
