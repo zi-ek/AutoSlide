@@ -1490,12 +1490,15 @@ private const val SPEED_CURVE_FACTOR = 0.7
         val height = resources.displayMetrics.heightPixels
         val density = resources.displayMetrics.density
         serviceScope.launch {
-            var totalDistancePx = 0f
-            var completed = true
-            var prevInput: AutoSlideInput? = null
-            /* 等待条件满足后，跳过下一个动作的固定延迟，让宏立即继续 */
-            var skipNextDelay = false
-            for (input in macro) {
+            // 宏执行期间暂停自动点击（倒计时 10 秒已结束，自动点击不再与宏动作抢截图/手势）
+            macroWaitingForOcr = true
+            try {
+                var totalDistancePx = 0f
+                var completed = true
+                var prevInput: AutoSlideInput? = null
+                /* 等待条件满足后，跳过下一个动作的固定延迟，让宏立即继续 */
+                var skipNextDelay = false
+                for (input in macro) {
                 // 用户按方向键/再次操作时中断本次回放
                 if (currentGen != runGeneration) {
                     completed = false
@@ -1543,14 +1546,18 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 }
                 totalDistancePx += inputPathLength(input, width, height)
                 prevInput = input
+                }
+                val distanceMm = (totalDistancePx / density / 6f).toInt().coerceAtLeast(1)
+                updateStats(swipes = 1, distanceMm = distanceMm)
+                if (completed) {
+                    onFinished?.invoke()
+                }
+                onEnd?.invoke()
+                LogX.i(TAG, "PlayMacro end: name=$name, completed=$completed")
+            } finally {
+                // 宏结束（成功/超时/中断）后恢复自动点击
+                macroWaitingForOcr = false
             }
-            val distanceMm = (totalDistancePx / density / 6f).toInt().coerceAtLeast(1)
-            updateStats(swipes = 1, distanceMm = distanceMm)
-            if (completed) {
-                onFinished?.invoke()
-            }
-            onEnd?.invoke()
-            LogX.i(TAG, "PlayMacro end: name=$name, completed=$completed")
         }
         return true
     }
