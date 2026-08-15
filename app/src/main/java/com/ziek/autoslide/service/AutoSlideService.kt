@@ -168,6 +168,9 @@ open class AutoSlideService : AccessibilityService() {
     private var autoTapCheckPending = false
     /* 互斥：同一时间只允许一个自动点击检查执行，防止并发重复点击（CAS 原子抢占） */
     private val autoTapChecking = AtomicBoolean(false)
+    /* 宏回放等待期间暂停自动点击：避免两个功能同时截图触发系统截图间隔限制 */
+    @Volatile
+    private var macroWaitingForOcr = false
     private val autoTapCheckRunnable = Runnable {
         autoTapCheckPending = false
         // 在后台线程执行节点树遍历与 OCR，避免占用主线程
@@ -222,6 +225,8 @@ private const val NO_PAUSE_GAP_MS = 80L
 private const val GESTURE_CALLBACK_TIMEOUT_MS = 3000L
 /* 宏回放等待条件：节点树轮询间隔（毫秒） */
 private const val MACRO_WAIT_POLL_INTERVAL_MS = 300L
+/* 宏回放等待条件：OCR 兜底识别间隔（毫秒），节点树找不到文字时才启用 */
+private const val MACRO_WAIT_OCR_INTERVAL_MS = 1500L
 /* 跳过按钮点击冷却，防止关键词检测与常驻检测重复点击 */
 private const val SKIP_TAP_COOLDOWN_MS = 1500L
 /* 自动点击事件去抖：界面变化事件频繁时合并成一次检查 */
@@ -1424,6 +1429,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         onEnd: (() -> Unit)? = null
     ): Boolean {
         val macro = getMacro(name) ?: return false
+        LogX.i(TAG, "PlayMacro start: name=$name, actions=${macro.size}")
         stopSlide()
         val currentGen = runGeneration
         val width = resources.displayMetrics.widthPixels
@@ -1433,6 +1439,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
             var totalDistancePx = 0f
             var completed = true
             var prevInput: AutoSlideInput? = null
+            /* 等待条件满足后，跳过下一个动作的固定延迟，让宏立即继续 */
+            var skipNextDelay = false
             for (input in macro) {
                 // 用户按方向键/再次操作时中断本次回放
                 if (currentGen != runGeneration) {
@@ -1441,12 +1449,16 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 }
                 // 等待条件：等屏幕出现/消失指定文字，满足后继续（或点击），超时中止回放
                 if (input.action == AutoSlideInputAction.WAIT_FOR) {
+                    LogX.i(TAG, "PlayMacro wait start: text=${input.waitText}, disappear=${input.waitDisappear}, click=${input.waitClick}")
                     onActionStart?.invoke(input)
                     val waitOk = waitForMacroCondition(input, currentGen)
+                    LogX.i(TAG, "PlayMacro wait result: ok=$waitOk")
                     if (!waitOk) {
                         completed = false
                         break
                     }
+                    // 条件已满足：后续动作立即执行，不再等录制时的固定等待
+                    skipNextDelay = true
                     prevInput = input
                     continue
                 }
@@ -1455,7 +1467,12 @@ private const val SPEED_CURVE_FACTOR = 0.7
                     prevInput = input
                     continue
                 }
-                val waitMs = input.delayMs.coerceIn(0L, MAX_REPLAY_GAP_MS)
+                val waitMs = if (skipNextDelay) {
+                    skipNextDelay = false
+                    0L
+                } else {
+                    input.delayMs.coerceIn(0L, MAX_REPLAY_GAP_MS)
+                }
                 if (waitMs > 0) {
                     delay(waitMs)
                     if (currentGen != runGeneration) {
@@ -1466,6 +1483,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 onActionStart?.invoke(input)
                 val ok = dispatchOneInput(input, width, height)
                 if (!ok) {
+                    LogX.w(TAG, "PlayMacro action failed: ${input.action} at (${input.x},${input.y})")
                     completed = false
                     break
                 }
@@ -1478,6 +1496,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 onFinished?.invoke()
             }
             onEnd?.invoke()
+            LogX.i(TAG, "PlayMacro end: name=$name, completed=$completed")
         }
         return true
     }
@@ -1561,37 +1580,68 @@ private const val SPEED_CURVE_FACTOR = 0.7
 
     /**
      * 宏回放等待条件：轮询无障碍节点树，等待指定文字出现/消失。
-     * 等待文字出现且勾选「点击」时，找到后自动点击该文字。
+     * 条件满足后由 playMacro 跳过后续固定延迟，让宏立即执行后面的动作。
      *
      * @param input WAIT_FOR 动作
      * @param currentGen 当前运行代数（用于检测回放中断）
      * @return true=条件满足；false=超时或回放被中断
      */
     private suspend fun waitForMacroCondition(input: AutoSlideInput, currentGen: Int): Boolean {
-        val text = input.waitText.trim()
-        if (text.isEmpty()) return true
-        val timeoutAt = SystemClock.elapsedRealtime() + input.waitTimeoutMs.coerceIn(1_000L, 120_000L)
-        while (SystemClock.elapsedRealtime() < timeoutAt) {
-            if (currentGen != runGeneration) return false
-            val root = rootInActiveWindow
-            val exists = root != null && findTextNodeInTree(root, text) != null
-            if (input.waitDisappear) {
-                // 等消失：当前已经不存在即满足
-                if (!exists) return true
-            } else {
-                // 等出现：找到后按需点击，然后继续
-                if (exists && root != null) {
-                    if (input.waitClick) {
-                        tryClickNodeByText(root, text)
+        // 等待期间暂停自动点击，避免双方同时截图触发系统截图间隔限制
+        macroWaitingForOcr = true
+        try {
+            val text = input.waitText.trim()
+            if (text.isEmpty()) return true
+            val timeoutAt = SystemClock.elapsedRealtime() + input.waitTimeoutMs.coerceIn(1_000L, 120_000L)
+            var lastOcrAt = 0L
+            while (SystemClock.elapsedRealtime() < timeoutAt) {
+                if (currentGen != runGeneration) return false
+                val root = rootInActiveWindow
+                val nodeExists = root != null && findTextNodeInTree(root, text) != null
+                // 节点树没有该文字时用 OCR 兜底（适配视频/自绘界面），并做节流避免频繁截图
+                var ocrExists = false
+                if (!nodeExists) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastOcrAt >= MACRO_WAIT_OCR_INTERVAL_MS) {
+                        lastOcrAt = now
+                        val bitmap = captureScreenBitmap()
+                        if (bitmap != null) {
+                            val screenText = recognizeScreenText(bitmap)
+                            bitmap.recycle()
+                            ocrExists = screenText.contains(text)
+                        }
                     }
-                    return true
                 }
+                val exists = nodeExists || ocrExists
+                if (input.waitDisappear) {
+                    // 等消失：当前已经不存在即满足
+                    if (!exists) return true
+                } else {
+                    // 等出现：找到即满足，不点击（后续宏动作负责点击）
+                    if (exists) return true
+                }
+                delay(MACRO_WAIT_POLL_INTERVAL_MS)
             }
-            delay(MACRO_WAIT_POLL_INTERVAL_MS)
+            LogX.w(TAG, "Macro wait timeout: text=$text, disappear=${input.waitDisappear}")
+            Toast.makeText(this, getString(R.string.wait_for_timeout, text), Toast.LENGTH_LONG).show()
+            return false
+        } finally {
+            macroWaitingForOcr = false
         }
-        LogX.w(TAG, "Macro wait timeout: text=$text, disappear=${input.waitDisappear}")
-        Toast.makeText(this, getString(R.string.wait_for_timeout, text), Toast.LENGTH_LONG).show()
-        return false
+    }
+
+    /* 使用 ML Kit 中文模型识别整屏文字（宏等待条件的 OCR 兜底） */
+    private suspend fun recognizeScreenText(bitmap: Bitmap): String = withContext(Dispatchers.IO) {
+        try {
+            val recognizer = textRecognizer ?: TextRecognition.getClient(
+                ChineseTextRecognizerOptions.Builder().build()
+            ).also { textRecognizer = it }
+            val image = InputImage.fromBitmap(bitmap, 0)
+            Tasks.await(recognizer.process(image)).text
+        } catch (e: Exception) {
+            LogX.w(TAG, "Macro wait OCR failed", e)
+            ""
+        }
     }
 
     /* BFS 查找第一个文本/描述包含目标文字的节点（不区分大小写） */
@@ -1603,6 +1653,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
         while (queue.isNotEmpty() && scanned < SKIP_NODE_SCAN_LIMIT) {
             val node = queue.removeFirst()
             scanned++
+            // 只看对用户可见且有实际位置的节点（不可见/零尺寸节点无法点击）
+            if (!runCatching { node.isVisibleToUser }.getOrDefault(false)) continue
+            val bounds = Rect()
+            runCatching { node.getBoundsInScreen(bounds) }
+            if (bounds.isEmpty) continue
             val nodeText = runCatching { node.text?.toString() }.getOrNull()
             val nodeDesc = runCatching { node.contentDescription?.toString() }.getOrNull()
             if (nodeText?.lowercase()?.contains(target) == true ||
@@ -1617,26 +1672,6 @@ private const val SPEED_CURVE_FACTOR = 0.7
             }
         }
         return null
-    }
-
-    /* 点击文字节点：优先点击节点本身或可点击祖先，失败则按节点中心坐标点击 */
-    private suspend fun tryClickNodeByText(root: AccessibilityNodeInfo, text: String) {
-        val target = findTextNodeInTree(root, text) ?: return
-        val clickable = findClickableSelfOrAncestor(target)
-        val clicked = clickable != null &&
-            runCatching { clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK) }.getOrDefault(false)
-        if (clicked) {
-            LogX.i(TAG, "Macro wait click: $text")
-            return
-        }
-        // 节点点击失败：用文字中心坐标兜底
-        val bounds = Rect()
-        runCatching { target.getBoundsInScreen(bounds) }
-        if (!bounds.isEmpty) {
-            val width = resources.displayMetrics.widthPixels
-            val height = resources.displayMetrics.heightPixels
-            performSkipTap(bounds.centerX().toFloat() / width, bounds.centerY().toFloat() / height)
-        }
     }
 
     /**
@@ -1973,6 +2008,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * @return 是否点击了跳过按钮
      */
     suspend fun checkAndTapSkipOnce(): Boolean {
+        // 宏回放等待期间暂停自动点击，避免截图冲突
+        if (macroWaitingForOcr) return false
         // 互斥：同一时间只允许一个自动点击检查执行，防止事件并发导致重复点击
         if (!autoTapChecking.compareAndSet(false, true)) return false
         try {
