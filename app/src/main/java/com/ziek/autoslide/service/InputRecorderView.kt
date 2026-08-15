@@ -200,9 +200,8 @@ class InputRecorderView(
      *
      * @param text 要等待的文字
      * @param disappear true=等文字消失，false=等文字出现
-     * @param click true=文字出现后自动点击它
      */
-    fun addWaitForAction(text: String, disappear: Boolean, click: Boolean) {
+    fun addWaitForAction(text: String, disappear: Boolean) {
         val trimmed = text.trim()
         if (trimmed.isEmpty()) return
         recordedInputs.add(
@@ -210,8 +209,7 @@ class InputRecorderView(
                 action = AutoSlideInputAction.WAIT_FOR,
                 delayMs = 0L,
                 waitText = trimmed,
-                waitDisappear = disappear,
-                waitClick = click
+                waitDisappear = disappear
             )
         )
         val mark = if (disappear) "等待消失：$trimmed" else "等待出现：$trimmed"

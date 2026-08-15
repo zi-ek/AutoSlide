@@ -1449,7 +1449,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 }
                 // 等待条件：等屏幕出现/消失指定文字，满足后继续（或点击），超时中止回放
                 if (input.action == AutoSlideInputAction.WAIT_FOR) {
-                    LogX.i(TAG, "PlayMacro wait start: text=${input.waitText}, disappear=${input.waitDisappear}, click=${input.waitClick}")
+                    LogX.i(TAG, "PlayMacro wait start: text=${input.waitText}, disappear=${input.waitDisappear}")
                     onActionStart?.invoke(input)
                     val waitOk = waitForMacroCondition(input, currentGen)
                     LogX.i(TAG, "PlayMacro wait result: ok=$waitOk")

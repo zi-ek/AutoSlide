@@ -38,7 +38,6 @@ import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.BaseAdapter
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
@@ -823,15 +822,11 @@ class FloatingWindowService : Service() {
             addView(appearRadio)
             addView(disappearRadio)
         }
-        val clickCheck = CheckBox(dialogContext).apply {
-            text = getString(R.string.wait_for_click)
-        }
         val container = LinearLayout(dialogContext).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(12), dp(24), 0)
             addView(inputLayout)
             addView(radioGroup)
-            addView(clickCheck)
         }
         MaterialAlertDialogBuilder(dialogContext)
             .setTitle(R.string.wait_for_title)
@@ -841,7 +836,7 @@ class FloatingWindowService : Service() {
                 if (text.isEmpty()) {
                     Toast.makeText(this, R.string.wait_for_empty, Toast.LENGTH_SHORT).show()
                 } else {
-                    recordView.addWaitForAction(text, disappearRadio.isChecked, clickCheck.isChecked)
+                    recordView.addWaitForAction(text, disappearRadio.isChecked)
                 }
             }
             .setNegativeButton(R.string.cancel, null)

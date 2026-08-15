@@ -36,7 +36,6 @@ enum class AutoSlideInputAction {
  * @param points SWIPE 的完整路径点，x,y 交替且归一化到 0~1；点击/长按为空
  * @param waitText WAIT_FOR 要等待的文字
  * @param waitDisappear true=等文字消失，false=等文字出现
- * @param waitClick true=文字出现后自动点击它
  * @param waitTimeoutMs 等待超时时间（毫秒），超时后回放中止
  */
 data class AutoSlideInput(
@@ -50,7 +49,6 @@ data class AutoSlideInput(
     val points: List<Float> = emptyList(),
     val waitText: String = "",
     val waitDisappear: Boolean = false,
-    val waitClick: Boolean = false,
     val waitTimeoutMs: Long = 30_000L
 ) {
     /* 序列化为 JSON 对象 */
@@ -64,7 +62,6 @@ data class AutoSlideInput(
         put("delay", delayMs)
         put("waitText", waitText)
         put("waitDisappear", waitDisappear)
-        put("waitClick", waitClick)
         put("waitTimeout", waitTimeoutMs)
         if (points.isNotEmpty()) {
             put("points", JSONArray().apply { points.forEach { put(it.toDouble()) } })
@@ -88,7 +85,6 @@ data class AutoSlideInput(
                     } ?: emptyList(),
                     waitText = obj.optString("waitText", ""),
                     waitDisappear = obj.optBoolean("waitDisappear", false),
-                    waitClick = obj.optBoolean("waitClick", false),
                     waitTimeoutMs = obj.optLong("waitTimeout", 30_000L).coerceIn(1_000L, 120_000L)
                 )
             } catch (e: Exception) {
