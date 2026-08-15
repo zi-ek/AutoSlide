@@ -185,9 +185,9 @@ class InputRecorderView(
         addView(
             waitButton,
             LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.END or Gravity.TOP
+                // 顶部水平居中，避免遮挡右上角等常见操作元素
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                 topMargin = dp(64)
-                marginEnd = dp(12)
             }
         )
 
