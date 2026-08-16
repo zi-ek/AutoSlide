@@ -64,6 +64,7 @@ import com.ziek.autoslide.DIRECTION_RIGHT
 import com.ziek.autoslide.DIRECTION_UP
 import com.ziek.autoslide.KEY_DOUYIN_AUTOPLAY
 import com.ziek.autoslide.KEY_AUTO_TAP_ENABLED
+import com.ziek.autoslide.KEY_AUTOMATION_PAUSED
 import com.ziek.autoslide.KEY_FLOATING_DESIRED
 import com.ziek.autoslide.KEY_MACRO_PREFIX
 import com.ziek.autoslide.KEY_KEYWORDS
@@ -180,6 +181,12 @@ open class AutoSlideService : AccessibilityService() {
     /* 自动点击总开关：主页开关控制，开启时始终检测并点击关键词，关闭时完全停止 */
     @Volatile
     private var autoTapEnabled = DEFAULT_AUTO_TAP_ENABLED
+    /* 自动化总暂停：暂停时所有自动滑动、自动识别和自动点击均不再执行 */
+    @Volatile
+    private var automationPaused = false
+    /* 暂停前是否正在滑动：恢复时据此决定要不要把滑动循环重新拉起来 */
+    @Volatile
+    private var wasSlidingBeforePause = false
     /* 1x1 无障碍保活窗口（GKD: aliveView） */
     private var aliveOverlayView: View? = null
 
@@ -439,6 +446,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
     fun startSlideWithConfig(
         speedVal: Int, pauseModeVal: Int, pauseTimeVal: Int, minPauseVal: Int, maxPauseVal: Int
     ) {
+        // 用户主动点击方向键开始滑动，视为恢复自动化。
+        resumeForExplicitStart()
         speed = speedVal.coerceIn(1, 100)
         pauseMode = pauseModeVal
         pauseTime = pauseTimeVal.coerceAtLeast(1)
@@ -485,6 +494,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
         loadKeywordConfig()
         loadSkipConfig()
         loadKeywordDirection()
+        automationPaused = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getBoolean(KEY_AUTOMATION_PAUSED, false)
         LogX.i(TAG, "Config reloaded")
     }
 
@@ -575,12 +586,61 @@ private const val SPEED_CURVE_FACTOR = 0.7
         handler.removeCallbacks(keywordCheckRunnable)
     }
 
+    /** 当前是否暂停所有自动化操作。 */
+    fun isAutomationPaused(): Boolean = automationPaused
+
+    /**
+     * 切换自动化总暂停状态。
+     *
+     * 暂停会立即取消正在进行的滑动、关键词检测、宏回放与自动跳过，并记住暂停前是否正在滑动；
+     * 恢复时若暂停前正在滑动，就把滑动循环原样拉起来，用户不必再点一次方向键。
+     * 暂停前本来就没在滑（只开着自动点击/连播）时，恢复只是重新放行，不会凭空开始滑动。
+     */
+    fun setAutomationPaused(paused: Boolean) {
+        if (automationPaused == paused) return
+        automationPaused = paused
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
+            putBoolean(KEY_AUTOMATION_PAUSED, paused)
+        }
+        if (paused) {
+            // 记录暂停前的运行状态，供恢复时还原（stopSlide 会把 isRunning 清掉，必须先存）
+            wasSlidingBeforePause = isRunning
+            stopSlide()
+            handler.removeCallbacks(autoTapCheckRunnable)
+            autoTapCheckPending = false
+            douyinAutoPlayInProgress = false
+            macroWaitingForOcr = false
+            LogX.i(TAG, "Automation paused, wasSliding=$wasSlidingBeforePause")
+            return
+        }
+
+        LogX.i(TAG, "Automation resumed, restoreSliding=$wasSlidingBeforePause")
+        if (wasSlidingBeforePause) {
+            wasSlidingBeforePause = false
+            // startAutoSlide 自己会重置 isRunning 与关键词标志，滑动配置在暂停期间未被清空
+            startAutoSlide()
+        }
+        // 恢复后立即查一次当前界面，不必干等下一个界面变化事件
+        scheduleAutoTapCheck(0L)
+    }
+
+    /**
+     * 用户主动点方向键或回放键时的解除暂停：只放行，不还原暂停前的滑动，
+     * 因为调用方紧接着就会用自己的配置启动，避免先用旧配置多启一次。
+     */
+    private fun resumeForExplicitStart() {
+        if (!automationPaused) return
+        wasSlidingBeforePause = false
+        setAutomationPaused(false)
+    }
+
     /**
      * 无障碍事件回调：不再用定时器轮询前台包名，而是直接复用系统已经在分发的无障碍事件来判断
      * 是否进入了抖音，省去了后台每 10 秒主动唤醒 CPU 查询前台应用的开销。
      * 离开抖音时重置会话标记；进入抖音时尝试触发连播检测（内部有冷却和去重，不会频繁执行）。
      */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (automationPaused) return
         val packageName = event?.packageName?.toString() ?: return
         if (packageName != DOUYIN_PACKAGE && packageName != KUAISHOU_PACKAGE &&
             packageName != KUAISHOU_LITE_PACKAGE
@@ -974,6 +1034,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * 没有就长按呼出菜单并上滑一次；如果还是没有，立即停止，绝不乱点其它按钮
      */
     private suspend fun handleDouyinAutoPlay(packageName: String) {
+        if (automationPaused) return
         val targetText = autoplayTextFor(packageName)
         // 先处理可能存在的推送通知弹窗，避免干扰后续手势
         maybeDismissPushNotificationDialog()
@@ -1015,6 +1076,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
 
     /* 检测「打开推送通知」弹窗，存在时自动点击「忽略」按钮（带冷却，避免重复点击） */
     private fun maybeDismissPushNotificationDialog() {
+        if (automationPaused) return
         val now = SystemClock.elapsedRealtime()
         if (now - lastPushDialogDismissAt < PUSH_DIALOG_DISMISS_COOLDOWN_MS) {
             return
@@ -1486,6 +1548,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
         onActionStart: ((AutoSlideInput) -> Unit)? = null,
         onEnd: (() -> Unit)? = null
     ): Boolean {
+        // 用户主动发起回放，视为恢复自动化。
+        resumeForExplicitStart()
         val macro = getMacro(name) ?: return false
         val rounds = loopCount.coerceAtLeast(1)
         LogX.i(TAG, "PlayMacro start: name=$name, actions=${macro.size}, rounds=$rounds")
@@ -1796,7 +1860,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * @param delayMs 延迟毫秒数
      */
     private fun scheduleKeywordCheck(delayMs: Long) {
-        if (!isRunning || !keywordCheckActive) {
+        if (automationPaused || !isRunning || !keywordCheckActive) {
             return
         }
         val finalDelay = delayMs.coerceAtLeast(50)
@@ -1823,19 +1887,19 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * 执行一次关键词检测：截图 -> OCR -> 匹配
      */
     private fun runKeywordCheck() {
-        if (!isRunning || !keywordCheckActive) {
+        if (automationPaused || !isRunning || !keywordCheckActive) {
             return
         }
         val currentGen = runGeneration
         serviceScope.launch {
             val bitmap = captureScreenBitmap()
-            if (currentGen != runGeneration || !isRunning) {
+            if (automationPaused || currentGen != runGeneration || !isRunning) {
                 bitmap?.recycle()
                 return@launch
             }
             val ocrResult = if (bitmap != null) recognizeSkipHits(bitmap) else ("" to emptyList())
             bitmap?.recycle()
-            if (currentGen != runGeneration || !isRunning) {
+            if (automationPaused || currentGen != runGeneration || !isRunning) {
                 return@launch
             }
             handleKeywordCheckResult(ocrResult.first, currentGen)
@@ -1851,7 +1915,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         text: String,
         currentGen: Int
     ) {
-        if (currentGen != runGeneration || !isRunning || !keywordCheckActive) return
+        if (automationPaused || currentGen != runGeneration || !isRunning || !keywordCheckActive) return
         // 不扫描 AutoSlide 自己的界面（主界面/聊天室等），自己页面永远不可能是广告
         if (isAutoSlideWindow()) {
             LogX.d(TAG, "Current window is AutoSlide itself, skip keyword check")
@@ -2282,19 +2346,19 @@ private const val SPEED_CURVE_FACTOR = 0.7
      */
     suspend fun checkAndTapSkipOnce(): Boolean {
         // 宏回放等待期间暂停自动点击，避免截图冲突
-        if (macroWaitingForOcr) return false
+        if (automationPaused || macroWaitingForOcr) return false
         // 互斥：同一时间只允许一个自动点击检查执行，防止事件并发导致重复点击
         if (!autoTapChecking.compareAndSet(false, true)) return false
         try {
             // 总开关关闭时完全停止
-            if (!autoTapEnabled) return false
+            if (automationPaused || !autoTapEnabled) return false
             // 不扫描 AutoSlide 自己的界面（主界面/聊天室/录制回放），自己页面永远不可能是广告
             if (isAutoSlideWindow()) return false
             // 优先节点树：直接读文字属性，几乎不耗电
             if (tryClickSkipNodeByTree()) return true
             // 广告刚出现时节点树往往还没填充文字，延迟 0.5 秒重试一次再决定是否 OCR
             delay(NODE_TREE_RETRY_DELAY_MS)
-            if (!autoTapEnabled) return false
+            if (automationPaused || !autoTapEnabled) return false
             if (isAutoSlideWindow()) return false
             if (tryClickSkipNodeByTree()) return true
             // 节点树没命中 → 截图 + OCR 兜底（节流：事件频繁时最多每 2 秒一次）
@@ -2430,7 +2494,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
      */
     private suspend fun performAutoTap(hits: List<Pair<Float, Float>>): Boolean {
         // 主页开关：关闭时完全停止自动点击
-        if (!autoTapEnabled) return false
+        if (automationPaused || !autoTapEnabled) return false
         // 不扫描 AutoSlide 自己的界面（主界面/聊天室/录制回放），自己页面永远不可能是广告
         if (isAutoSlideWindow()) return false
         if (SystemClock.elapsedRealtime() - lastSkipTapAt < SKIP_TAP_COOLDOWN_MS) return false
@@ -2453,7 +2517,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * @param delayMs 延迟毫秒数（默认 150ms 去抖，0 表示立即）
      */
     private fun scheduleAutoTapCheck(delayMs: Long = AUTO_TAP_DEBOUNCE_MS) {
-        if (!autoTapEnabled) return
+        if (automationPaused || !autoTapEnabled) return
         if (autoTapCheckPending) return
         autoTapCheckPending = true
         handler.postDelayed(autoTapCheckRunnable, delayMs)

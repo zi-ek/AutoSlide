@@ -37,6 +37,8 @@ const val KEY_STATUS_SERVICE_ENABLED = "statusServiceEnabled"
 const val KEY_TERMS_ACCEPTED = "terms_accepted"
 // 悬浮窗是否应处于显示状态：无障碍服务重新连接时据此把悬浮球恢复出来
 const val KEY_FLOATING_DESIRED = "floatingDesired"
+// 自动化总暂停：暂停后停止所有自动滑动、识别与自动点击，直到用户主动恢复
+const val KEY_AUTOMATION_PAUSED = "automationPaused"
 
 // ==================== 统计数据 ====================
 const val KEY_STATS_TOTAL_SWIPES = "stats_total_swipes"

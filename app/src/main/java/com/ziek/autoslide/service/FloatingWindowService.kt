@@ -49,6 +49,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.content.edit
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
@@ -104,6 +105,7 @@ class FloatingWindowService : Service() {
     private lateinit var rootView: View      // 悬浮窗根布局（可拖拽）
     private lateinit var controlPanel: View  // 展开后的控制面板
     private lateinit var expandButton: View  // 收起后的小圆球（点击展开）
+    private lateinit var pauseButton: FloatingActionButton // 悬浮球放大时显示的总暂停按钮
     private var initialX = 0f                // 拖拽开始时悬浮窗的 X 位置
     private var initialY = 0f                // 拖拽开始时悬浮窗的 Y 位置
     private var initialTouchX = 0f           // 按下时手指的 X 坐标
@@ -123,6 +125,7 @@ class FloatingWindowService : Service() {
         if (isExpandButtonEnlarged) {
             isExpandButtonEnlarged = false
             updateExpandButtonSize(30)
+            pauseButton.visibility = View.GONE
         }
     }
 
@@ -143,6 +146,7 @@ class FloatingWindowService : Service() {
         rootView = createRootView()
         controlPanel = rootView.findViewById(R.id.control_panel)
         expandButton = rootView.findViewById(R.id.floating_expand_button)
+        pauseButton = rootView.findViewById(R.id.floating_pause_button)
         layoutParams = createLayoutParams()
         lastScreenWidth = resources.displayMetrics.widthPixels
         // 注册拖拽事件处理
@@ -353,11 +357,28 @@ class FloatingWindowService : Service() {
 
     /* 绑定所有控制按钮事件 */
     private fun setupControlButtons() {
+        pauseButton.setOnClickListener {
+            val service = AutoSlideService.getInstance()
+            if (service == null) {
+                Toast.makeText(this, R.string.accessibility_service_starting, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val paused = !service.isAutomationPaused()
+            service.setAutomationPaused(paused)
+            updatePauseButton()
+            Toast.makeText(
+                this,
+                if (paused) R.string.automation_paused else R.string.automation_resumed,
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
         expandButton.setOnClickListener {
             if (!isExpandButtonEnlarged) {
                 // 第一次点击：放大图标并开启 3 秒计时
                 isExpandButtonEnlarged = true
                 updateExpandButtonSize(48) // 放大到 48dp
+                pauseButton.visibility = View.VISIBLE
+                updatePauseButton()
                 mainHandler.removeCallbacks(shrinkRunnable)
                 mainHandler.postDelayed(shrinkRunnable, 3000L)
             } else {
@@ -382,10 +403,11 @@ class FloatingWindowService : Service() {
             stopSelf()
         }
         // 关闭按钮⌈点击⌋事件绑定
+        // 收起按钮：把面板收成小圆球，不退出悬浮窗；
+        // 彻底关闭悬浮窗只由主界面的「关闭悬浮窗」按钮负责
         rootView.findViewById<View>(R.id.floating_close_button).setOnClickListener {
-            setFloatingDesired(false)
             AutoSlideService.getInstance()?.stopSlide()
-            stopSelf()
+            minimize()
         }
         // 录制按钮：先弹命名窗口，输入名称后开始录制
         rootView.findViewById<View>(R.id.floating_record_button).setOnClickListener {
@@ -413,6 +435,17 @@ class FloatingWindowService : Service() {
             }
             showPlayListDialog()
         }
+    }
+
+    /* 刷新悬浮球上方按钮的暂停/恢复图标与无障碍说明。 */
+    private fun updatePauseButton() {
+        val paused = AutoSlideService.getInstance()?.isAutomationPaused() ?: false
+        pauseButton.setImageResource(
+            if (paused) R.drawable.ic_floating_play else R.drawable.ic_floating_pause
+        )
+        pauseButton.contentDescription = getString(
+            if (paused) R.string.desc_resume_all else R.string.desc_pause_all
+        )
     }
 
     /**
@@ -1152,6 +1185,7 @@ class FloatingWindowService : Service() {
     /* 最小化悬浮窗 */
     private fun minimize() {
         controlPanel.visibility = View.GONE
+        pauseButton.visibility = View.GONE
         expandButton.visibility = View.VISIBLE
         // 确保状态复位
         isExpandButtonEnlarged = false
@@ -1189,6 +1223,7 @@ class FloatingWindowService : Service() {
      */
     private fun expand(stopSlide: Boolean = true) {
         controlPanel.visibility = View.VISIBLE
+        pauseButton.visibility = View.GONE
         expandButton.visibility = View.GONE
         // 确保状态复位
         isExpandButtonEnlarged = false
