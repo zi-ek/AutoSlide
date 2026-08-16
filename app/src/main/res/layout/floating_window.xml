@@ -13,6 +13,8 @@
     android:padding="6dp">
 
     <!-- 展开后的控制面板（默认显示，收起时隐藏） -->
+
+    <!-- 悬浮球放大时显示的全局暂停/恢复按钮 -->
     <LinearLayout
         android:id="@+id/control_panel"
         android:layout_width="wrap_content"
@@ -108,51 +110,107 @@
             android:layout_gravity="center"
             android:orientation="horizontal">
 
-            <!-- 回放按钮：立即执行一次已录制的操作宏 -->
-            <com.google.android.material.floatingactionbutton.FloatingActionButton
-                android:id="@+id/floating_play_button"
+            <!-- 回放：图标 + 下方文字标签 -->
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_margin="3dp"
-                android:contentDescription="@string/desc_play"
-                android:src="@drawable/ic_floating_play"
-                app:backgroundTint="@color/floating_btn_play_bg"
-                app:elevation="4dp"
-                app:fabSize="mini"
-                app:tint="@color/floating_btn_play_icon"
-                tools:ignore="ClassNameCheck" />
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
 
-            <!-- 关闭按钮：停止滑动并退出悬浮窗 -->
-            <com.google.android.material.floatingactionbutton.FloatingActionButton
-                android:id="@+id/floating_close_button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_margin="3dp"
-                android:contentDescription="@string/desc_close"
-                android:src="@drawable/ic_floating_close"
-                app:backgroundTint="@color/floating_btn_close_bg"
-                app:elevation="4dp"
-                app:fabSize="mini"
-                app:tint="@color/floating_btn_close_icon"
-                tools:ignore="ClassNameCheck" />
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/floating_play_button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    android:contentDescription="@string/desc_play"
+                    android:src="@drawable/ic_chat_refresh"
+                    app:backgroundTint="@color/floating_btn_play_bg"
+                    app:elevation="4dp"
+                    app:fabSize="mini"
+                    app:tint="@color/floating_btn_play_icon"
+                    tools:ignore="ClassNameCheck" />
 
-            <!-- 录制按钮：录制独立操作宏（点击/长按/滑动/等待） -->
-            <com.google.android.material.floatingactionbutton.FloatingActionButton
-                android:id="@+id/floating_record_button"
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="2dp"
+                    android:text="@string/label_play"
+                    android:textColor="#FFFFFF"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
+            <!-- 关闭：图标 + 下方文字标签 -->
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_margin="3dp"
-                android:contentDescription="@string/desc_record"
-                android:src="@drawable/ic_floating_record"
-                app:backgroundTint="@color/floating_btn_record_bg"
-                app:elevation="4dp"
-                app:fabSize="mini"
-                app:tint="@color/floating_btn_record_icon"
-                tools:ignore="ClassNameCheck" />
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
+
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/floating_close_button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    android:contentDescription="@string/desc_close"
+                    android:src="@drawable/ic_floating_close"
+                    app:backgroundTint="@color/floating_btn_play_bg"
+                    app:elevation="4dp"
+                    app:fabSize="mini"
+                    app:tint="@color/floating_btn_close_icon"
+                    tools:ignore="ClassNameCheck" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="2dp"
+                    android:text="@string/label_close"
+                    android:textColor="#FFFFFF"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
+            <!-- 录制：图标 + 下方文字标签 -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
+
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/floating_record_button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    android:contentDescription="@string/desc_record"
+                    android:src="@drawable/ic_floating_record"
+                    app:backgroundTint="@color/floating_btn_play_bg"
+                    app:elevation="4dp"
+                    app:fabSize="mini"
+                    app:tint="@color/floating_btn_record_icon"
+                    tools:ignore="ClassNameCheck" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="2dp"
+                    android:text="@string/label_record"
+                    android:textColor="#FFFFFF"
+                    android:textSize="10sp" />
+            </LinearLayout>
 
         </LinearLayout>
 
     </LinearLayout>
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/floating_pause_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginBottom="24dp"
+        android:contentDescription="@string/desc_pause_all"
+        android:src="@drawable/ic_floating_pause"
+        android:visibility="gone"
+        tools:ignore="ClassNameCheck" />
 
     <!-- 收起状态下的小圆球，点击展开控制面板 -->
     <ImageView

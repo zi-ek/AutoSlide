@@ -5,7 +5,7 @@ package com.ziek.autoslide
  *
  * 权限设置（无障碍、悬浮窗）、滑动设置（模式/停顿时间/速度）、
  * 关键词检测设置都在这里配置并保存到 SharedPreferences；
- * 点击“开始”后启动悬浮窗服务并退到后台。
+ * 主界面的悬浮窗按钮用于显示或关闭悬浮窗服务。
  */
 
 import android.Manifest
@@ -217,6 +217,7 @@ class MainActivity : AppCompatActivity() {
             AutoSlideService.getInstance()?.setDouyinAutoPlayEnabled(isChecked)
         }
         setupStartButton()
+        updateFloatingWindowButton()
         setupUpdateButton()
         setupChatRoomText()
         setupKeepAliveHint()
@@ -261,6 +262,7 @@ class MainActivity : AppCompatActivity() {
     /* 活动恢复时检查⌈无障碍服务权限⌋并同步开关状态 */
     override fun onResume() {
         super.onResume()
+        updateFloatingWindowButton()
         // 使用协程异步检查权限并同步开关状态
         lifecycleScope.launch(ioDispatcher) {
             val hasWriteSecure = hasWriteSecureSettingsPermission()
@@ -939,16 +941,34 @@ class MainActivity : AppCompatActivity() {
         return false
     }
 
-    /* 绑定⌈开始⌋按钮点击事件并执行运行前权限校验 */
+    /* 同步悬浮窗开关按钮文案 */
+    private fun updateFloatingWindowButton() {
+        binding.startButton.setText(
+            if (FloatingWindowService.isRunning()) {
+                R.string.close_floating_window
+            } else {
+                R.string.show_floating_window
+            }
+        )
+    }
+
+    /* 绑定悬浮窗开关按钮：显示时关闭，未显示时启动 */
     private fun setupStartButton() {
-        // 绑定⌈开始⌋按钮点击事件
         binding.startButton.setOnClickListener {
+            val floatingIntent = Intent(this, FloatingWindowService::class.java)
+            if (FloatingWindowService.isRunning()) {
+                // 用户主动关闭：进程复活时不再自动恢复悬浮窗。
+                preferences.edit { putBoolean(KEY_FLOATING_DESIRED, false) }
+                AutoSlideService.getInstance()?.stopSlide()
+                stopService(floatingIntent)
+                binding.startButton.setText(R.string.show_floating_window)
+                return@setOnClickListener
+            }
             if (!ensureAccessibilityPermission()) return@setOnClickListener
             if (!ensureOverlayPermission()) return@setOnClickListener
-            // 常驻通知由「必要权限」卡片里的开关单独控制，这里不代劳（GKD 同样只由设置开关驱动）
-            // 校验通过后启动悬浮窗服务并把应用退到后台
-            val floatingIntent = Intent(this, FloatingWindowService::class.java)
+            // 常驻通知由「必要权限」卡片里的开关单独控制，这里不代劳。
             startService(floatingIntent)
+            binding.startButton.setText(R.string.close_floating_window)
             moveTaskToBack(true)
         }
     }

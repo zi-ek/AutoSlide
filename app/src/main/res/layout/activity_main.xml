@@ -732,6 +732,14 @@
                         android:textSize="@dimen/text_size_subtitle"
                         android:textStyle="bold" />
 
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/margin_small"
+                        android:text="@string/keyword_desc"
+                        android:textColor="@color/text_secondary"
+                        android:textSize="12sp" />
+
                     <com.google.android.material.textfield.TextInputLayout
                         android:id="@+id/keywordInputLayout"
                         style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
@@ -824,14 +832,14 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!--开始按钮-->
+        <!--悬浮窗显示/关闭按钮-->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/startButton"
             android:layout_width="match_parent"
             android:layout_height="64dp"
             android:layout_marginHorizontal="@dimen/margin_medium"
             android:layout_marginTop="@dimen/margin_large"
-            android:text="@string/start"
+            android:text="@string/show_floating_window"
             android:textColor="@color/on_primary"
             android:textSize="18sp"
             app:backgroundTint="@color/primary"

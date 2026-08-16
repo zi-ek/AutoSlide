@@ -3,6 +3,8 @@
     <string name="app_name">自动滑屏器</string>
     <string name="accessibility_service_description">自动滑动器需要无障碍服务权限来执行屏幕滑动操作</string>
     <string name="start">开始</string>
+    <string name="show_floating_window">显示悬浮窗</string>
+    <string name="close_floating_window">关闭悬浮窗</string>
     <string name="pause_time">停顿时间（秒）点击可修改 ：</string>
     <string name="custom_pause_time">自定义停顿时间（秒）</string>
     <string name="invalid_input_number">请输入有效数字</string>
@@ -33,6 +35,14 @@
     <string name="desc_settings">设置</string>
     <string name="desc_close">关闭</string>
     <string name="desc_expand">展开</string>
+    <!-- 悬浮窗底部三个按钮的文字标签（短，跟在图标下面） -->
+    <string name="label_play">回放</string>
+    <string name="label_close">收起</string>
+    <string name="label_record">录制</string>
+    <string name="desc_pause_all">暂停所有自动功能</string>
+    <string name="desc_resume_all">恢复所有自动功能</string>
+    <string name="automation_paused">已暂停所有自动功能</string>
+    <string name="automation_resumed">已恢复自动功能</string>
     <string name="record_instruction_format">正在录制「%1$s」：直接在屏幕上进行[点击/滑动]，所有动作会被记录（含等待时间），按音量上键↑保存，按音量下↓键取消</string>
     <string name="record_cancelled">已取消录制</string>
     <string name="record_empty">未录制到任何操作</string>
@@ -126,6 +136,7 @@
     <string name="tile_label">自动滑动</string>
     <string name="tile_permission_toast">请先授予无障碍和悬浮窗权限</string>
     <string name="keyword_detection">关键词检测</string>
+    <string name="keyword_desc">识别到屏幕出现以下文字时执行一次滑动，解决看剧中途需要频繁的手动翻页。用中文逗号分隔，可自行添加关键词。</string>
     <string name="keyword_hint">关键词（用中文逗号分隔）</string>
     <string name="keyword_ignore_case">忽略大小写</string>
     <string name="keyword_interval">检测间隔（秒）</string>
