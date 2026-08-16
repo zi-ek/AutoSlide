@@ -249,9 +249,40 @@
                             android:textColor="@color/text_secondary"
                             android:textSize="12sp" />
                     </LinearLayout>
+
+                    <!--分割线-->
+                    <View
+                        android:layout_width="1dp"
+                        android:layout_height="match_parent"
+                        android:layout_marginVertical="8dp"
+                        android:background="#1A000000" />
+
+                    <!--常驻通知（GKD ControlPage 的「常驻通知」开关）-->
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <com.google.android.material.switchmaterial.SwitchMaterial
+                            android:id="@+id/statusServiceSwitch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="21dp"
+                            android:contentDescription="@string/status_service_switch"
+                            app:thumbTint="@color/switch_thumb_color"
+                            app:trackTint="@color/switch_track_color" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/status_service_title"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp" />
+                    </LinearLayout>
                 </LinearLayout>
 
-                <!--保活提示：点击查看「无感保活」说明（磁贴复活机制）-->
+                <!--保活提示：点击查看磁贴复活说明（被 force-stop 后唯一的复活入口）-->
                 <TextView
                     android:id="@+id/keepAliveHintText"
                     android:layout_width="wrap_content"

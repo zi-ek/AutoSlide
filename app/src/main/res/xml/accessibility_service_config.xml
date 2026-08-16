@@ -2,7 +2,7 @@
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:isAccessibilityTool="true"
-    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFeedbackType="feedbackAllMask"
     android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged"
     android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews|flagDefault|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"

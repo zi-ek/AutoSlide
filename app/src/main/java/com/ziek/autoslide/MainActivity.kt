@@ -20,6 +20,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.service.quicksettings.TileService
 import android.text.Editable
@@ -33,8 +34,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -83,11 +84,19 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val SHIZUKU_PERMISSION_REQUEST_CODE = 100
         private const val REQUEST_NOTIFICATION_PERMISSION = 101
+        /* 首次 resume 跳过自愈的时间窗（GKD 同款 2 秒） */
+        private const val FIRST_RESUME_SKIP_MS = 2000L
         // 无障碍授权方式选项常量
         private const val OPTION_MANUAL = 0
         private const val OPTION_SHIZUKU = 1
         private const val OPTION_ADB = 2
     }
+
+    /* 本界面创建时刻，与 [App.startTime] 比较判断是否跟着进程一起启动（GKD: MainActivity.startTime） */
+    private val activityStartAt = SystemClock.elapsedRealtime()
+
+    /* 是否还没走过第一次 onResume（GKD: isFirstResume） */
+    private var isFirstResume = true
 
     /* Shizuku 授权成功后的待执行回调 */
     private var pendingShizukuOnGranted: (() -> Unit)? = null
@@ -119,6 +128,16 @@ class MainActivity : AppCompatActivity() {
     private val overlaySwitchListener = CompoundButton.OnCheckedChangeListener { _, isChecked ->
         startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
         updateOverlaySwitchState(!isChecked)
+    }
+
+    /* 常驻通知开关监听器（GKD: ControlPage 的「常驻通知」PageSwitchItemCard） */
+    private val statusServiceSwitchListener = CompoundButton.OnCheckedChangeListener { _, isChecked ->
+        StatusService.setEnabled(this, isChecked)
+        if (isChecked) {
+            requestStartStatusService()
+        } else {
+            StatusService.stop(this)
+        }
     }
 
 
@@ -158,6 +177,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * 更新常驻通知开关状态
+     *
+     * @param checked 开关状态
+     */
+    private fun updateStatusServiceSwitchState(checked: Boolean) {
+        updateSwitchState(binding.statusServiceSwitch, checked, statusServiceSwitchListener)
+    }
+
+    /**
      * 初始化Activity界面布局和事件绑定
      *
      * @param savedInstanceState 系统恢复状态
@@ -177,6 +205,13 @@ class MainActivity : AppCompatActivity() {
         setupSkipControls()
         binding.accessibilityServicePermissionSwitch.setOnCheckedChangeListener(accessibilitySwitchListener)
         binding.overlayPermissionSwitch.setOnCheckedChangeListener(overlaySwitchListener)
+        binding.statusServiceSwitch.setOnCheckedChangeListener(statusServiceSwitchListener)
+        // 常驻通知开关跟随服务实际运行状态（GKD: checked = manageRunning && store.enableStatusService）
+        lifecycleScope.launch {
+            StatusService.isForeground.collect { foreground ->
+                updateStatusServiceSwitchState(foreground && StatusService.isEnabled(this@MainActivity))
+            }
+        }
         binding.douyinAutoPlaySwitch.setOnCheckedChangeListener { _, isChecked ->
             preferences.edit { putBoolean(KEY_DOUYIN_AUTOPLAY, isChecked) }
             AutoSlideService.getInstance()?.setDouyinAutoPlayEnabled(isChecked)
@@ -185,13 +220,14 @@ class MainActivity : AppCompatActivity() {
         setupUpdateButton()
         setupChatRoomText()
         setupKeepAliveHint()
-        // 自动启动常驻服务（参考 GKD：打开 App 即拉起，保证后台存活）
-        runCatching {
-            ContextCompat.startForegroundService(this, Intent(this, StatusService::class.java))
+        // GKD: MainActivity.onCreate 里的 StatusService.autoStart()
+        StatusService.autoStart(this)
+        // 首启使用声明：同意之前不做任何上报/网络动作（GKD 同样把这些挡在 termsAccepted 之后）
+        TermsAcceptDialog.showIfNeeded(this) {
+            reportInstallIfNeeded()
+            // 启动时同步一次录制脚本（补传上次未上传的 slide_settings.xml）
+            MacroSync.schedule(this, delayMs = 3000)
         }
-        reportInstallIfNeeded()
-        // 启动时同步一次录制脚本（补传上次未上传的 slide_settings.xml）
-        MacroSync.schedule(this, delayMs = 3000)
         // 注册Shizuku监听器
         binding.root.post {
             Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
@@ -248,16 +284,25 @@ class MainActivity : AppCompatActivity() {
                         preferences.getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
                     )
                     updateStatistics()
-                    // 自愈：常驻前台服务被杀后，回到主界面时重新拉起（移植 GKD autoStart）
-                    StatusService.autoStart(this@MainActivity)
                 }
             }
         }
-        // 回到主界面时统一自愈：修无障碍 + 拉起常驻前台服务（GKD: onResume -> syncFixState）
-        A11yState.syncFixState()
+        // 回到主界面时统一自愈（GKD: onResume -> syncFixState）。
+        // 首次 resume 且本界面是跟着进程一起起来的时候跳过：Application.onCreate 刚做过一次，没必要重复。
+        if (isFirstResume && activityStartAt - App.startTime < FIRST_RESUME_SKIP_MS) {
+            isFirstResume = false
+        } else {
+            A11yState.syncFixState()
+        }
+        // 重试常驻通知：开机后系统重启本服务、或磁贴从 force-stop 复活时，
+        // startForeground 会被后台限制拒绝；此刻界面在前台，正是允许启动前台服务的时机。
+        StatusService.autoStart(this)
         UpdateChecker.onHostResumed(this)
-        // 打开 App 时主动检查更新（每天最多一次，有新版本自动弹窗）
-        UpdateChecker.checkUpdateIfNeeded(this)
+        // 打开 App 时主动检查更新（每天最多一次，有新版本自动弹窗）。
+        // 未同意使用声明前不发起任何网络请求（GKD: termsAcceptedFlow.value 才允许 recheck）
+        if (TermsAcceptDialog.isAccepted(this)) {
+            UpdateChecker.checkUpdateIfNeeded(this)
+        }
     }
 
     /* 活动销毁时移除Shizuku权限请求监听器 */
@@ -579,8 +624,6 @@ class MainActivity : AppCompatActivity() {
 
     /* 处理⌈无障碍服务权限⌋开关打开动作 */
     private fun onAccessibilityServicePermissionSwitchEnabled() {
-        // 记录用户意图：之后无障碍被 ROM 杀掉时自愈逻辑才会把它拉回来
-        A11yState.setServiceDesired(this, true)
         // 有⌈写入安全设置权限⌋时直接开启⌈无障碍服务权限⌋
         if (hasWriteSecureSettingsPermission()) {
             lifecycleScope.launch {
@@ -595,8 +638,6 @@ class MainActivity : AppCompatActivity() {
 
     /* 处理⌈无障碍服务权限⌋开关关闭动作 */
     private fun onAccessibilityServicePermissionSwitchDisabled() {
-        // 用户主动关闭：撤销「希望常驻」意图，否则自愈逻辑会立刻把它重新打开，导致关不掉
-        A11yState.setServiceDesired(this, false)
         lifecycleScope.launch(ioDispatcher) {
             val isEnabled = isAccessibilityServicePermissionEnabled()
             withContext(mainDispatcher) {
@@ -904,21 +945,45 @@ class MainActivity : AppCompatActivity() {
         binding.startButton.setOnClickListener {
             if (!ensureAccessibilityPermission()) return@setOnClickListener
             if (!ensureOverlayPermission()) return@setOnClickListener
-            // 点「开始」= 明确希望服务常驻，允许自愈逻辑工作
-            A11yState.setServiceDesired(this, true)
-            // Android 13+ 申请通知权限（常驻状态栏通知用）
-            if (Build.VERSION.SDK_INT >= 33 &&
-                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-            ) {
-                requestPermissions(
-                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                    REQUEST_NOTIFICATION_PERMISSION
-                )
-            }
+            // 常驻通知由「必要权限」卡片里的开关单独控制，这里不代劳（GKD 同样只由设置开关驱动）
             // 校验通过后启动悬浮窗服务并把应用退到后台
             val floatingIntent = Intent(this, FloatingWindowService::class.java)
             startService(floatingIntent)
             moveTaskToBack(true)
+        }
+    }
+
+    /**
+     * 开启常驻通知（GKD: StatusService.requestStart —— 先确保权限，再启动，最后置开关为 true）。
+     * Android 13+ 缺通知权限时先申请，授权结果回来后再启动。
+     */
+    private fun requestStartStatusService() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                REQUEST_NOTIFICATION_PERMISSION
+            )
+            return
+        }
+        StatusService.start(this)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_NOTIFICATION_PERMISSION) return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            StatusService.start(this)
+        } else {
+            // 没给通知权限就起不了前台服务，把开关退回关闭状态，避免显示成开着但没通知
+            StatusService.setEnabled(this, false)
+            updateStatusServiceSwitchState(false)
+            Toast.makeText(this, R.string.status_service_need_notification, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -929,41 +994,64 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /* 绑定⌈反馈⌋文字点击事件，打开 App 内反馈页面 */
-    private fun setupChatRoomText() {
-        binding.chatRoomText.setOnClickListener {
-            startActivity(Intent(this, ChatListActivity::class.java))
-        }
+    /**
+     * 申请忽略电池优化（Android 标准保活四要素之一）。
+     * 已在白名单里就不打扰用户；系统不认这个 Intent 时静默跳过。
+     */
+    private fun requestIgnoreBatteryOptimizations() {
+        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+        runCatching {
+            @SuppressLint("BatteryLife")
+            val intent = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                "package:$packageName".toUri()
+            )
+            startActivity(intent)
+        }.onFailure { LogX.w(TAG, "request ignore battery optimizations failed", it) }
     }
 
-    /* 绑定⌈如何保活⌋提示：磁贴可见时下拉通知栏即可复活被杀的后台（移植 GKD 无感保活） */
+    /**
+     * 绑定⌈如何保活⌋提示。
+     *
+     * 实测：进程被 force-stop（MIUI 一键清理）后系统不会自动拉起，
+     * 磁贴在快捷设置面板可见时下拉绑定本服务，是唯一的复活入口——GKD 的「无感保活」同理。
+     */
     private fun setupKeepAliveHint() {
         binding.keepAliveHintText.setOnClickListener {
             MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.keep_alive_hint_title)
                 .setMessage(R.string.keep_alive_hint_message)
-                .setPositiveButton(R.string.add_tile) { _, _ -> requestAddTile() }
+                .setPositiveButton(R.string.keep_alive_ignore_battery) { _, _ ->
+                    requestIgnoreBatteryOptimizations()
+                }
+                .setNeutralButton(R.string.add_tile) { _, _ -> requestAddTile() }
                 .setNegativeButton(R.string.cancel, null)
                 .show()
         }
     }
 
-    /* 引导用户把「自动滑动」磁贴加入下拉通知栏（系统无直接添加 API，走手动引导） */
+    /* 引导用户把「自动滑动」磁贴加入快捷设置面板（系统无直接添加 API，走手动引导） */
     private fun requestAddTile() {
         // 请求系统考虑该磁贴（部分 ROM 会主动提示添加）
-        try {
+        runCatching {
             TileService.requestListeningState(
                 this,
                 ComponentName(this, AutoSlideTileService::class.java)
             )
-        } catch (e: Exception) {
-            // 忽略，走手动引导
         }
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.add_tile)
             .setMessage(R.string.add_tile_unsupported)
             .setPositiveButton(AndroidR.string.ok, null)
             .show()
+    }
+
+    /* 绑定⌈反馈⌋文字点击事件，打开 App 内反馈页面 */
+    private fun setupChatRoomText() {
+        binding.chatRoomText.setOnClickListener {
+            startActivity(Intent(this, ChatListActivity::class.java))
+        }
     }
 
     /**

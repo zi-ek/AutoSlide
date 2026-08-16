@@ -24,17 +24,18 @@ const val KEY_KEYWORD_COOLDOWN = "keywordCooldown"      // 关键词触发后的
 const val KEY_KEYWORD_MAX_TRIGGERS = "keywordMaxTriggers" // 同一画面最多连续触发次数
 const val KEY_KEYWORD_DIRECTION = "keywordDirection"    // 关键词触发时的滑动方向
 const val KEY_SKIP_KEYWORDS = "skipKeywords"         // 自动点击「跳过」按钮的匹配关键词列表（用中文逗号分隔）
-const val KEY_AUTO_TAP_ENABLED = "autoTapEnabled"    // 自动点击总开关（关闭后常驻/关键词/回放三条路径全部停止）
+const val KEY_AUTO_TAP_ENABLED = "autoTapEnabled"    // 自动点击总开关（关闭后跳过/关键词/回放三条路径全部停止）
 const val KEY_DOUYIN_AUTOPLAY = "douyinAutoPlay"        // 是否自动打开抖音连播开关（检测到抖音后触发）
 // 用户是否希望无障碍服务保持开启（对应 GKD 的 enableAutomator）：
-// 只有为 true 时自愈逻辑才会把被 ROM 关掉的无障碍重新打开，
-// 否则用户在系统设置里手动关闭本服务会被立刻打开，导致根本关不掉
+// 由无障碍服务自身生命周期维护——onCreate 置 true、onDestroy 置 false。
+// 进程被杀时 onDestroy 不执行，标记留在 true，下次进程起来即可自愈；
+// 用户在系统设置里手动关闭时 onDestroy 会执行，标记变 false，不会被强行拉回来。
 const val KEY_SERVICE_DESIRED = "serviceDesired"
-// 「摘除→加回」重启无障碍的过程标记：若进程在这段窗口里被 force-stop，
-// 组件会永久留在已移除状态，下次启动时据此标记立刻补回
-const val KEY_A11Y_RESTART_IN_PROGRESS = "a11yRestartInProgress"
-// 悬浮窗是否应处于显示状态：进程被清理后复活时据此自动把悬浮球恢复出来，
-// 否则无障碍虽然活了，用户看到的仍是「App 被清理了」
+// 用户是否开启了常驻状态通知（对应 GKD 的 enableStatusService）
+const val KEY_STATUS_SERVICE_ENABLED = "statusServiceEnabled"
+// 是否已同意首启的使用声明（对应 GKD 的 terms_accepted）
+const val KEY_TERMS_ACCEPTED = "terms_accepted"
+// 悬浮窗是否应处于显示状态：无障碍服务重新连接时据此把悬浮球恢复出来
 const val KEY_FLOATING_DESIRED = "floatingDesired"
 
 // ==================== 统计数据 ====================
@@ -49,6 +50,12 @@ const val KEY_LAST_REPORTED_VERSION = "last_reported_version"
 // 全工程只有这一个来源——换服务器不需要动任何 Kotlin 代码。
 // 注意：这里不能用 const val，因为 BuildConfig 是 Java 静态字段，不构成 Kotlin 编译期常量。
 val SERVER_BASE_URL: String = BuildConfig.SERVER_BASE_URL
+
+// 首启声明弹窗里「用户协议」「隐私政策」两个链接的地址。
+// 页面由后端 server/src/legal.js 提供，内容在 server/src/views/legal.js；
+// 改动应用的任何联网行为时，务必同步更新隐私政策里的数据表。
+val URL_TERMS: String = "$SERVER_BASE_URL/terms"
+val URL_PRIVACY: String = "$SERVER_BASE_URL/privacy"
 
 // ==================== 默认值 ====================
 const val DEFAULT_SPEED = 50                        // 默认滑动速度（中等）

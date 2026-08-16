@@ -46,7 +46,3 @@ fun Context.isAccessibilityServicePermissionEnabled(): Boolean {
 fun Context.hasWriteSecureSettingsPermission(): Boolean =
     checkCallingOrSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) ==
         PackageManager.PERMISSION_GRANTED
-
-// 无障碍踢活/自愈逻辑已移动到 [com.ziek.autoslide.A11yState]：
-// 旧实现要求「组件必须已在启用列表里」才肯动手，而 ROM 把组件整个移出列表
-// 恰恰是最需要修复的场景，导致保活在关键时刻失效。

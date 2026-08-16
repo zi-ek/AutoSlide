@@ -11,7 +11,8 @@ app/src/test
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
 .DS_Store
-/build
+# 构建产物：不限层级，覆盖 app/ hidden-api/ 等所有模块
+build/
 /captures
 .externalNativeBuild
 .cxx

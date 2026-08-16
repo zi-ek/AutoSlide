@@ -162,8 +162,6 @@ class FloatingWindowService : Service() {
             stopSelf()
             return
         }
-        // 常驻后台：启动悬浮窗（点「开始」）即开启常驻通知与跳过检测，X 键关闭时不退出
-        ContextCompat.startForegroundService(this, Intent(this, StatusService::class.java))
         // 悬浮窗默认停靠在屏幕右下角（等布局完成拿到实际宽高后设置位置）
         rootView.post {
             if (!::rootView.isInitialized || !::layoutParams.isInitialized) {
@@ -573,6 +571,8 @@ class FloatingWindowService : Service() {
             setBackgroundColor(Color.TRANSPARENT)
             minWidth = 0
             minHeight = 0
+            // 对齐动作录制弹窗的确定/取消：m3_btn_padding_top/bottom = 6dp
+            setPadding(paddingLeft, dp(6), paddingRight, dp(6))
             setOnClickListener {
                 playListDialog?.dismiss()
                 // 临时隐藏悬浮窗，避免遮挡系统文件选择器；完成后由导入页恢复
@@ -592,6 +592,8 @@ class FloatingWindowService : Service() {
             setBackgroundColor(Color.TRANSPARENT)
             minWidth = 0
             minHeight = 0
+            // 对齐动作录制弹窗的确定/取消：m3_btn_padding_top/bottom = 6dp
+            setPadding(paddingLeft, dp(6), paddingRight, dp(6))
             setOnClickListener { playListDialog?.dismiss() }
         }
         // 底部按钮行：导入配置 + 取消 并排

@@ -28,6 +28,20 @@
 -dontwarn android.permission.IPermissionManager$Stub
 -dontwarn android.permission.IPermissionManager
 
+# hidden-api 模块（compileOnly）：桩类不进 APK，运行时由系统真实实现提供。
+# AppOpsManagerHidden 会被 li.songe.remap 重定向到 android.app.AppOpsManager，
+# 引用的是它的隐藏静态字段（OP_*），android.jar 里查不到，必须消掉告警。
+-dontwarn com.android.internal.app.IAppOpsService
+-dontwarn com.android.internal.app.IAppOpsService$Stub
+-dontwarn android.app.AppOpsManagerHidden
+-dontwarn hidden.api.**
+-keep class com.android.internal.app.IAppOpsService { *; }
+-keep class com.android.internal.app.IAppOpsService$Stub { *; }
+
+# HiddenApiBypass 内部依赖反射调用系统 API
+-keep class org.lsposed.hiddenapibypass.** { *; }
+-dontwarn org.lsposed.hiddenapibypass.**
+
 # 无障碍服务: 保证系统能反射实例化服务
 -keep class com.ziek.autoslide.service.AutoSlideService { *; }
 

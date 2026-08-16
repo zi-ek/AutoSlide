@@ -160,9 +160,6 @@ open class AutoSlideService : AccessibilityService() {
     private val keywordCheckRunnable = Runnable { runKeywordCheck() }
     /* 定时滑动循环 */
     private val slideRunnable = Runnable { runSlide() }
-    /* 常驻「跳过」检测状态 */
-    @Volatile
-    private var persistentSkipEnabled = true // 常驻检测总开关（通知「停止」后关闭）
     private var lastSkipTapAt = 0L // 上次点击跳过按钮的时间（冷却用）
     private var lastOcrAt = 0L // 上次 OCR 兜底识别的时间（节流用）
     /* 自动点击事件驱动的去抖：连续界面事件合并成一次检查，界面静止时完全不唤醒 */
@@ -183,7 +180,7 @@ open class AutoSlideService : AccessibilityService() {
     /* 自动点击总开关：主页开关控制，开启时始终检测并点击关键词，关闭时完全停止 */
     @Volatile
     private var autoTapEnabled = DEFAULT_AUTO_TAP_ENABLED
-    /* 无障碍保活窗口：1x1 TYPE_ACCESSIBILITY_OVERLAY，让无障碍服务持有持续窗口（参考 GKD；不是免杀，仅部分 ROM 下有助于保活） */
+    /* 1x1 无障碍保活窗口（GKD: aliveView） */
     private var aliveOverlayView: View? = null
 
     /* 更新统计数据 */
@@ -237,7 +234,7 @@ private const val MACRO_LOOP_GAP_MAX_MS = 15_000L
 private const val MACRO_WAIT_POLL_INTERVAL_MS = 300L
 /* 宏回放等待条件：OCR 兜底识别间隔（毫秒），节点树找不到文字时才启用 */
 private const val MACRO_WAIT_OCR_INTERVAL_MS = 1500L
-/* 跳过按钮点击冷却，防止关键词检测与常驻检测重复点击 */
+/* 跳过按钮点击冷却，防止关键词检测与跳过检测重复点击 */
 private const val SKIP_TAP_COOLDOWN_MS = 1500L
 /* 自动点击事件去抖：界面变化事件频繁时合并成一次检查 */
 private const val AUTO_TAP_DEBOUNCE_MS = 150L
@@ -452,14 +449,15 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
-     * 服务进程创建即置存活标记（早于 onServiceConnected）。
-     * 自愈逻辑用这个标记判断「无障碍是不是真的死了」，比等 onServiceConnected 更准。
+     * 进程创建即置存活标记（GKD: A11yService 的 useAliveFlow 挂在 onCreated 上，早于 onServiceConnected）。
+     * 同时记录用户意图：无障碍能起来说明用户是要它开着的，之后被杀才会自愈。
      */
     override fun onCreate() {
         super.onCreate()
         A11yState.a11yRunningFlow.value = true
-        // 无障碍一起来就拉起常驻前台服务（GKD: onCreated { StatusService.autoStart() }）
-        runCatching { StatusService.autoStart(this) }
+        A11yState.setServiceDesired(this, true)
+        // GKD: onCreated { StatusService.autoStart() }
+        StatusService.autoStart(this)
     }
 
     /* 服务连接完成后初始化屏幕参数并注册单例 */
@@ -470,16 +468,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
         reloadConfig()
         douyinAutoPlayCompleted = false
         douyinSessionDone = false
-        // 无障碍服务连接后开启常驻「跳过」检测（点开始/启动滑动时 StatusService 也会再次开启）
-        setPersistentSkipEnabled(true)
-        // 添加 1x1 无障碍保活窗口（参考 GKD；对普通清理有辅助作用，对 force-stop 无效）
+        // 1x1 无障碍保活窗口（GKD: useAliveOverlayView，onA11yConnected 添加）
         addAliveOverlayView()
-        // 自动启动常驻服务（参考 GKD：无障碍一连接就拉起前台服务，MIUI 清理时保留）
-        runCatching {
-            ContextCompat.startForegroundService(this, Intent(this, StatusService::class.java))
-        }
-        // 进程被清理后是靠系统重新绑定无障碍复活的，这里顺带把悬浮球恢复出来，
-        // 否则用户看到的依然是「App 被清理了」
+        // 服务刚连上时先查一次当前界面，不必等下一个界面变化事件
+        scheduleAutoTapCheck(0L)
+        // 无障碍服务重新连接时把悬浮球恢复出来，否则用户看到的依然是「App 被清理了」
         restoreFloatingWindowIfNeeded()
         // 不再启动固定间隔轮询，改为在 onAccessibilityEvent 里事件驱动触发，省电
     }
@@ -505,8 +498,10 @@ private const val SPEED_CURVE_FACTOR = 0.7
         textRecognizer = null
         runCatching { screenshotExecutor.shutdown() }
         instance = null
-        // 标记无障碍已死，供自愈逻辑判断；若用户仍希望服务开启，下一个入口会把它拉回来
         A11yState.a11yRunningFlow.value = false
+        // onDestroy 能执行说明是「正常关闭」（用户在系统设置里关的 / disableSelf），
+        // 撤销意图，自愈逻辑就不会再把它拉回来——被系统杀死时这行根本不会执行，标记留在 true。
+        A11yState.setServiceDesired(this, false)
         super.onDestroy()
     }
 
@@ -529,7 +524,10 @@ private const val SPEED_CURVE_FACTOR = 0.7
             .onFailure { LogX.w(TAG, "restore floating window failed", it) }
     }
 
-    /* 添加 1x1 无障碍保活窗口（系统信任无障碍覆盖层，不触发“上层显示”提示） */
+    /**
+     * 1x1 无障碍保活窗口（GKD: useAliveOverlayView 的 addA11View）。
+     * 系统信任无障碍覆盖层，不触发「上层显示」提示；对普通清理有辅助作用，对 force-stop 无效。
+     */
     private fun addAliveOverlayView() {
         removeAliveOverlayView()
         val tempView = View(this)
@@ -545,6 +543,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
             packageName = this@AutoSlideService.packageName
         }
         try {
+            // 某些设备会抛 WindowManager$BadTokenException
             val wm = getSystemService(WINDOW_SERVICE) as WindowManager
             wm.addView(tempView, lp)
             aliveOverlayView = tempView
@@ -554,7 +553,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         }
     }
 
-    /* 移除无障碍保活窗口 */
+    /* 移除保活窗口（GKD: removeA11View，挂在 onDestroyed 上） */
     private fun removeAliveOverlayView() {
         val view = aliveOverlayView ?: return
         runCatching {
@@ -1723,6 +1722,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /* 使用 ML Kit 中文模型识别整屏文字（宏等待条件的 OCR 兜底） */
+
     private suspend fun recognizeScreenText(bitmap: Bitmap): String = withContext(Dispatchers.IO) {
         try {
             val recognizer = textRecognizer ?: TextRecognition.getClient(
@@ -2286,15 +2286,15 @@ private const val SPEED_CURVE_FACTOR = 0.7
         // 互斥：同一时间只允许一个自动点击检查执行，防止事件并发导致重复点击
         if (!autoTapChecking.compareAndSet(false, true)) return false
         try {
-            // 开关关闭或保活停止时完全停止
-            if (!autoTapEnabled || !persistentSkipEnabled) return false
+            // 总开关关闭时完全停止
+            if (!autoTapEnabled) return false
             // 不扫描 AutoSlide 自己的界面（主界面/聊天室/录制回放），自己页面永远不可能是广告
             if (isAutoSlideWindow()) return false
             // 优先节点树：直接读文字属性，几乎不耗电
             if (tryClickSkipNodeByTree()) return true
             // 广告刚出现时节点树往往还没填充文字，延迟 0.5 秒重试一次再决定是否 OCR
             delay(NODE_TREE_RETRY_DELAY_MS)
-            if (!autoTapEnabled || !persistentSkipEnabled) return false
+            if (!autoTapEnabled) return false
             if (isAutoSlideWindow()) return false
             if (tryClickSkipNodeByTree()) return true
             // 节点树没命中 → 截图 + OCR 兜底（节流：事件频繁时最多每 2 秒一次）
@@ -2447,25 +2447,13 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
-     * 保活恢复入口：通知「停止」后关闭；StatusService/无障碍服务连接时重新开启。
-     * 事件驱动模式下只负责标记状态：真正是否执行还取决于主页的自动点击总开关（autoTapEnabled）。
-     */
-    fun setPersistentSkipEnabled(enabled: Boolean) {
-        persistentSkipEnabled = enabled
-        if (enabled) {
-            // 服务连接/保活恢复时立即检查一次当前界面
-            scheduleAutoTapCheck(0L)
-        }
-    }
-
-    /**
      * 自动点击事件驱动的触发入口：界面变化事件到来时调用。
-     * 去抖合并连续事件；开关/保活未开启时不安排检查。
+     * 去抖合并连续事件；总开关未开启时不安排检查。
      *
      * @param delayMs 延迟毫秒数（默认 150ms 去抖，0 表示立即）
      */
     private fun scheduleAutoTapCheck(delayMs: Long = AUTO_TAP_DEBOUNCE_MS) {
-        if (!autoTapEnabled || !persistentSkipEnabled) return
+        if (!autoTapEnabled) return
         if (autoTapCheckPending) return
         autoTapCheckPending = true
         handler.postDelayed(autoTapCheckRunnable, delayMs)
