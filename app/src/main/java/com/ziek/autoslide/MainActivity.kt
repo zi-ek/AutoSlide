@@ -1066,6 +1066,10 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             try {
+                // 先探测本机出口地址：设备走 IPv6 连服务器时，服务端看不到这个 IPv4 出口。
+                // 探测失败不影响上报，对应字段留空即可。
+                val egress = IpReporter.probe()
+
                 val url = java.net.URL(SERVER_BASE_URL + "/api/report")
                 val connection = url.openConnection() as java.net.HttpURLConnection
                 connection.requestMethod = "POST"
@@ -1078,6 +1082,10 @@ class MainActivity : AppCompatActivity() {
                     .put("event", if (isReported) "update" else "install")
                     .put("deviceId", Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID) ?: "")
                     .put("device", buildDeviceInfoJson())
+                    // 完整设备信息（移植自 PlainApp 的分组），后台按「设备/系统/硬件/平台/电池」展示
+                    .put("deviceInfo", DeviceInfo.collect(this@MainActivity))
+                    .put("egressIp", egress?.ip.orEmpty())
+                    .put("egressLoc", egress?.location.orEmpty())
                 connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
 
                 val responseCode = connection.responseCode
@@ -1101,7 +1109,9 @@ class MainActivity : AppCompatActivity() {
     /* 构建设备信息 JSON（随统计一起上报） */
     private fun buildDeviceInfoJson(): JSONObject {
         return JSONObject()
-            .put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
+            // 展示名（如 Redmi K30S Ultra），来自系统设备名，取不到时回退到「厂商 型号」
+            .put("model", DeviceInfo.displayModel(this))
+            .put("modelCode", Build.MODEL)
             .put("brand", Build.BRAND)
             .put("android", Build.VERSION.RELEASE)
             .put("cpu", Build.SUPPORTED_ABIS.joinToString(","))

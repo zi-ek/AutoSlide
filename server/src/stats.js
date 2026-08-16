@@ -5,7 +5,7 @@ const { STATS_FILE } = require('./config');
 const { nowCN } = require('./util');
 const { readJson, sendJson, sendHtml, clientIp } = require('./http');
 const { lookupIpLocation } = require('./ip');
-const { dashboardHtml } = require('./views/pages');
+const { dashboardHtml } = require('./views/dashboard');
 const { readAnnouncement } = require('./chat');
 
 const statsStore = new JsonStore(STATS_FILE, () => ({
@@ -90,6 +90,8 @@ async function handleReport(req, res) {
       const incoming = {
         deviceId,
         model: String(device.model || '').slice(0, 100),
+        // 内部代号（Build.MODEL），营销名之外保留一份便于排查
+        modelCode: String(device.modelCode || '').slice(0, 100),
         brand: String(device.brand || '').slice(0, 100),
         android: String(device.android || '').slice(0, 50),
         cpu: String(device.cpu || '').slice(0, 100),
@@ -99,10 +101,20 @@ async function handleReport(req, res) {
         installs: event === 'install' ? 1 : 0,
         ip,
         ipLoc,
+        // 设备自己探测到的出口地址：设备走 IPv6 连过来时，上面的 ip 是 IPv6，
+        // 服务端看不到它的 IPv4 出口，只能由设备主动上报补充
+        // PlainApp 同款完整设备信息，整块存下供后台二级面板展示
+        deviceInfo: payload.deviceInfo && typeof payload.deviceInfo === 'object' ? payload.deviceInfo : undefined,
+        egressIp: String(payload.egressIp || '').slice(0, 64),
+        egressLoc: String(payload.egressLoc || '').slice(0, 80),
       };
       if (idx >= 0) {
         const d = devices[idx];
         incoming.firstInstall = d.firstInstall;
+        // 本次探测失败时沿用上次的结果，避免偶发失败把已有数据抹掉
+        if (!incoming.deviceInfo) incoming.deviceInfo = d.deviceInfo;
+        if (!incoming.egressIp) incoming.egressIp = d.egressIp || '';
+        if (!incoming.egressLoc) incoming.egressLoc = d.egressLoc || '';
         incoming.installs = (d.installs || 0) + (event === 'install' ? 1 : 0);
         devices[idx] = { ...d, ...incoming };
       } else {

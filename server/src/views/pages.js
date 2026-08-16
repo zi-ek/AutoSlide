@@ -32,66 +32,6 @@ function pageShell({ title, eyebrow, heading, headerRight, breadcrumb, body }) {
 </html>`;
 }
 
-function dashboardHtml(stats, announcement) {
-  const ann = announcement || { title: '公告栏', content: '', updatedAt: '' };
-  const rows = (stats.devices || [])
-    .map(
-      (d) => `<tr>
-        <td class="strong">${esc(d.brand)}</td>
-        <td>${esc(d.model)}</td>
-        <td>${esc(d.deviceId)}</td>
-        <td>${esc(d.android)}</td>
-        <td>${esc(d.cpu)}</td>
-        <td>${esc(d.appVersion)} <span style="color:var(--text-faint)">(${esc(d.appVersionCode)})</span></td>
-        <td class="strong">${esc(d.installs)}</td>
-        <td>${esc(d.firstInstall)}</td>
-        <td>${esc(d.lastSeen)}</td>
-        <td>${esc(d.ip || '-')}${d.ipLoc ? `<div class="ip-loc">${esc(d.ipLoc)}</div>` : ''}</td>
-      </tr>`
-    )
-    .join('');
-
-  const headerRight = `<div class="live"><span class="dot"></span>LIVE · 最近上报 ${esc(stats.last_update || '-')}</div>`;
-
-  const body = `
-    <div class="top-links"><a href="/uploads">查看上传的录制脚本 →</a></div>
-    <div class="panel" style="padding:16px;margin-bottom:18px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
-        <b style="color:var(--text);">公告栏</b>
-        <a href="#" onclick="document.getElementById('announceEdit').style.display='block';return false;">编辑</a>
-      </div>
-      <p style="margin:8px 0 0;color:var(--text-dim);white-space:pre-wrap;word-break:break-word;">${esc(ann.content || '暂无公告')}</p>
-      <form id="announceEdit" method="post" action="/api/chat/announcement" style="display:none;margin-top:12px;">
-        <input name="title" value="${esc(ann.title || '公告栏')}" placeholder="公告标题" style="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel-alt);color:var(--text);font-size:13px;" />
-        <textarea name="content" rows="4" placeholder="公告内容" style="width:100%;box-sizing:border-box;padding:8px 10px;margin-bottom:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel-alt);color:var(--text);font-size:13px;resize:vertical;">${esc(ann.content || '')}</textarea>
-        <button type="submit" style="padding:8px 18px;border:none;border-radius:8px;background:var(--clay);color:#fff;font-size:13px;cursor:pointer;">保存公告</button>
-        <span style="margin-left:10px;font-size:11px;color:var(--text-faint);">更新于 ${esc(ann.updatedAt || '-')}</span>
-      </form>
-    </div>
-    <div class="cards">
-      <div class="card" style="--accent: var(--clay)"><div class="num">${stats.install_count || 0}</div><div class="label">安装次数</div></div>
-      <div class="card" style="--accent: var(--sage)"><div class="num">${stats.update_count || 0}</div><div class="label">更新次数</div></div>
-      <div class="card" style="--accent: var(--slate)"><div class="num">${stats.unique_devices || 0}</div><div class="label">设备数</div></div>
-      <div class="card" style="--accent: var(--green)"><div class="num" style="font-size:15px;">${esc(stats.last_update || '-')}</div><div class="label">最近上报</div></div>
-    </div>
-    <p class="section-label">设备日志 · Device Log</p>
-    <div class="panel table-wrap">
-      <table>
-        <thead><tr><th>品牌</th><th>型号</th><th>设备 ID</th><th>系统版本</th><th>CPU</th><th>应用版本</th><th>安装次数</th><th>首次安装</th><th>最近上报</th><th>设备 IP / 归属地</th></tr></thead>
-        <tbody>${rows || '<tr><td class="empty" colspan="10">暂无数据</td></tr>'}</tbody>
-      </table>
-    </div>
-  `;
-
-  return pageShell({
-    title: 'AutoSlide 统计后台',
-    eyebrow: 'AutoSlide · Fleet Monitor',
-    heading: '统计后台',
-    headerRight,
-    body,
-  });
-}
-
 function uploadsHtml(manifest) {
   const rows = (manifest.files || [])
     .map(
@@ -149,4 +89,4 @@ function viewHtml(content, filename) {
   });
 }
 
-module.exports = { pageShell, dashboardHtml, uploadsHtml, viewHtml };
+module.exports = { pageShell, uploadsHtml, viewHtml };

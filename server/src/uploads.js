@@ -9,7 +9,7 @@ const { sanitize, safeJoin, resolveUploadPath } = require('./paths');
 const { readBody, sendJson, sendHtml, clientIp } = require('./http');
 const { lookupIpLocation } = require('./ip');
 const { updateStats, touchDevice } = require('./stats');
-const { uploadsHtml, viewHtml } = require('./views/pages');
+const { viewHtml } = require('./views/pages');
 
 const manifestStore = new JsonStore(MANIFEST_FILE, () => ({ files: [] }));
 
@@ -24,8 +24,19 @@ function updateManifest(fn) {
 async function handleUpload(req, res) {
   const deviceId = sanitize(req.headers['x-device-id'], 'unknown');
   const deviceName = sanitize(req.headers['x-device-name'], 'unknown');
-  const filename = sanitize(req.headers['x-filename'] || 'slide_settings.xml', 'slide_settings.xml');
+  const filename = sanitize(req.headers['x-filename'] || 'scripts.json', 'scripts.json');
   const body = await readBody(req, LIMIT_UPLOAD_BODY);
+
+  // 脚本数量优先取请求头；老客户端没有该头时退回解析正文
+  let scriptCount = Number(req.headers['x-script-count']);
+  if (!Number.isFinite(scriptCount) || scriptCount < 0) {
+    try {
+      const parsed = JSON.parse(body.toString('utf8'));
+      scriptCount = Array.isArray(parsed.scripts) ? parsed.scripts.length : 0;
+    } catch (e) {
+      scriptCount = 0;
+    }
+  }
 
   const targetFile = safeJoin(UPLOAD_DIR, deviceId, filename);
   fs.mkdirSync(path.dirname(targetFile), { recursive: true });
@@ -36,6 +47,7 @@ async function handleUpload(req, res) {
     deviceName,
     filename,
     size: Buffer.byteLength(body),
+    scriptCount,
     updatedAt: nowCN(),
   };
   await updateManifest((manifest) => {
@@ -53,7 +65,14 @@ async function handleUpload(req, res) {
   const ip = clientIp(req);
   const ipLoc = await lookupIpLocation(ip);
   await updateStats((stats) => {
-    touchDevice(stats, deviceId, { ip, ipLoc, lastSeen: nowCN() });
+    touchDevice(stats, deviceId, {
+      ip,
+      ipLoc,
+      lastSeen: nowCN(),
+      scriptCount,
+      scriptFile: filename,
+      scriptUpdatedAt: nowCN(),
+    });
   });
 
   sendJson(res, 200, { ok: true, saved: filename });
@@ -85,7 +104,7 @@ function handleDownload(req, res, url) {
   const found = resolveRequestedFile(req, res, url);
   if (!found) return;
   res.writeHead(200, {
-    'Content-Type': 'application/xml; charset=utf-8',
+    'Content-Type': 'application/json; charset=utf-8',
     'Content-Disposition': `attachment; filename="${found.filename}"`,
   });
   res.end(fs.readFileSync(found.filePath));
@@ -94,7 +113,6 @@ function handleDownload(req, res, url) {
 function register(router) {
   router.on('POST', '/api/upload', handleUpload);
   router.on('GET', '/api/uploads', (req, res) => sendJson(res, 200, readManifest()));
-  router.on('GET', '/uploads', (req, res) => sendHtml(res, uploadsHtml(readManifest())));
   router.on('GET', '/view', handleView);
   router.on('GET', '/api/download', handleDownload);
 }
