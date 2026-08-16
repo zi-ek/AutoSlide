@@ -108,13 +108,7 @@
     <string name="keep_alive_hint_text">如何保活？</string>
     <string name="keep_alive_hint_title">如何保活</string>
     <string name="keep_alive_ignore_battery">忽略电池优化</string>
-    <string name="keep_alive_hint_message">开启上方「无障碍服务权限」和「常驻通知」两个开关即可扛住一键清理和重启。
-
-若仍被系统清理，可再做两项加固：
-1. 点下方「忽略电池优化」，在系统弹窗里选「允许」
-2. 在最近任务界面下拉本应用的卡片，给它加上锁
-
-另外建议在系统设置里开启本应用的「自启动」。</string>
+    <string name="keep_alive_hint_message">开启「无障碍服务权限」和「常驻通知」开关即可扛住一键清理和重启。\n\n若仍被系统清理，可再做两项加固：\n1. 点下方「忽略电池优化」，在系统弹窗里选「允许」\n2. 在最近任务界面下拉本应用的卡片，给它加上锁\n\n另外建议在系统设置里开启本应用的「自启动」。</string>
     <string name="checking_update">正在检查更新</string>
     <string name="already_latest_version">当前已经是最新版本</string>
     <string name="check_update_failed">检查更新失败</string>
