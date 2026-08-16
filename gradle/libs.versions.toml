@@ -11,6 +11,9 @@ coroutines = "1.11.0"          # Kotlin 协程
 mlkit = "16.0.1"               # ML Kit 文字识别（中文 OCR）
 privkit = "0.3.4"              # Priv Kit 自管理特权运行时（替代原始 Shizuku 反射执行 pm grant）
 loc = "0.7.1"                  # kotlin-loc 编译器插件，为关键日志自动补上 文件:行号
+remap = "0.1.4"                # li.songe.remap：把 @RemapType 桩类重定向到系统真实类（hidden-api 模块用）
+androidx-annotation = "1.10.0" # androidx.annotation，hidden-api 桩代码用 @RequiresApi
+hiddenapibypass = "6.1"        # LSPosed HiddenApiBypass：解除 Android P+ 的非 SDK 接口调用限制
 
 [libraries]
 # ---- UI 基础库 ----
@@ -23,6 +26,12 @@ shizuku-provider = { group = "dev.rikka.shizuku", name = "provider", version.ref
 priv-core = { group = "io.github.priv-kit", name = "priv-core", version.ref = "privkit" }
 # ---- kotlin-loc：日志文件行号注入 ----
 loc-annotation = { group = "li.songe.loc", name = "loc-annotation", version.ref = "loc" }
+# ---- hidden-api 模块：系统隐藏 API 桩代码所需（均为编译期依赖）----
+androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidx-annotation" }
+remap-annotation = { group = "li.songe.remap", name = "remap-annotation", version.ref = "remap" }
+remap-processor = { group = "li.songe.remap", name = "remap-processor", version.ref = "remap" }
+# ---- 解除非 SDK 接口限制：反射访问 AppOpsManager 的隐藏字段时必需 ----
+lsposed-hiddenapibypass = { group = "org.lsposed.hiddenapibypass", name = "hiddenapibypass", version.ref = "hiddenapibypass" }
 # ---- 协程 ----
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
@@ -32,5 +41,7 @@ mlkit-text-recognition-chinese = { group = "com.google.mlkit", name = "text-reco
 # ==================== 插件 ====================
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" } # Android 应用插件
+android-library = { id = "com.android.library", version.ref = "agp" } # Android 库插件（hidden-api 模块用）
+remap = { id = "li.songe.remap", version.ref = "remap" } # 把 hidden-api 桩类重定向到系统真实类
 kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" } # 把 KGP 2.4.10 带上类路径，驱动 AGP 内置 Kotlin 升级（GKD 同款思路，不引入 Compose）
 loc = { id = "li.songe.loc", version.ref = "loc" } # kotlin-loc 编译器插件

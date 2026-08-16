@@ -22,4 +22,4 @@ dependencyResolutionManagement {
 
 // 项目名称与模块列表
 rootProject.name = "AutoSlide"
-include(":app")
+include(":app", ":hidden-api")

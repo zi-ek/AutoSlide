@@ -24,6 +24,8 @@ plugins {
     alias(libs.plugins.kotlin.parcelize)
     // kotlin-loc：给关键日志自动补上 文件:行号
     alias(libs.plugins.loc)
+    // li.songe.remap：把 hidden-api 里 @RemapType 标注的桩类重定向到系统真实类
+    alias(libs.plugins.remap)
 }
 
 android {
@@ -118,6 +120,10 @@ dependencies {
     implementation(libs.priv.core)
     // ---- kotlin-loc：编译期注入日志位置，无需打包进 APK ----
     compileOnly(libs.loc.annotation)
+    // ---- 系统隐藏 API 桩代码：只在编译期存在，运行时由系统真实实现提供 ----
+    compileOnly(project(":hidden-api"))
+    // ---- 解除 Android P+ 非 SDK 接口限制，否则反射不到 AppOpsManager 的隐藏字段 ----
+    implementation(libs.lsposed.hiddenapibypass)
     // ---- Kotlin 协程 ----
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)

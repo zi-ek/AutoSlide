@@ -160,8 +160,6 @@ class FloatingWindowService : Service() {
             stopSelf()
             return
         }
-        // 常驻后台：启动悬浮窗（点「开始」）即开启常驻通知与跳过检测，X 键关闭时不退出
-        ContextCompat.startForegroundService(this, Intent(this, StatusService::class.java))
         // 悬浮窗默认停靠在屏幕右下角（等布局完成拿到实际宽高后设置位置）
         rootView.post {
             if (!::rootView.isInitialized || !::layoutParams.isInitialized) {
@@ -521,6 +519,8 @@ class FloatingWindowService : Service() {
                     setBackgroundColor(Color.TRANSPARENT)
                     minWidth = 0
                     minHeight = 0
+                    // 收窄左内边距，让导出能贴过来（Button 默认左右各有约 20dp 内边距）
+                    setPadding(dp(6), paddingTop, paddingRight, paddingBottom)
                     setOnClickListener {
                         confirmDeleteMacro(name, names, listView)
                     }
@@ -533,6 +533,8 @@ class FloatingWindowService : Service() {
                     setBackgroundColor(Color.TRANSPARENT)
                     minWidth = 0
                     minHeight = 0
+                    // 收窄右内边距，把导出向右推去贴近清除
+                    setPadding(paddingLeft, paddingTop, dp(6), paddingBottom)
                     setOnClickListener {
                         playListDialog?.dismiss()
                         // 临时隐藏悬浮窗，避免遮挡系统分享面板；12 秒后自动恢复
@@ -556,11 +558,15 @@ class FloatingWindowService : Service() {
             text = getString(R.string.macro_import)
             textSize = 14f
             isAllCaps = false
-            gravity = Gravity.RIGHT // 文字靠右，贴近取消按钮
+            // 文字靠右贴近取消按钮；必须显式带上 CENTER_VERTICAL，
+            // 否则 setGravity 会把垂直分量重置成 TOP，导致文字比取消高一截
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
             setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.primary))
             setBackgroundColor(Color.TRANSPARENT)
             minWidth = 0
             minHeight = 0
+            // 对齐动作录制弹窗的确定/取消：m3_btn_padding_top/bottom = 6dp
+            setPadding(paddingLeft, dp(6), paddingRight, dp(6))
             setOnClickListener {
                 playListDialog?.dismiss()
                 // 临时隐藏悬浮窗，避免遮挡系统文件选择器；完成后由导入页恢复
@@ -578,6 +584,8 @@ class FloatingWindowService : Service() {
             setBackgroundColor(Color.TRANSPARENT)
             minWidth = 0
             minHeight = 0
+            // 对齐动作录制弹窗的确定/取消：m3_btn_padding_top/bottom = 6dp
+            setPadding(paddingLeft, dp(6), paddingRight, dp(6))
             setOnClickListener { playListDialog?.dismiss() }
         }
         // 底部按钮行：导入配置 + 取消 并排
@@ -606,7 +614,10 @@ class FloatingWindowService : Service() {
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply {
-                    topMargin = dp(2)
+                    // 这个弹窗没有系统的正/负按钮，按钮栏整体缺失，
+                    // 手动补回 MDC 按钮栏的外部间距：ButtonBarLayout 2dp + MaterialButton inset 4dp
+                    topMargin = dp(6)
+                    bottomMargin = dp(6)
                 }
             )
         }

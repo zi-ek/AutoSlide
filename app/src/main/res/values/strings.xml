@@ -82,11 +82,40 @@
     <string name="chat_room">反馈</string>
     <string name="open_chat_room_failed">无法打开反馈</string>
     <string name="status_channel_name">常驻服务</string>
-    <string name="status_channel_desc">保持应用常驻后台，自动检测并点击启动广告的跳过按钮</string>
-    <string name="status_notification_text">无障碍服务运行中</string>
-    <string name="status_stop">停止</string>
+    <string name="status_channel_desc">显示应用的运行状态，并在被系统清理后自动恢复无障碍</string>
+    <string name="status_a11y_running">无障碍正在运行</string>
+    <string name="status_a11y_broken">无障碍发生故障</string>
+    <string name="status_a11y_disabled">无障碍已关闭</string>
+    <string name="status_a11y_no_permission">无障碍未授权</string>
+    <!--首启使用声明弹窗（对照 GKD TermsAcceptDialog 的两步文案）-->
+    <string name="terms_title">使用声明</string>
+    <string name="terms_message_prefix">感谢使用自动滑屏器！您需要阅读并同意「</string>
+    <string name="terms_link_agreement">用户协议</string>
+    <string name="terms_message_middle">」和「</string>
+    <string name="terms_link_privacy">隐私政策</string>
+    <string name="terms_message_suffix">」才能继续使用, 请仔细阅读相关内容</string>
+    <string name="terms_a11y_title">关于无障碍</string>
+    <string name="terms_a11y_message">自动滑屏器请求使用系统「无障碍 API」获取屏幕信息, 以此基于用户设置的滑动规则执行自动化操作</string>
+    <string name="terms_agree">同意</string>
+    <string name="terms_disagree">不同意</string>
+    <!--常驻通知开关-->
+    <string name="status_service_title">常驻通知</string>
+    <string name="status_service_switch">常驻通知开关</string>
+    <string name="status_service_need_notification">需要通知权限才能显示常驻通知</string>
+    <!--磁贴复活引导：被 force-stop 后系统不会自动拉起，磁贴绑定是唯一的复活入口-->
     <string name="add_tile">添加快捷磁贴</string>
     <string name="add_tile_unsupported">请在通知栏下拉两次，点右上角“编辑”图标（铅笔），把“自动滑动”磁贴拖入快捷开关区域。添加后，被系统清理时下拉通知栏即可快速复活。</string>
+    <string name="keep_alive_hint_text">如何保活？</string>
+    <string name="keep_alive_hint_title">如何保活</string>
+    <string name="keep_alive_ignore_battery">忽略电池优化</string>
+    <string name="keep_alive_hint_message">按下面四步做完，被一键清理和重启都能扛住：
+
+1. 打开上方「常驻通知」开关（前台常驻通知）
+2. 打开上方「悬浮窗权限」开关（1x1 透明悬浮窗，缺了它一键清理第二轮就会被杀）
+3. 点下方「忽略电池优化」，在系统弹窗里选「允许」
+4. 在最近任务界面下拉本应用的卡片，给它加上锁
+
+另外建议在系统设置里给本应用开启「自启动」，省电策略设为「无限制」。</string>
     <string name="checking_update">正在检查更新</string>
     <string name="already_latest_version">当前已经是最新版本</string>
     <string name="check_update_failed">检查更新失败</string>
@@ -99,9 +128,6 @@
     <string name="install_permission_required">需要开启安装未知应用权限</string>
     <string name="tile_label">自动滑动</string>
     <string name="tile_permission_toast">请先授予无障碍和悬浮窗权限</string>
-    <string name="keep_alive_hint_text">如何保活？</string>
-    <string name="keep_alive_hint_title">无感保活</string>
-    <string name="keep_alive_hint_message">添加通知栏快捷开关\n\n1. 下拉通知栏，点击编辑快捷开关\n2. 找到名称为「自动滑动」的快捷开关\n3. 把该开关添加到通知面板可见位置\n\n只要这个快捷开关在通知面板可见，无论是系统杀后台还是应用崩溃，下拉打开通知栏即可自动重启。</string>
     <string name="keyword_detection">关键词检测</string>
     <string name="keyword_hint">关键词（用中文逗号分隔）</string>
     <string name="keyword_ignore_case">忽略大小写</string>

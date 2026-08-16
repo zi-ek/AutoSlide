@@ -1,5 +1,18 @@
 package com.ziek.autoslide.service
 
+/**
+ * 常驻状态前台服务（对照 GKD 的 `service/StatusService.kt` 移植）
+ *
+ * 它的作用不是「免杀」，而是让进程成为 START_STICKY 的前台服务：
+ * 被系统清理后系统会重新拉起服务 → 进程启动 → Application.onCreate → syncFixState → 无障碍自愈。
+ *
+ * 与 GKD 一致的几个细节：
+ * - 通知内容由状态驱动刷新（无障碍是否运行 / 是否在启用列表 / 是否有写入安全设置权限），
+ *   **没有定时刷新**，也不在这里做定时自检；
+ * - 通知**没有「停止」按钮**（GKD 的 status 通知 stopService 为 null）；
+ * - 不重写 onStartCommand，沿用 Service 默认的 START_STICKY。
+ */
+
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -10,130 +23,171 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.graphics.PixelFormat
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
+import android.provider.Settings
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.ziek.autoslide.A11yState
+import com.ziek.autoslide.KEY_STATUS_SERVICE_ENABLED
 import com.ziek.autoslide.LogX
 import com.ziek.autoslide.MainActivity
+import com.ziek.autoslide.PREFS_NAME
 import com.ziek.autoslide.R
+import com.ziek.autoslide.hasWriteSecureSettingsPermission
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
 
-/**
- * 常驻后台前台服务：
- * - 状态栏常驻一条「自动滑屏器 · 无障碍服务运行中」通知
- * - 保持进程存活，让 AutoSlideService 的常驻「跳过」检测持续运行
- * - 通知栏提供「停止」按钮，点击后真正退出常驻
- */
 class StatusService : Service() {
 
-    companion object {
-        const val CHANNEL_ID = "persistent_service"
-        const val NOTIFICATION_ID = 100
-        private const val REFRESH_INTERVAL_MS = 30_000L
-
-        /* 常驻服务是否正在运行（自愈重启判断用） */
-        @Volatile
-        private var isRunning = false
-
-        /**
-         * 自愈重启：常驻服务不在运行时尝试拉起（移植 GKD StatusService.autoStart）。
-         * 无通知权限或后台启动受限时静默跳过，由其它触点（磁贴/主界面）下次重试。
-         */
-        @JvmStatic
-        fun autoStart(context: Context) {
-            if (isRunning) {
-                return
-            }
-            // Android 13+ 无通知权限无法启动前台服务
-            if (Build.VERSION.SDK_INT >= 33 &&
-                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                return
-            }
-            runCatching {
-                ContextCompat.startForegroundService(context, Intent(context, StatusService::class.java))
-            }
-        }
-    }
-
-    private val refreshHandler = Handler(Looper.getMainLooper())
-    private val refreshRunnable = object : Runnable {
-        override fun run() {
-            refreshForeground()
-            // 定时自检：进程还活着但无障碍绑定已经死掉时（MIUI 常见），
-            // 不必等用户下拉通知栏，这里直接修。无障碍正常时该调用会立刻返回。
-            A11yState.fixRestartA11yService()
-            refreshHandler.postDelayed(this, REFRESH_INTERVAL_MS)
-        }
-    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onCreate() {
         super.onCreate()
-        isRunning = true
+        isRunning.value = true
         createChannel()
+        if (!startForegroundInternal(buildNotification(statusText()))) {
+            // Android 12+ 在后台不允许调 startForeground（实测开机后由系统重启本服务、
+            // 或磁贴从 force-stop 状态复活时都会撞上）。这里必须让 isForeground 保持 false，
+            // 否则 needRestart 判定不成立，主界面回到前台时就再也不会重试，通知永远回不来。
+            // 不 stopSelf：保留服务对象，等 onStartCommand 或主界面回到前台时重试
+            return
+        }
+        isForeground.value = true
+        startTextRefreshLoop()
+        addAliveOverlayView()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // 恢复常驻「跳过」检测：StatusService 是常驻载体，被系统重启后把检测重新打开
-        // （职责划分：StatusService 管常驻与健康检查，AutoSlideService 管无障碍自动化）
-        AutoSlideService.getInstance()?.setPersistentSkipEnabled(true)
-        // 被系统 START_STICKY 重启时也走一次自愈：此时无障碍多半也一起被杀了
-        A11yState.fixRestartA11yService()
-        return try {
-            startForegroundInternal(buildNotification())
-            // 定期刷新前台通知，让 MIUI 一直认为服务活跃（参考 GKD 的状态驱动刷新）
-            refreshHandler.removeCallbacks(refreshRunnable)
-            refreshHandler.postDelayed(refreshRunnable, REFRESH_INTERVAL_MS)
-            START_STICKY
-        } catch (e: Exception) {
-            // Android 14+ 若系统限制「特殊用途前台服务」，不要直接放弃：
-            // 先降级用无类型的前台服务重试一次，仍失败才退出常驻。
-            LogX.e("StatusService", "startForeground specialUse failed, retry plain", e)
-            return try {
-                @Suppress("DEPRECATION")
-                startForeground(NOTIFICATION_ID, buildNotification())
-                refreshHandler.removeCallbacks(refreshRunnable)
-                refreshHandler.postDelayed(refreshRunnable, REFRESH_INTERVAL_MS)
-                START_STICKY
-            } catch (e2: Exception) {
-                LogX.e("StatusService", "startForeground fallback failed too", e2)
-                stopSelf()
-                START_NOT_STICKY
+    /**
+     * 1x1 透明悬浮窗（GKD 作者原话：「添加一个前台常驻通知，然后添加一个 1x1 的透明悬浮窗，
+     * 需要通知权限和悬浮窗权限，gkd 的逻辑就是这样」）。
+     *
+     * 只有前台通知不够——实测一键清理第二轮就会把进程杀掉。进程持有一个
+     * TYPE_APPLICATION_OVERLAY 窗口后，系统会认为它有可见界面，adj 更低，
+     * MIUI 一键清理才不会动它。
+     *
+     * 需要 SYSTEM_ALERT_WINDOW，没有授权时静默跳过（保活强度下降，但不影响其它功能）。
+     */
+    private fun addAliveOverlayView() {
+        removeAliveOverlayView()
+        if (!Settings.canDrawOverlays(this)) {
+            LogX.w(TAG, "overlay permission missing, alive overlay skipped")
+            return
+        }
+        val view = View(this)
+        val lp = WindowManager.LayoutParams().apply {
+            type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            format = PixelFormat.TRANSLUCENT
+            flags = flags or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            gravity = Gravity.START or Gravity.TOP
+            width = 1
+            height = 1
+            packageName = this@StatusService.packageName
+        }
+        try {
+            (getSystemService(WINDOW_SERVICE) as WindowManager).addView(view, lp)
+            aliveOverlayView = view
+            LogX.i(TAG, "alive overlay added")
+        } catch (e: Throwable) {
+            // 某些设备会抛 BadTokenException
+            aliveOverlayView = null
+            LogX.w(TAG, "add alive overlay failed", e)
+        }
+    }
+
+    private fun removeAliveOverlayView() {
+        val view = aliveOverlayView ?: return
+        runCatching {
+            (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(view)
+        }
+        aliveOverlayView = null
+    }
+
+    private var aliveOverlayView: View? = null
+
+    /* 状态驱动刷新通知文案（GKD: combine(...).collect { startForeground() }） */
+    private fun startTextRefreshLoop() {
+        if (refreshStarted) return
+        refreshStarted = true
+        scope.launch {
+            combine(
+                A11yState.a11yRunningFlow,
+                A11yState.a11yEnabledFlow
+            ) { _, _ -> statusText() }.collect { text ->
+                startForegroundInternal(buildNotification(text))
             }
         }
     }
 
+    private var refreshStarted = false
+
+    /**
+     * 服务已存在时再次 startForegroundService 不会重跑 onCreate，
+     * 所以补进前台的重试必须放在这里——否则一旦首次 startForeground 被后台限制拒绝，
+     * 之后无论怎么调都救不回来。
+     */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!isForeground.value) {
+            if (startForegroundInternal(buildNotification(statusText()))) {
+                isForeground.value = true
+                startTextRefreshLoop()
+            }
+        }
+        // 悬浮窗权限可能是服务起来之后才授予的，每次收到启动命令都补一次
+        if (aliveOverlayView == null) {
+            addAliveOverlayView()
+        }
+        return START_STICKY
+    }
+
     override fun onDestroy() {
-        isRunning = false
-        refreshHandler.removeCallbacks(refreshRunnable)
+        isRunning.value = false
+        isForeground.value = false
+        removeAliveOverlayView()
+        scope.cancel()
         super.onDestroy()
     }
 
-    private fun startForegroundInternal(notification: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    /* 通知副标题：对照 GKD statusTriple() 的分支 */
+    private fun statusText(): String = when {
+        A11yState.a11yRunningFlow.value -> getString(R.string.status_a11y_running)
+        A11yState.a11yEnabledFlow.value -> getString(R.string.status_a11y_broken)
+        hasWriteSecureSettingsPermission() -> getString(R.string.status_a11y_disabled)
+        else -> getString(R.string.status_a11y_no_permission)
     }
 
-    private fun refreshForeground() {
-        try {
-            startForegroundInternal(buildNotification())
-        } catch (e: Exception) {
-            // 刷新失败不影响，下一轮再试
-            LogX.w("StatusService", "refresh foreground failed", e)
-        }
+    private fun startForegroundInternal(notification: Notification): Boolean = try {
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            notification,
+            // 与 GKD 一致：交给 manifest 声明的类型，不在代码里写死
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST
+            } else {
+                0
+            }
+        )
+        true
+    } catch (e: Exception) {
+        // 系统自动重启 START_STICKY 服务时不走应用侧的启动检查，权限也可能在检查后变化，
+        // 这里必须兜底，否则会直接崩掉（GKD: NotificationDispatcher.startForeground 同款处理）
+        LogX.e(TAG, "startForeground failed", e)
+        false
     }
 
     private fun createChannel() {
@@ -148,31 +202,123 @@ class StatusService : Service() {
         manager.createNotificationChannel(channel)
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(text: String): Notification {
         val contentIntent = PendingIntent.getActivity(
             this,
-            0,
+            NOTIFICATION_ID,
             Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val stopIntent = PendingIntent.getBroadcast(
-            this,
-            1,
-            Intent(this, PersistentStopReceiver::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_slide_tile)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText(getString(R.string.status_notification_text))
+            .setContentText(text)
             .setContentIntent(contentIntent)
             .setOngoing(true)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .addAction(0, getString(R.string.status_stop), stopIntent)
+            .setAutoCancel(false)
             .build()
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    companion object {
+        private const val TAG = "StatusService"
+        const val CHANNEL_ID = "persistent_service"
+        const val NOTIFICATION_ID = 100
+
+        /* 对应 GKD 的 StatusService.isRunning：服务对象是否存在 */
+        val isRunning = MutableStateFlow(false)
+
+        /**
+         * 是否真正处于前台（startForeground 成功、通知已显示）。
+         *
+         * 与 [isRunning] 分开的原因：服务被系统重启但 startForeground 被后台限制拒绝时，
+         * 服务对象是存在的（isRunning=true）却没有通知。只看 isRunning 会误判成「已在运行」，
+         * 导致回到前台后不再重试，常驻通知永久消失。
+         */
+        val isForeground = MutableStateFlow(false)
+
+        /* 上次自动拉起的时间（GKD: lastAutoStart，1 秒节流） */
+        private var lastAutoStart = 0L
+
+        /**
+         * 用户是否开启了常驻通知（对应 GKD 的 storeFlow.enableStatusService，同样默认关闭，
+         * 由「必要权限」卡片里的常驻通知开关控制）。
+         *
+         * @param context 上下文
+         */
+        fun isEnabled(context: Context): Boolean =
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_STATUS_SERVICE_ENABLED, false)
+
+        /**
+         * 记录用户是否希望常驻通知开启
+         *
+         * @param context 上下文
+         * @param enabled 是否开启
+         */
+        fun setEnabled(context: Context, enabled: Boolean) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_STATUS_SERVICE_ENABLED, enabled)
+                .apply()
+        }
+
+        /* 对应 GKD 的 needRestart：开关已开、通知尚未真正显示、且两项前台服务权限都具备 */
+        private fun needRestart(context: Context): Boolean =
+            isEnabled(context) &&
+                !isForeground.value &&
+                hasNotificationPermission(context) &&
+                hasSpecialUsePermission(context)
+
+        /**
+         * 自愈重启常驻服务（GKD: StatusService.autoStart）。
+         * 1 秒节流；需要已有服务或前台可见才能自主启动，否则系统会拒绝并抛异常。
+         *
+         * @param context 上下文
+         */
+        @JvmStatic
+        fun autoStart(context: Context) {
+            if (System.currentTimeMillis() - lastAutoStart < 1000) return
+            if (!needRestart(context)) return
+            lastAutoStart = System.currentTimeMillis()
+            start(context)
+        }
+
+        /**
+         * 启动常驻服务
+         *
+         * @param context 上下文
+         */
+        @JvmStatic
+        fun start(context: Context) {
+            if (!hasNotificationPermission(context) || !hasSpecialUsePermission(context)) return
+            runCatching {
+                ContextCompat.startForegroundService(
+                    context, Intent(context, StatusService::class.java)
+                )
+            }.onFailure { LogX.w(TAG, "start status service failed", it) }
+        }
+
+        /**
+         * 关闭常驻服务（GKD: StatusService.stop）
+         *
+         * @param context 上下文
+         */
+        @JvmStatic
+        fun stop(context: Context) {
+            runCatching { context.stopService(Intent(context, StatusService::class.java)) }
+        }
+
+        private fun hasNotificationPermission(context: Context): Boolean =
+            Build.VERSION.SDK_INT < 33 ||
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+
+        private fun hasSpecialUsePermission(context: Context): Boolean =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
+                context.checkSelfPermission(
+                    Manifest.permission.FOREGROUND_SERVICE_SPECIAL_USE
+                ) == PackageManager.PERMISSION_GRANTED
+    }
 }

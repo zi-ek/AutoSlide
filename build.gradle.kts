@@ -7,4 +7,8 @@ plugins {
     alias(libs.plugins.kotlin.parcelize) apply false
     // kotlin-loc 编译器插件
     alias(libs.plugins.loc) apply false
+    // Android 库插件（hidden-api 模块使用）
+    alias(libs.plugins.android.library) apply false
+    // li.songe.remap：hidden-api 桩类重定向
+    alias(libs.plugins.remap) apply false
 }

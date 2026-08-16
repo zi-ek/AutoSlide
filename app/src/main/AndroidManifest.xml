@@ -8,10 +8,12 @@
         tools:ignore="RequestInstallPackagesPolicy" />
     <!--添加悬浮窗权限-->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <!-- 常驻后台前台服务 + 通知 -->
+    <!-- 常驻状态前台服务 + 通知（GKD 同款：靠 START_STICKY 重启带回进程，进而自愈无障碍） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 忽略电池优化：Android 标准保活四要素之一，避免进入 Doze 后被冻结 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!--添加写入安全设置权限-->
     <uses-permission
         android:name="android.permission.WRITE_SECURE_SETTINGS"
@@ -80,19 +82,15 @@
             android:name=".service.FloatingWindowService"
             android:enabled="true"
             android:exported="false" />
-        <!-- 常驻后台服务：状态栏常驻通知 + 持续检测启动广告「跳过」 -->
+        <!-- 常驻状态服务：显示运行状态，被系统清理后由 START_STICKY 重启带回进程 -->
         <service
             android:name=".service.StatusService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Detect and click startup ad skip buttons" />
+                android:value="Display the running state of the application" />
         </service>
-        <!-- 常驻通知里的「停止」按钮 -->
-        <receiver
-            android:name=".service.PersistentStopReceiver"
-            android:exported="false" />
         <!-- 快捷磁贴开关服务 -->
         <service
             android:name=".service.AutoSlideTileService"
