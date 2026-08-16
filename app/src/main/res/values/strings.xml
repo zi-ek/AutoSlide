@@ -108,9 +108,7 @@
     <string name="keep_alive_hint_text">如何保活？</string>
     <string name="keep_alive_hint_title">如何保活</string>
     <string name="keep_alive_ignore_battery">忽略电池优化</string>
-    <string name="keep_alive_hint_message">开启上方「无障碍服务权限」和「常驻通知」两个开关即可，实测可扛住一键清理和重启。
-
-无障碍开启后会挂一个 1x1 的无障碍覆盖层，配合常驻通知让系统认为本应用处于活跃状态。
+    <string name="keep_alive_hint_message">开启上方「无障碍服务权限」和「常驻通知」两个开关即可扛住一键清理和重启。
 
 若仍被系统清理，可再做两项加固：
 1. 点下方「忽略电池优化」，在系统弹窗里选「允许」

@@ -32,6 +32,7 @@ const router = createRouter();
 require('./src/chat').register(router);
 require('./src/stats').register(router);
 require('./src/uploads').register(router);
+require('./src/legal').register(router);
 
 const server = http.createServer((req, res) => router.handle(req, res));
 

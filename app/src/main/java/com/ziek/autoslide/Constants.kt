@@ -51,8 +51,9 @@ const val KEY_LAST_REPORTED_VERSION = "last_reported_version"
 // 注意：这里不能用 const val，因为 BuildConfig 是 Java 静态字段，不构成 Kotlin 编译期常量。
 val SERVER_BASE_URL: String = BuildConfig.SERVER_BASE_URL
 
-// 首启声明弹窗里「用户协议」「隐私政策」两个链接的地址（GKD: ShortUrlSet.URL12 / URL11）。
-// TODO 这两个页面目前后端还没有，上架前务必换成真实地址。
+// 首启声明弹窗里「用户协议」「隐私政策」两个链接的地址。
+// 页面由后端 server/src/legal.js 提供，内容在 server/src/views/legal.js；
+// 改动应用的任何联网行为时，务必同步更新隐私政策里的数据表。
 val URL_TERMS: String = "$SERVER_BASE_URL/terms"
 val URL_PRIVACY: String = "$SERVER_BASE_URL/privacy"
 
