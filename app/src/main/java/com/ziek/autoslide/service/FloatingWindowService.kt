@@ -76,6 +76,7 @@ import com.ziek.autoslide.SlideEvent
 import com.ziek.autoslide.SlideEventHub
 import com.ziek.autoslide.KEY_FLOATING_DESIRED
 import com.ziek.autoslide.KEY_MACRO_PREFIX
+import com.ziek.autoslide.KEY_MACRO_LOOP_COUNT
 import com.ziek.autoslide.MacroSync
 import com.ziek.autoslide.input.AutoSlideInput
 import com.ziek.autoslide.input.AutoSlideInputCodec
@@ -112,6 +113,7 @@ class FloatingWindowService : Service() {
     private var floatingWindowHidden = false // 悬浮窗是否被完全隐藏（录制/回放期间）
     private var playbackFeedbackView: PlaybackFeedbackView? = null // 回放可视化反馈层
     private var playbackCountdownView: View? = null // 回放前倒计时遮罩
+    private var playbackCountdownLabel: View? = null // 回放倒计时下方的「共 N 次」提示
     private var playbackCountdownJob: Job? = null   // 倒计时协程
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 主线程协程作用域
     private var lastScreenWidth = 0 // 上次记录的屏幕宽度（旋转后用于判断保持左/右同一侧）
@@ -192,6 +194,8 @@ class FloatingWindowService : Service() {
         playbackCountdownJob = null
         playbackCountdownView?.let { runCatching { windowManager.removeView(it) } }
         playbackCountdownView = null
+        playbackCountdownLabel?.let { runCatching { windowManager.removeView(it) } }
+        playbackCountdownLabel = null
         removeRecordView()
         playbackFeedbackView?.let { feedback ->
             runCatching { (rootView as? ViewGroup)?.removeView(feedback) }
@@ -520,7 +524,7 @@ class FloatingWindowService : Service() {
                     minWidth = 0
                     minHeight = 0
                     // 收窄左内边距，让导出能贴过来（Button 默认左右各有约 20dp 内边距）
-                    setPadding(dp(6), paddingTop, paddingRight, paddingBottom)
+                    setPadding(dp(0), paddingTop, paddingRight, paddingBottom)
                     setOnClickListener {
                         confirmDeleteMacro(name, names, listView)
                     }
@@ -534,7 +538,7 @@ class FloatingWindowService : Service() {
                     minWidth = 0
                     minHeight = 0
                     // 收窄右内边距，把导出向右推去贴近清除
-                    setPadding(paddingLeft, paddingTop, dp(6), paddingBottom)
+                    setPadding(paddingLeft, paddingTop, dp(0), paddingBottom)
                     setOnClickListener {
                         playListDialog?.dismiss()
                         // 临时隐藏悬浮窗，避免遮挡系统分享面板；12 秒后自动恢复
@@ -548,7 +552,7 @@ class FloatingWindowService : Service() {
                 row.addView(clearButton)
                 // 点击整行开始回放
                 row.setOnClickListener {
-                    playMacroByName(name)
+                    showLoopCountDialog(name)
                 }
                 return row
             }
@@ -561,6 +565,8 @@ class FloatingWindowService : Service() {
             // 文字靠右贴近取消按钮；必须显式带上 CENTER_VERTICAL，
             // 否则 setGravity 会把垂直分量重置成 TOP，导致文字比取消高一截
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            // 对齐动作录制弹窗的确定/取消：m3_btn_padding_top/bottom = 6dp
+            setPadding(paddingLeft, dp(6), paddingRight, dp(6))
             setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.primary))
             setBackgroundColor(Color.TRANSPARENT)
             minWidth = 0
@@ -580,6 +586,8 @@ class FloatingWindowService : Service() {
             text = getString(R.string.cancel)
             textSize = 14f
             isAllCaps = false
+            // 对齐动作录制弹窗的确定/取消：m3_btn_padding_top/bottom = 6dp
+            setPadding(paddingLeft, dp(6), paddingRight, dp(6))
             setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.text_secondary))
             setBackgroundColor(Color.TRANSPARENT)
             minWidth = 0
@@ -659,17 +667,60 @@ class FloatingWindowService : Service() {
         }
     }
 
-    /* 点击列表中的某条记录开始回放 */
-    private fun playMacroByName(name: String) {
-        val service = AutoSlideService.getInstance() ?: return
+    /* 回放设置弹窗：选择循环次数（记住上次使用值） */
+    private fun showLoopCountDialog(name: String) {
+        val dialogContext = createDialogContext()
+        val inputLayout = TextInputLayout(dialogContext).apply {
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+            hint = getString(R.string.macro_loop_hint)
+        }
+        val input = TextInputEditText(inputLayout.context).apply {
+            isSingleLine = true
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            // 记住上次使用的循环次数
+            val last = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getInt(KEY_MACRO_LOOP_COUNT, 1)
+            setText(last.toString())
+            setSelection(text?.length ?: 0)
+            // 服务上下文创建输入框时禁用文本选择工具条，避免部分机型 getDisplay 崩溃
+            customSelectionActionModeCallback = object : ActionMode.Callback {
+                override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
+                override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
+                override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean = false
+                override fun onDestroyActionMode(mode: ActionMode?) {}
+            }
+        }
+        inputLayout.addView(input)
+        val container = FrameLayout(dialogContext).apply {
+            setPadding(dp(24), dp(12), dp(24), 0)
+            addView(inputLayout)
+        }
+        MaterialAlertDialogBuilder(dialogContext)
+            .setTitle(R.string.macro_loop_title)
+            .setView(container)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                val count = input.text.toString().toIntOrNull()
+                if (count == null || count !in 1..99) {
+                    Toast.makeText(this, R.string.macro_loop_invalid, Toast.LENGTH_SHORT).show()
+                } else {
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
+                        putInt(KEY_MACRO_LOOP_COUNT, count)
+                    }
+                    startPlayback(name, count)
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .let { showSystemAlertDialog(it) }
+    }
+
+    /* 进入回放：关闭列表、进入全屏反馈层、显示倒计时 */
+    private fun startPlayback(name: String, loopCount: Int) {
         playListDialog?.dismiss()
-        // 先进入全屏反馈层，再显示 10..0 倒计时，倒计时结束后才开始回放
         enterPlaybackMode()
-        showPlaybackCountdown(name)
+        showPlaybackCountdown(name, loopCount)
     }
 
     /* 回放前倒计时：屏幕正中间圆形半透明 10..0，期间自动点启动广告「跳过」，结束后开始回放 */
-    private fun showPlaybackCountdown(name: String) {
+    private fun showPlaybackCountdown(name: String, loopCount: Int) {
         val service = AutoSlideService.getInstance() ?: return
         val circle = TextView(this).apply {
             text = "5"
@@ -694,6 +745,27 @@ class FloatingWindowService : Service() {
         }
         runCatching { windowManager.addView(circle, countdownParams) }
         playbackCountdownView = circle
+        // 圆圈下方显示「共 N 次」
+        val label = TextView(this).apply {
+            text = getString(R.string.macro_loop_total, loopCount)
+            textSize = 20f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setShadowLayer(5f, 0f, 0f, Color.BLACK)
+        }
+        val labelParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+            y = dp(100)
+        }
+        runCatching { windowManager.addView(label, labelParams) }
+        playbackCountdownLabel = label
         playbackCountdownJob = serviceScope.launch {
             // 倒计时期间自动回桌面查找并打开与录制名称匹配的 App（找不到则照常回放）
             val autoLaunchJob = launch {
@@ -705,10 +777,13 @@ class FloatingWindowService : Service() {
             }
             runCatching { windowManager.removeView(circle) }
             playbackCountdownView = null
+            playbackCountdownLabel?.let { runCatching { windowManager.removeView(it) } }
+            playbackCountdownLabel = null
             // 倒计时结束但 App 还在翻页查找时，最多再等 30 秒（多页桌面翻页+OCR 较慢）
             withTimeoutOrNull(30_000) { autoLaunchJob.join() }
             val started = service.playMacro(
                 name,
+                loopCount,
                 onFinished = { showPlaybackFinishedDialog() },
                 onActionStart = { input -> playbackFeedbackView?.showAction(input) },
                 onEnd = {

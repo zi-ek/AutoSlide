@@ -99,6 +99,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.random.Random
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -226,6 +227,9 @@ private data class NodeTargetInfo(
 private const val MAX_GESTURE_DURATION_MS = 3000L
 private const val NO_PAUSE_GAP_MS = 80L
 private const val GESTURE_CALLBACK_TIMEOUT_MS = 3000L
+/* 宏循环轮次之间的随机间隔范围（毫秒）：避免操作过快被判定为作弊 */
+private const val MACRO_LOOP_GAP_MIN_MS = 5_000L
+private const val MACRO_LOOP_GAP_MAX_MS = 15_000L
 /* 宏回放等待条件：节点树轮询间隔（毫秒） */
 private const val MACRO_WAIT_POLL_INTERVAL_MS = 300L
 /* 宏回放等待条件：OCR 兜底识别间隔（毫秒），节点树找不到文字时才启用 */
@@ -1477,12 +1481,14 @@ private const val SPEED_CURVE_FACTOR = 0.7
      */
     fun playMacro(
         name: String,
+        loopCount: Int = 1,
         onFinished: (() -> Unit)? = null,
         onActionStart: ((AutoSlideInput) -> Unit)? = null,
         onEnd: (() -> Unit)? = null
     ): Boolean {
         val macro = getMacro(name) ?: return false
-        LogX.i(TAG, "PlayMacro start: name=$name, actions=${macro.size}")
+        val rounds = loopCount.coerceAtLeast(1)
+        LogX.i(TAG, "PlayMacro start: name=$name, actions=${macro.size}, rounds=$rounds")
         stopSlide()
         val currentGen = runGeneration
         val width = resources.displayMetrics.widthPixels
@@ -1494,57 +1500,82 @@ private const val SPEED_CURVE_FACTOR = 0.7
             try {
                 var totalDistancePx = 0f
                 var completed = true
-                var prevInput: AutoSlideInput? = null
-                /* 等待条件满足后，跳过下一个动作的固定延迟，让宏立即继续 */
-                var skipNextDelay = false
-                for (input in macro) {
-                // 用户按方向键/再次操作时中断本次回放
-                if (currentGen != runGeneration) {
-                    completed = false
-                    break
-                }
-                // 等待条件：等屏幕出现/消失指定文字，满足后继续（或点击），超时中止回放
-                if (input.action == AutoSlideInputAction.WAIT_FOR) {
-                    LogX.i(TAG, "PlayMacro wait start: text=${input.waitText}, disappear=${input.waitDisappear}")
-                    onActionStart?.invoke(input)
-                    val waitOk = waitForMacroCondition(input, currentGen)
-                    LogX.i(TAG, "PlayMacro wait result: ok=$waitOk")
-                    if (!waitOk) {
-                        completed = false
-                        break
-                    }
-                    // 条件已满足：后续动作立即执行，不再等录制时的固定等待
-                    skipNextDelay = true
-                    prevInput = input
-                    continue
-                }
-                // 回放去重：同一位置超短间隔的重复点击只执行一次
-                if (isDuplicateTap(prevInput, input, width, height, density)) {
-                    prevInput = input
-                    continue
-                }
-                val waitMs = if (skipNextDelay) {
-                    skipNextDelay = false
-                    0L
-                } else {
-                    input.delayMs.coerceIn(0L, MAX_REPLAY_GAP_MS)
-                }
-                if (waitMs > 0) {
-                    delay(waitMs)
+                var doneRounds = 0
+                for (round in 1..rounds) {
+                    // 用户按方向键/再次操作时中断本次回放（含剩余循环）
                     if (currentGen != runGeneration) {
                         completed = false
                         break
                     }
-                }
-                onActionStart?.invoke(input)
-                val ok = dispatchOneInputSmart(input, width, height)
-                if (!ok) {
-                    LogX.w(TAG, "PlayMacro action failed: ${input.action} at (${input.x},${input.y})")
-                    completed = false
-                    break
-                }
-                totalDistancePx += inputPathLength(input, width, height)
-                prevInput = input
+                    var prevInput: AutoSlideInput? = null
+                    /* 等待条件满足后，跳过下一个动作的固定延迟，让宏立即继续 */
+                    var skipNextDelay = false
+                    var roundOk = true
+                    for (input in macro) {
+                        // 中断检查
+                        if (currentGen != runGeneration) {
+                            completed = false
+                            roundOk = false
+                            break
+                        }
+                        // 等待条件：等屏幕出现/消失指定文字，满足后继续（或点击），超时中止回放
+                        if (input.action == AutoSlideInputAction.WAIT_FOR) {
+                            LogX.i(TAG, "PlayMacro wait start: text=${input.waitText}, disappear=${input.waitDisappear}")
+                            onActionStart?.invoke(input)
+                            val waitOk = waitForMacroCondition(input, currentGen)
+                            LogX.i(TAG, "PlayMacro wait result: ok=$waitOk")
+                            if (!waitOk) {
+                                completed = false
+                                roundOk = false
+                                break
+                            }
+                            // 条件已满足：后续动作立即执行，不再等录制时的固定等待
+                            skipNextDelay = true
+                            prevInput = input
+                            continue
+                        }
+                        // 回放去重：同一位置超短间隔的重复点击只执行一次
+                        if (isDuplicateTap(prevInput, input, width, height, density)) {
+                            prevInput = input
+                            continue
+                        }
+                        val waitMs = if (skipNextDelay) {
+                            skipNextDelay = false
+                            0L
+                        } else {
+                            input.delayMs.coerceIn(0L, MAX_REPLAY_GAP_MS)
+                        }
+                        if (waitMs > 0) {
+                            delay(waitMs)
+                            if (currentGen != runGeneration) {
+                                completed = false
+                                roundOk = false
+                                break
+                            }
+                        }
+                        onActionStart?.invoke(input)
+                        val ok = dispatchOneInputSmart(input, width, height)
+                        if (!ok) {
+                            LogX.w(TAG, "PlayMacro action failed: ${input.action} at (${input.x},${input.y})")
+                            completed = false
+                            roundOk = false
+                            break
+                        }
+                        totalDistancePx += inputPathLength(input, width, height)
+                        prevInput = input
+                    }
+                    if (!roundOk) break
+                    doneRounds++
+                    // 轮次之间随机 5-15 秒间隔，避免操作过快被判定为作弊（最后一轮不间隔）
+                    if (round < rounds) {
+                        val gap = Random.nextLong(MACRO_LOOP_GAP_MIN_MS, MACRO_LOOP_GAP_MAX_MS)
+                        LogX.i(TAG, "Macro round $round/$rounds finished, next round in $gap ms")
+                        delay(gap)
+                        if (currentGen != runGeneration) {
+                            completed = false
+                            break
+                        }
+                    }
                 }
                 val distanceMm = (totalDistancePx / density / 6f).toInt().coerceAtLeast(1)
                 updateStats(swipes = 1, distanceMm = distanceMm)
@@ -1552,7 +1583,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
                     onFinished?.invoke()
                 }
                 onEnd?.invoke()
-                LogX.i(TAG, "PlayMacro end: name=$name, completed=$completed")
+                LogX.i(TAG, "PlayMacro end: name=$name, rounds=$doneRounds/$rounds, completed=$completed")
             } finally {
                 // 宏结束（成功/超时/中断）后恢复自动点击
                 macroWaitingForOcr = false
