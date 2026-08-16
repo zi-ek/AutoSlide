@@ -232,8 +232,6 @@ private const val MACRO_WAIT_POLL_INTERVAL_MS = 300L
 private const val MACRO_WAIT_OCR_INTERVAL_MS = 1500L
 /* 跳过按钮点击冷却，防止关键词检测与跳过检测重复点击 */
 private const val SKIP_TAP_COOLDOWN_MS = 1500L
-/* OCR 识别器空闲多久后释放：ML Kit 中文模型常驻内存会让进程成为 MIUI 一键清理的首选目标 */
-private const val RECOGNIZER_IDLE_RELEASE_MS = 30_000L
 /* 自动点击事件去抖：界面变化事件频繁时合并成一次检查 */
 private const val AUTO_TAP_DEBOUNCE_MS = 150L
 /* OCR 兜底节流：节点树找不到关键词时，最多每 2 秒截图识别一次 */
@@ -492,7 +490,6 @@ private const val SPEED_CURVE_FACTOR = 0.7
         unregisterScreenOffReceiver()
         stopSlide()
         serviceScope.cancel()
-        handler.removeCallbacks(releaseRecognizerRunnable)
         runCatching { textRecognizer?.close() }
         textRecognizer = null
         runCatching { screenshotExecutor.shutdown() }
@@ -1694,32 +1691,12 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /* 使用 ML Kit 中文模型识别整屏文字（宏等待条件的 OCR 兜底） */
-    /**
-     * 取用 OCR 识别器，并安排空闲释放。
-     *
-     * ML Kit 的中文模型一旦加载就常驻内存（实测本进程比 GKD 多占约 56 MB），
-     * 而 MIUI 一键清理是按内存占用挑目标的——多出来的这部分直接决定了能不能扛住。
-     * 识别器本身是懒加载的，这里补上「用完一段时间没再用就释放」。
-     */
-    private fun acquireRecognizer(): TextRecognizer {
-        handler.removeCallbacks(releaseRecognizerRunnable)
-        handler.postDelayed(releaseRecognizerRunnable, RECOGNIZER_IDLE_RELEASE_MS)
-        return textRecognizer ?: TextRecognition.getClient(
-            ChineseTextRecognizerOptions.Builder().build()
-        ).also { textRecognizer = it }
-    }
-
-    /* 空闲释放 OCR 识别器，把模型占用的内存还给系统 */
-    private val releaseRecognizerRunnable = Runnable {
-        val recognizer = textRecognizer ?: return@Runnable
-        textRecognizer = null
-        runCatching { recognizer.close() }
-        LogX.i(TAG, "OCR recognizer released after idle")
-    }
 
     private suspend fun recognizeScreenText(bitmap: Bitmap): String = withContext(Dispatchers.IO) {
         try {
-            val recognizer = acquireRecognizer()
+            val recognizer = textRecognizer ?: TextRecognition.getClient(
+                ChineseTextRecognizerOptions.Builder().build()
+            ).also { textRecognizer = it }
             val image = InputImage.fromBitmap(bitmap, 0)
             Tasks.await(recognizer.process(image)).text
         } catch (e: Exception) {
@@ -2029,7 +2006,9 @@ private const val SPEED_CURVE_FACTOR = 0.7
     private suspend fun recognizeSkipHits(bitmap: Bitmap): Pair<String, List<Pair<Float, Float>>> =
         withContext(Dispatchers.IO) {
             try {
-                val recognizer = acquireRecognizer()
+                val recognizer = textRecognizer ?: TextRecognition.getClient(
+                    ChineseTextRecognizerOptions.Builder().build()
+                ).also { textRecognizer = it }
                 val image = InputImage.fromBitmap(bitmap, 0)
                 val result = Tasks.await(recognizer.process(image))
                 val width = bitmap.width.coerceAtLeast(1).toFloat()
@@ -2138,7 +2117,9 @@ private const val SPEED_CURVE_FACTOR = 0.7
     private suspend fun recognizeTextAt(bitmap: Bitmap, xPx: Int, yPx: Int): String? =
         withContext(Dispatchers.IO) {
             try {
-                val recognizer = acquireRecognizer()
+                val recognizer = textRecognizer ?: TextRecognition.getClient(
+                    ChineseTextRecognizerOptions.Builder().build()
+                ).also { textRecognizer = it }
                 val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
                 for (block in result.textBlocks) {
                     for (line in block.lines) {
@@ -2213,7 +2194,9 @@ private const val SPEED_CURVE_FACTOR = 0.7
             val height = bitmap.height.coerceAtLeast(1).toFloat()
             val result = withContext(Dispatchers.IO) {
                 try {
-                    val recognizer = acquireRecognizer()
+                    val recognizer = textRecognizer ?: TextRecognition.getClient(
+                        ChineseTextRecognizerOptions.Builder().build()
+                    ).also { textRecognizer = it }
                     Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
                 } catch (e: Exception) {
                     null
