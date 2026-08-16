@@ -23,13 +23,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
-import android.provider.Settings
-import android.view.Gravity
-import android.view.View
-import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -65,57 +60,8 @@ class StatusService : Service() {
         }
         isForeground.value = true
         startTextRefreshLoop()
-        addAliveOverlayView()
     }
 
-    /**
-     * 1x1 透明悬浮窗（GKD 作者原话：「添加一个前台常驻通知，然后添加一个 1x1 的透明悬浮窗，
-     * 需要通知权限和悬浮窗权限，gkd 的逻辑就是这样」）。
-     *
-     * 只有前台通知不够——实测一键清理第二轮就会把进程杀掉。进程持有一个
-     * TYPE_APPLICATION_OVERLAY 窗口后，系统会认为它有可见界面，adj 更低，
-     * MIUI 一键清理才不会动它。
-     *
-     * 需要 SYSTEM_ALERT_WINDOW，没有授权时静默跳过（保活强度下降，但不影响其它功能）。
-     */
-    private fun addAliveOverlayView() {
-        removeAliveOverlayView()
-        if (!Settings.canDrawOverlays(this)) {
-            LogX.w(TAG, "overlay permission missing, alive overlay skipped")
-            return
-        }
-        val view = View(this)
-        val lp = WindowManager.LayoutParams().apply {
-            type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            format = PixelFormat.TRANSLUCENT
-            flags = flags or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            gravity = Gravity.START or Gravity.TOP
-            width = 1
-            height = 1
-            packageName = this@StatusService.packageName
-        }
-        try {
-            (getSystemService(WINDOW_SERVICE) as WindowManager).addView(view, lp)
-            aliveOverlayView = view
-            LogX.i(TAG, "alive overlay added")
-        } catch (e: Throwable) {
-            // 某些设备会抛 BadTokenException
-            aliveOverlayView = null
-            LogX.w(TAG, "add alive overlay failed", e)
-        }
-    }
-
-    private fun removeAliveOverlayView() {
-        val view = aliveOverlayView ?: return
-        runCatching {
-            (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(view)
-        }
-        aliveOverlayView = null
-    }
-
-    private var aliveOverlayView: View? = null
 
     /* 状态驱动刷新通知文案（GKD: combine(...).collect { startForeground() }） */
     private fun startTextRefreshLoop() {
@@ -145,17 +91,12 @@ class StatusService : Service() {
                 startTextRefreshLoop()
             }
         }
-        // 悬浮窗权限可能是服务起来之后才授予的，每次收到启动命令都补一次
-        if (aliveOverlayView == null) {
-            addAliveOverlayView()
-        }
         return START_STICKY
     }
 
     override fun onDestroy() {
         isRunning.value = false
         isForeground.value = false
-        removeAliveOverlayView()
         scope.cancel()
         super.onDestroy()
     }

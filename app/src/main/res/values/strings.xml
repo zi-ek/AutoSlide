@@ -108,14 +108,15 @@
     <string name="keep_alive_hint_text">如何保活？</string>
     <string name="keep_alive_hint_title">如何保活</string>
     <string name="keep_alive_ignore_battery">忽略电池优化</string>
-    <string name="keep_alive_hint_message">按下面四步做完，被一键清理和重启都能扛住：
+    <string name="keep_alive_hint_message">开启上方「无障碍服务权限」和「常驻通知」两个开关即可，实测可扛住一键清理和重启。
 
-1. 打开上方「常驻通知」开关（前台常驻通知）
-2. 打开上方「悬浮窗权限」开关（1x1 透明悬浮窗，缺了它一键清理第二轮就会被杀）
-3. 点下方「忽略电池优化」，在系统弹窗里选「允许」
-4. 在最近任务界面下拉本应用的卡片，给它加上锁
+无障碍开启后会挂一个 1x1 的无障碍覆盖层，配合常驻通知让系统认为本应用处于活跃状态。
 
-另外建议在系统设置里给本应用开启「自启动」，省电策略设为「无限制」。</string>
+若仍被系统清理，可再做两项加固：
+1. 点下方「忽略电池优化」，在系统弹窗里选「允许」
+2. 在最近任务界面下拉本应用的卡片，给它加上锁
+
+另外建议在系统设置里开启本应用的「自启动」。</string>
     <string name="checking_update">正在检查更新</string>
     <string name="already_latest_version">当前已经是最新版本</string>
     <string name="check_update_failed">检查更新失败</string>
