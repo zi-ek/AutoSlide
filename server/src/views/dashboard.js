@@ -286,6 +286,36 @@ const dashboardStyles = `
 /* 表格排序与搜索：纯前端，无外部依赖 */
 const dashboardScript = `
 <script>
+// 公告保存：拦截表单提交，就地更新，避免浏览器跳到 JSON 响应上
+(function () {
+  var form = document.getElementById('announceEdit');
+  if (!form) return;
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var btn = form.querySelector('button[type=submit]');
+    var meta = form.querySelector('.meta');
+    if (btn) { btn.disabled = true; btn.textContent = '保存中…'; }
+    fetch(form.action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(new FormData(form)).toString()
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (!data || !data.ok) throw new Error('save failed');
+        var body = document.querySelector('.notice-body');
+        if (body) body.textContent = data.announcement.content || '暂无公告';
+        if (meta) meta.textContent = '更新于 ' + (data.announcement.updatedAt || '-');
+        form.style.display = 'none';
+        if (btn) { btn.disabled = false; btn.textContent = '保存公告'; }
+      })
+      .catch(function () {
+        // 保存失败时保持表单打开，内容还在，用户可以直接重试
+        if (btn) { btn.disabled = false; btn.textContent = '保存失败，点击重试'; }
+      });
+  });
+})();
+
 (function () {
   var input = document.getElementById('deviceSearch');
   var table = document.getElementById('deviceTable');

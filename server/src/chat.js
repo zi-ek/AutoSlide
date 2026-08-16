@@ -368,6 +368,12 @@ async function handleSaveAnnouncement(req, res) {
     chat.announcement = { title: title || '公告栏', content, updatedAt: nowCN() };
     return chat.announcement;
   });
+  // 后台是普通表单提交，浏览器会停在 JSON 响应上；这里让它回到看板。
+  // App 走的是 JSON 请求（Accept 不含 text/html），仍然拿到原来的响应体。
+  if (String(req.headers.accept || '').includes('text/html')) {
+    res.writeHead(303, { Location: '/' });
+    return res.end();
+  }
   sendJson(res, 200, { ok: true, announcement });
 }
 
