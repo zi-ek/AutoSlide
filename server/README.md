@@ -85,7 +85,7 @@ autoslide.serverBaseUrl=http://你的PVE容器IP:8080
 也可以不改文件，构建时临时覆盖：
 
 ```
-./gradlew assembleRelease -Pautoslide.serverBaseUrl=http://192.168.1.10:8080
+./gradlew assembleRelease -Pautoslide.serverBaseUrl=http://192.168.100.1:8080
 ```
 
 重新编译安装即可。App 会在首次安装和版本升级时上报一次设备信息。
@@ -118,3 +118,5 @@ data/stats.json — 统计数据就存在这里（安装数、设备列表等）
 隧道配置：/etc/cloudflared/config.yml
 隧道凭据：/root/.cloudflared/
 系统服务：cloudflared（开机自启）和 autoslide-stats（统计服务，开机自启）
+
+重启后台命令：systemctl restart autoslide-stats
