@@ -6,6 +6,8 @@ const {
   CHAT_FILE,
   CHAT_IMAGE_DIR,
   CHAT_MESSAGE_LIMIT,
+  CHAT_RETENTION_DAYS,
+  CHAT_CLEANUP_INTERVAL_MS,
   LIMIT_CHAT_BODY,
   LIMIT_CHAT_IMAGE,
   LIMIT_JSON_BODY,
@@ -192,6 +194,8 @@ async function handleSend(req, res) {
     }
     const created = {
       seq: ch.lastSeq,
+      // 毫秒时间戳：过期清理靠它判断，比解析本地化的 time 字符串可靠
+      ts: Date.now(),
       channelId,
       deviceId,
       name: deviceName || deviceId,
@@ -259,6 +263,103 @@ function removeChannelImages(channel) {
   }
 }
 
+/* 取消息时间：优先用 ts；老消息没有该字段时回退解析本地化的 time 字符串 */
+function messageTime(msg) {
+  if (Number.isFinite(msg.ts)) return msg.ts;
+  const parsed = Date.parse(String(msg.time || '').replace(/\//g, '-'));
+  // 解析不出来的一律当作「刚刚」，宁可多留也不误删
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+/* 删除单条图片消息对应的文件 */
+function removeMessageImage(msg) {
+  if (msg.type !== 'image' || !msg.image) return;
+  const file = decodeURIComponent(String(msg.image).split('file=')[1] || '');
+  if (!file) return;
+  try {
+    fs.unlinkSync(safeJoin(CHAT_IMAGE_DIR, file));
+  } catch (e) {
+    /* 文件已不在或路径异常，忽略 */
+  }
+}
+
+/**
+ * 清除超过保留期的反馈消息与其图片。
+ *
+ * 反馈只用于沟通当下的问题，长期留存没有价值且扩大数据面，
+ * 因此按 CHAT_RETENTION_DAYS 定期清除。频道本身保留，只删消息。
+ *
+ * @returns {Promise<{messages:number, images:number}>} 本次清除的数量
+ */
+async function cleanupExpiredMessages() {
+  const cutoff = Date.now() - CHAT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  let removedMessages = 0;
+  let removedImages = 0;
+
+  await updateChat((chat) => {
+    for (const ch of chat.channels || []) {
+      const kept = [];
+      for (const msg of ch.messages || []) {
+        if (messageTime(msg) >= cutoff) {
+          kept.push(msg);
+          continue;
+        }
+        if (msg.type === 'image' && msg.image) {
+          removeMessageImage(msg);
+          removedImages += 1;
+        }
+        removedMessages += 1;
+      }
+      ch.messages = kept;
+    }
+  });
+
+  if (removedMessages) {
+    console.log(`[chat] 已清除 ${removedMessages} 条超过 ${CHAT_RETENTION_DAYS} 天的反馈消息，含 ${removedImages} 张图片`);
+  }
+  return { messages: removedMessages, images: removedImages };
+}
+
+/* 清除无引用的图片：频道被删或数据异常时残留的文件 */
+function cleanupOrphanImages(chat) {
+  if (!fs.existsSync(CHAT_IMAGE_DIR)) return 0;
+  const referenced = new Set();
+  for (const ch of chat.channels || []) {
+    for (const msg of ch.messages || []) {
+      if (msg.type !== 'image' || !msg.image) continue;
+      referenced.add(decodeURIComponent(String(msg.image).split('file=')[1] || ''));
+    }
+  }
+  let removed = 0;
+  for (const file of fs.readdirSync(CHAT_IMAGE_DIR)) {
+    if (referenced.has(file)) continue;
+    try {
+      fs.unlinkSync(safeJoin(CHAT_IMAGE_DIR, file));
+      removed += 1;
+    } catch (e) {
+      /* 忽略 */
+    }
+  }
+  if (removed) console.log(`[chat] 已清除 ${removed} 个无引用的图片文件`);
+  return removed;
+}
+
+/* 启动时先跑一次，之后按间隔定期执行 */
+function startCleanupTimer() {
+  const run = async () => {
+    try {
+      await cleanupExpiredMessages();
+      cleanupOrphanImages(readChat());
+    } catch (e) {
+      console.error('[chat] 清理失败', e);
+    }
+  };
+  run();
+  const timer = setInterval(run, CHAT_CLEANUP_INTERVAL_MS);
+  // 定时器不应阻止进程退出
+  if (timer.unref) timer.unref();
+}
+
 async function handleSaveAnnouncement(req, res) {
   const field = await readFields(req, LIMIT_JSON_BODY);
   const title = String(field('title') || '').trim().slice(0, 50);
@@ -284,6 +385,7 @@ function register(router) {
   router.on('POST', '/api/chat/send', handleSend);
   router.on('POST', '/api/chat/leave', handleLeave);
   router.on('POST', '/api/chat/delete', handleDelete);
+  startCleanupTimer();
 }
 
 module.exports = { register, readAnnouncement };

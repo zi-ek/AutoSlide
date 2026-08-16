@@ -16,6 +16,10 @@ const CHAT_IMAGE_DIR = path.join(DATA_DIR, 'chat-images');
 
 /* 单个频道保留的最近消息条数 */
 const CHAT_MESSAGE_LIMIT = 300;
+/* 反馈消息与图片的保留天数，超期自动清除 */
+const CHAT_RETENTION_DAYS = 7;
+/* 清理任务的执行间隔（毫秒），进程启动时也会先跑一次 */
+const CHAT_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /* 各接口的请求体上限 */
 const LIMIT_JSON_BODY = 64 * 1024;
@@ -35,6 +39,8 @@ module.exports = {
   CHAT_FILE,
   CHAT_IMAGE_DIR,
   CHAT_MESSAGE_LIMIT,
+  CHAT_RETENTION_DAYS,
+  CHAT_CLEANUP_INTERVAL_MS,
   LIMIT_JSON_BODY,
   LIMIT_UPLOAD_BODY,
   LIMIT_CHAT_BODY,
