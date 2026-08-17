@@ -9,7 +9,7 @@ const { sanitize, safeJoin, resolveUploadPath } = require('./paths');
 const { readBody, sendJson, sendHtml, clientIp } = require('./http');
 const { lookupIpLocation } = require('./ip');
 const { updateStats, touchDevice } = require('./stats');
-const { uploadsHtml, viewHtml } = require('./views/pages');
+const { viewHtml } = require('./views/pages');
 
 const manifestStore = new JsonStore(MANIFEST_FILE, () => ({ files: [] }));
 
@@ -113,7 +113,6 @@ function handleDownload(req, res, url) {
 function register(router) {
   router.on('POST', '/api/upload', handleUpload);
   router.on('GET', '/api/uploads', (req, res) => sendJson(res, 200, readManifest()));
-  router.on('GET', '/uploads', (req, res) => sendHtml(res, uploadsHtml(readManifest())));
   router.on('GET', '/view', handleView);
   router.on('GET', '/api/download', handleDownload);
 }

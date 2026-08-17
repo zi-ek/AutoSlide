@@ -398,14 +398,6 @@ test('看板别名路径可访问', async () => {
   }
 });
 
-test('GET /uploads 返回文件列表页', async () => {
-  const r = await req('GET', '/uploads');
-  assert.equal(r.status, 200);
-  assert.match(r.text, /脚本同步/);
-  // deviceName 经 sanitize()，空格会被替换成下划线
-  assert.match(r.text, /Google_Pixel_8/);
-});
-
 test('GET /view 返回脚本内容页且转义 HTML', async () => {
   const r = await req('GET', `/view?deviceId=${DEVICE_A}&filename=slide_settings.xml`);
   assert.equal(r.status, 200);

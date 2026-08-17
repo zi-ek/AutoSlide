@@ -10,7 +10,7 @@
 //   src/util.js         时间戳 / HTML 转义 / 字节格式化
 //   src/stats.js        统计域：/api/report、/api/stats、统计看板
 //   src/chat.js         聊天域：/api/chat/*
-//   src/uploads.js      上传域：/api/upload、/api/download、/view、/uploads
+//   src/uploads.js      上传域：/api/upload、/api/download、/view
 //   src/views/          页面模板与样式
 //
 // 接口一览：
@@ -19,7 +19,6 @@
 //   GET  /api/stats    返回统计 JSON
 //   GET  /api/uploads  返回已上传文件列表
 //   GET  /api/download?deviceId=..&filename=..  下载已上传文件
-//   GET  /uploads      浏览器查看已上传文件列表（含查看内容入口）
 //   GET  /view?deviceId=..&filename=..  浏览器查看脚本内容
 //   GET  /api/chat/*   聊天室（频道、消息、图片、公告）
 //   GET  /             统计看板页面

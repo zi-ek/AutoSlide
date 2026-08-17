@@ -104,7 +104,7 @@ src/ip.js — IP 归属地查询（带缓存上限）
 src/util.js — 时间戳 / HTML 转义 / 字节格式化
 src/stats.js — 统计域：/api/report、/api/stats、统计看板
 src/chat.js — 聊天域：/api/chat/*
-src/uploads.js — 上传域：/api/upload、/api/download、/view、/uploads
+src/uploads.js — 上传域：/api/upload、/api/download、/view
 src/views/styles.js、src/views/pages.js — 页面样式与模板
 package.json — 项目说明/启动脚本
 autoslide-stats.service — systemd 服务模板
