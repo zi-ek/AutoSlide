@@ -176,9 +176,9 @@ class InputRecorderView(
         // 右上角「等待」按钮：插入“等屏幕出现/消失指定文字”的条件步骤
         val waitButton = Button(context).apply {
             text = "＋等待"
-            textSize = 12f
+            textSize = 22f
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#CC2E7D32"))
+            setBackgroundColor(Color.parseColor("#6600ff"))
             isClickable = true
             setOnClickListener { onAddWaitFor() }
         }
@@ -187,7 +187,7 @@ class InputRecorderView(
             LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
                 // 顶部水平居中，避免遮挡右上角等常见操作元素
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                topMargin = dp(64)
+                topMargin = dp(80)
             }
         )
 

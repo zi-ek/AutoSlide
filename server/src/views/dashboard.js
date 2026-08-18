@@ -244,6 +244,7 @@ const dashboardStyles = `
   .ip-addr { font-family:var(--mono); font-size:12px; word-break:break-all; }
   .ip-loc { font-size:11px; color:var(--text-faint); }
   tr.hidden-row { display:none; }
+  .app-ver { font-family:var(--mono); font-size:12px; white-space:nowrap; }
   .script-badge { display:inline-block; min-width:20px; padding:1px 7px; border-radius:10px; background:var(--clay); color:#fff; font-family:var(--mono); font-size:11px; text-align:center; }
   .script-none { color:var(--text-faint); }
   .table-wrap tbody tr { cursor:pointer; }
@@ -546,6 +547,9 @@ function dashboardHtml(stats, announcement) {
         <td data-sort="${esc(String(d.scriptCount || 0))}">${
           d.scriptCount ? `<span class="script-badge">${esc(String(d.scriptCount))}</span>` : '<span class="script-none">—</span>'
         }</td>
+        <td data-sort="${esc(String(d.appVersionCode || 0))}">${
+          d.appVersion ? `<span class="app-ver">${esc(d.appVersion)}</span>` : '<span class="script-none">—</span>'
+        }</td>
         <td class="strong" data-sort="${esc(String(d.installs || 0))}">${esc(d.installs)}</td>
         <td>${esc(d.firstInstall)}</td>
         <td>${esc(d.lastSeen)}</td>
@@ -596,8 +600,8 @@ function dashboardHtml(stats, announcement) {
     </div>
     <div class="panel table-wrap">
       <table id="deviceTable">
-        <thead><tr><th>品牌</th><th>型号</th><th>脚本</th><th>安装次数</th><th>首次安装</th><th>最近上报</th><th>IP / 归属地</th></tr></thead>
-        <tbody>${rows || '<tr><td class="empty" colspan="7">暂无数据</td></tr>'}</tbody>
+        <thead><tr><th>品牌</th><th>型号</th><th>脚本</th><th>应用版本</th><th>安装次数</th><th>首次安装</th><th>最近上报</th><th>IP / 归属地</th></tr></thead>
+        <tbody>${rows || '<tr><td class="empty" colspan="8">暂无数据</td></tr>'}</tbody>
       </table>
     </div>
 

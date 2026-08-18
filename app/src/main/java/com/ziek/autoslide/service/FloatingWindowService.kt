@@ -521,6 +521,11 @@ class FloatingWindowService : Service() {
         val listView = ListView(dialogContext).apply {
             divider = ColorDrawable(ContextCompat.getColor(this@FloatingWindowService, R.color.dialog_divider))
             dividerHeight = 1
+            // 行内有导出/清除按钮：必须允许子项获得焦点（itemsCanFocus=true），
+            // 否则默认 itemsCanFocus=false 会让 ListView 把整行当作单个可聚焦项，
+            // 部分 ROM 上第一次按下被行焦点消费，按钮要点两次才响应。
+            // 注意：行内按钮必须保持默认 focusable=true，二者配合才能生效。
+            itemsCanFocus = true
         }
         // 触摸反馈用的可点击态背景（涟漪效果，来自当前主题的 selectableItemBackground）
         val rippleOutValue = TypedValue()
@@ -559,7 +564,7 @@ class FloatingWindowService : Service() {
                     // 收窄左内边距，让导出能贴过来（Button 默认左右各有约 20dp 内边距）
                     setPadding(dp(0), paddingTop, paddingRight, paddingBottom)
                     setOnClickListener {
-                        confirmDeleteMacro(name, names, listView)
+                        confirmDeleteMacro(name)
                     }
                 }
                 val exportButton = Button(dialogContext).apply {
@@ -910,24 +915,30 @@ class FloatingWindowService : Service() {
     /**
      * 清除确认弹窗
      *
+     * 先收起动作列表再弹确认框：动作列表与确认框都是 TYPE_APPLICATION_OVERLAY，
+     * 部分 ROM（如 MIUI）对同类型 overlay 弹窗的层级排序不稳定，叠放时确认框
+     * 可能被动作列表盖住。取消或删除后按当前记录重新打开列表。
+     *
      * @param name 录制名称
-     * @param names 列表当前数据（删除后刷新）
-     * @param listView 列表视图（删除后刷新）
      */
-    private fun confirmDeleteMacro(name: String, names: MutableList<String>, listView: ListView) {
-        val builder = MaterialAlertDialogBuilder(createDialogContext())
+    private fun confirmDeleteMacro(name: String) {
+        playListDialog?.dismiss()
+        playListDialog = null
+        MaterialAlertDialogBuilder(createDialogContext())
             .setTitle(R.string.macro_delete_title)
             .setMessage(getString(R.string.macro_delete_message, name))
             .setPositiveButton(R.string.confirm) { _, _ ->
                 deleteMacro(name)
-                names.remove(name)
-                (listView.adapter as? BaseAdapter)?.notifyDataSetChanged()
-                if (names.isEmpty()) {
-                    playListDialog?.dismiss()
+                // 删除后重新打开动作列表；没有剩余录制则不再弹出
+                if (listMacroNames().isNotEmpty()) {
+                    showPlayListDialog()
                 }
             }
-            .setNegativeButton(R.string.cancel, null)
-        showSystemAlertDialog(builder)
+            .setNegativeButton(R.string.cancel) { _, _ ->
+                // 取消删除，恢复动作列表
+                showPlayListDialog()
+            }
+            .let { showSystemAlertDialog(it) }
     }
 
     /* 删除指定名称的录制记录 */

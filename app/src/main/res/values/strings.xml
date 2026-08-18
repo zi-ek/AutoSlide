@@ -158,7 +158,7 @@
     <string name="total_swipes_label">累计滑屏</string>
     <string name="keyword_matches_label">关键词命中</string>
     <string name="saved_distance_label">节省手滑行程</string>
-    <string name="donate_tip">打赏个5毛钱吧</string>
+    <string name="donate_tip">若帮有助到你，就给点打赏点吧</string>
     <string name="donate_qr_desc">微信打赏二维码</string>
     <string name="chat_title">聊天</string>
     <string name="chat_refresh">刷新</string>
