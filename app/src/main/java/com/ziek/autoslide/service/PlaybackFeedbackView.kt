@@ -112,12 +112,9 @@ class PlaybackFeedbackView(context: Context) : View(context) {
             AutoSlideInputAction.BACK -> Unit // 返回动作不画标记
 
             AutoSlideInputAction.WAIT_FOR -> {
-                val label = if (input.waitDisappear) {
-                    "等待消失：${input.waitText}"
-                } else {
-                    "等待出现：${input.waitText}"
-                }
-                canvas.drawText(label, width / 2f, height * 0.35f, waitPaint)
+                // 这里绝对不能画出 waitText：等待期间的 OCR 兜底是整屏截图（含本覆盖层），
+                // 一旦把关键词画在屏幕上，OCR 会读到自己画的字并立刻判定条件成立。
+                canvas.drawText("等待条件中…", width / 2f, height * 0.35f, waitPaint)
             }
         }
     }
