@@ -277,7 +277,9 @@ class InputRecorderView(
             AutoSlideInput(
                 action = AutoSlideInputAction.FIND_AND_TAP,
                 delayMs = delayMs,
-                targetText = trimmed
+                targetText = trimmed,
+                // 按钮可能比“等待条件”晚出现很久（如看完 5 秒广告才弹按钮），给足等待时间
+                waitTimeoutMs = 120_000L
             )
         )
         recordedTapTextMarks.add("点击文字：$trimmed")

@@ -223,19 +223,22 @@ private data class OcrSnapshot(
     val height: Float,
     val lines: List<OcrLineInfo>
 ) {
+    /* 去除全部空白并转小写：兼容 OCR 把中文词组拆开识别（如“领取 额外”） */
+    private fun compact(text: String): String = text.filterNot { it.isWhitespace() }.lowercase()
+
     /* 整屏文字是否包含目标（不区分大小写） */
     fun contains(text: String): Boolean {
-        val target = text.lowercase()
-        return lines.any { it.text.lowercase().contains(target) }
+        val target = compact(text)
+        return lines.any { compact(it.text).contains(target) }
     }
 
     /* 返回包含目标文字的第一行中心坐标（归一化 0~1） */
     fun positionOf(text: String): Pair<Float, Float>? {
-        val target = text.lowercase()
+        val target = compact(text)
         val w = width.coerceAtLeast(1f)
         val h = height.coerceAtLeast(1f)
         for (line in lines) {
-            if (line.text.lowercase().contains(target)) {
+            if (compact(line.text).contains(target)) {
                 val cx = ((line.left + line.right) / 2f / w).coerceIn(0f, 1f)
                 val cy = ((line.top + line.bottom) / 2f / h).coerceIn(0f, 1f)
                 return cx to cy
@@ -883,8 +886,9 @@ private const val SPEED_CURVE_FACTOR = 0.7
             }
 
             AutoSlideInputAction.FIND_AND_TAP -> {
-                // 按文字点击由 dispatchOneInputSmart 专门处理，这里防御性转发
-                dispatchTapText(input, width, height)
+                // 防御分支：按文字点击只在 dispatchOneInputSmart 处理，绝不在这里递归转发
+                LogX.w(TAG, "FIND_AND_TAP reached dispatchOneInput, ignored")
+                false
             }
         }
     }
@@ -955,7 +959,19 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 lastOcrAt = now
                 val pos = takeOcrSnapshot()?.positionOf(text)
                 if (pos != null) {
-                    return dispatchOneInput(input.copy(x = pos.first, y = pos.second), width, height)
+                    return dispatchOneInput(
+                        input.copy(
+                            action = if (input.action == AutoSlideInputAction.FIND_AND_TAP) {
+                                AutoSlideInputAction.TAP
+                            } else {
+                                input.action
+                            },
+                            x = pos.first,
+                            y = pos.second
+                        ),
+                        width,
+                        height
+                    )
                 }
             }
             delay(MACRO_WAIT_POLL_INTERVAL_MS)
@@ -979,6 +995,12 @@ private const val SPEED_CURVE_FACTOR = 0.7
         if (bounds.isEmpty) return false
         return dispatchOneInput(
             input.copy(
+                // FIND_AND_TAP 派发时必须转成普通 TAP，否则会再次进入按文字点击造成无限递归
+                action = if (input.action == AutoSlideInputAction.FIND_AND_TAP) {
+                    AutoSlideInputAction.TAP
+                } else {
+                    input.action
+                },
                 x = bounds.centerX().toFloat() / width,
                 y = bounds.centerY().toFloat() / height
             ),
