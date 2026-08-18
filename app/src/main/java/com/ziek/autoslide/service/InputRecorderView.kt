@@ -480,16 +480,18 @@ class InputRecorderView(
         lastStrokeEndAt = now
     }
 
-    /* 标记第一个“实际触摸”动作（点击/长按/滑动/返回）为仅首轮执行；先插入的等待条件不算 */
+    /* 只把第一个“实际触摸”动作（点击/长按/滑动/返回）标记为仅首轮执行；
+     * 已标记过就不再处理，避免后续每个动作都被打上标记 */
     private fun markFirstLaunchIfNeeded() {
         if (!markFirstLaunchOnly) return
+        if (recordedInputs.any { it.launchOnce }) return
         for (i in recordedInputs.indices) {
             val item = recordedInputs[i]
             val isTouch = item.action == AutoSlideInputAction.TAP ||
                 item.action == AutoSlideInputAction.LONG_PRESS ||
                 item.action == AutoSlideInputAction.SWIPE ||
                 item.action == AutoSlideInputAction.BACK
-            if (isTouch && !item.launchOnce) {
+            if (isTouch) {
                 recordedInputs[i] = item.copy(launchOnce = true)
                 return
             }

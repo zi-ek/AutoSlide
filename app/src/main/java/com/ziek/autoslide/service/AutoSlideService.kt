@@ -365,11 +365,31 @@ private const val SPEED_CURVE_FACTOR = 0.7
             .getString(KEY_MACRO_PREFIX + name, null) ?: return null
         if (raw.isBlank()) return null
         // 优先解析新版 JSON 格式
-        AutoSlideInputCodec.decode(raw)?.let { return it }
+        AutoSlideInputCodec.decode(raw)?.let { return normalizeLaunchOnce(it) }
         // 兼容旧版“x,y;x,y;...”单路径格式
         val width = resources.displayMetrics.widthPixels
         val height = resources.displayMetrics.heightPixels
         return AutoSlideInputCodec.decodeLegacyPath(raw, width, height)
+    }
+
+    /**
+     * 兼容旧宏：早期版本存在把每个触摸动作都标成“仅首轮执行”的 bug。
+     * 读取时只保留第一个带标记的触摸动作，其余标记清除，避免回放时把正常点击全跳过。
+     */
+    private fun normalizeLaunchOnce(macro: List<AutoSlideInput>): List<AutoSlideInput> {
+        if (!macro.any { it.launchOnce }) return macro
+        val isTouch = { action: AutoSlideInputAction ->
+            action == AutoSlideInputAction.TAP ||
+                action == AutoSlideInputAction.LONG_PRESS ||
+                action == AutoSlideInputAction.SWIPE ||
+                action == AutoSlideInputAction.BACK
+        }
+        val firstLaunchIndex = macro.indexOfFirst { it.launchOnce && isTouch(it.action) }
+        if (firstLaunchIndex < 0) return macro
+        if (!macro.withIndex().any { (i, input) -> i != firstLaunchIndex && input.launchOnce }) return macro
+        return macro.mapIndexed { index, input ->
+            if (index != firstLaunchIndex && input.launchOnce) input.copy(launchOnce = false) else input
+        }
     }
 
     /**
@@ -912,30 +932,36 @@ private const val SPEED_CURVE_FACTOR = 0.7
         return dispatchOneInput(input, width, height)
     }
 
-    /* 按文字点击：节点树 → 延迟重试 → OCR，找不到就失败（回放中止，不乱点录制坐标） */
+    /**
+     * 按文字点击：轮询节点树/OCR，直到目标文字出现再点击。
+     * 目标文字可能比“等待条件”晚出现（例如成功提示先弹、按钮后渲染），
+     * 所以这里自己带等待超时（复用 WAIT_FOR 的 waitTimeoutMs），找不到才失败。
+     */
     private suspend fun dispatchTapText(input: AutoSlideInput, width: Int, height: Int): Boolean {
         val text = input.targetText.trim()
         if (text.isEmpty()) return false
-        var target = findNodeByTarget("", text)
-        if (target == null) {
-            // 内容加载慢：延迟重试一次再交给 OCR
-            delay(NODE_TREE_RETRY_DELAY_MS)
-            target = findNodeByTarget("", text)
-        }
-        if (target != null) {
-            return dispatchTapOnNode(input, target, width, height)
-        }
-        var pos = findOcrTextPosition(text)
-        if (pos == null) {
-            // 截图可能被系统频率限制拒绝（MIUI 等），稍等重试一次再放弃
-            delay(OCR_RETRY_DELAY_MS)
-            pos = findOcrTextPosition(text)
-        }
-        if (pos != null) {
-            return dispatchOneInput(input.copy(x = pos.first, y = pos.second), width, height)
+        val timeoutAt = SystemClock.elapsedRealtime() +
+            input.waitTimeoutMs.coerceIn(3_000L, 120_000L)
+        var lastOcrAt = 0L
+        while (SystemClock.elapsedRealtime() < timeoutAt) {
+            // 1) 节点树定位（可点击按钮优先）
+            val target = findNodeByTarget("", text)
+            if (target != null) {
+                return dispatchTapOnNode(input, target, width, height)
+            }
+            // 2) OCR 定位：节流轮询，每次都刷新快照，确保能看到新出现的文字
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastOcrAt >= MACRO_WAIT_OCR_INTERVAL_MS) {
+                lastOcrAt = now
+                val pos = takeOcrSnapshot()?.positionOf(text)
+                if (pos != null) {
+                    return dispatchOneInput(input.copy(x = pos.first, y = pos.second), width, height)
+                }
+            }
+            delay(MACRO_WAIT_POLL_INTERVAL_MS)
         }
         val snapshotAgeMs = lastOcrSnapshot?.let { SystemClock.elapsedRealtime() - it.capturedAtMs }
-        LogX.w(TAG, "FIND_AND_TAP text not found: '$text', lastOcrSnapshotAge=$snapshotAgeMs")
+        LogX.w(TAG, "FIND_AND_TAP timeout, text not found: '$text', lastOcrSnapshotAge=$snapshotAgeMs")
         Toast.makeText(this, getString(R.string.tap_text_not_found, text), Toast.LENGTH_LONG).show()
         return false
     }
