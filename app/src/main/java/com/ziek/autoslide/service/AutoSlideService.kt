@@ -163,6 +163,7 @@ open class AutoSlideService : AccessibilityService() {
     private val slideRunnable = Runnable { runSlide() }
     private var lastSkipTapAt = 0L // 上次点击跳过按钮的时间（冷却用）
     private var lastOcrAt = 0L // 上次 OCR 兜底识别的时间（节流用）
+    private var lastOcrSnapshot: OcrSnapshot? = null // 最近一次整屏 OCR 快照（等待/点文字共用）
     /* 自动点击事件驱动的去抖：连续界面事件合并成一次检查，界面静止时完全不唤醒 */
     private var autoTapCheckPending = false
     /* 互斥：同一时间只允许一个自动点击检查执行，防止并发重复点击（CAS 原子抢占） */
@@ -206,6 +207,44 @@ private data class NodeTargetInfo(
     val id: String
 )
 
+/* OCR 识别出的单行文字及其像素坐标 */
+private data class OcrLineInfo(
+    val text: String,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float
+)
+
+/* 整屏 OCR 快照：一次截图 + 识别供多个连续动作复用，避免系统截图频率限制 */
+private data class OcrSnapshot(
+    val capturedAtMs: Long,
+    val width: Float,
+    val height: Float,
+    val lines: List<OcrLineInfo>
+) {
+    /* 整屏文字是否包含目标（不区分大小写） */
+    fun contains(text: String): Boolean {
+        val target = text.lowercase()
+        return lines.any { it.text.lowercase().contains(target) }
+    }
+
+    /* 返回包含目标文字的第一行中心坐标（归一化 0~1） */
+    fun positionOf(text: String): Pair<Float, Float>? {
+        val target = text.lowercase()
+        val w = width.coerceAtLeast(1f)
+        val h = height.coerceAtLeast(1f)
+        for (line in lines) {
+            if (line.text.lowercase().contains(target)) {
+                val cx = ((line.left + line.right) / 2f / w).coerceIn(0f, 1f)
+                val cy = ((line.top + line.bottom) / 2f / h).coerceIn(0f, 1f)
+                return cx to cy
+            }
+        }
+        return null
+    }
+}
+
     private fun runSlide() {
         if (!isRunning) {
             return
@@ -241,6 +280,10 @@ private const val MACRO_LOOP_GAP_MAX_MS = 15_000L
 private const val MACRO_WAIT_POLL_INTERVAL_MS = 300L
 /* 宏回放等待条件：OCR 兜底识别间隔（毫秒），节点树找不到文字时才启用 */
 private const val MACRO_WAIT_OCR_INTERVAL_MS = 1500L
+/* OCR 快照缓存有效期（毫秒）：等待命中后紧接着的“点文字”复用同一次截图，规避系统截图频率限制 */
+private const val OCR_SNAPSHOT_TTL_MS = 2000L
+/* OCR 截图被系统频率限制拒绝后的重试等待（毫秒） */
+private const val OCR_RETRY_DELAY_MS = 1000L
 /* 跳过按钮点击冷却，防止关键词检测与跳过检测重复点击 */
 private const val SKIP_TAP_COOLDOWN_MS = 1500L
 /* 自动点击事件去抖：界面变化事件频繁时合并成一次检查 */
@@ -854,7 +897,12 @@ private const val SPEED_CURVE_FACTOR = 0.7
                     return dispatchTapOnNode(input, retry, width, height)
                 }
                 // 2) OCR 画面文字定位（节点树没有的画面文字，如视频上的「继续观看」）
-                val pos = findOcrTextPosition(input.targetText)
+                var pos = findOcrTextPosition(input.targetText)
+                if (pos == null) {
+                    // 截图可能被系统频率限制拒绝（MIUI 等），稍等重试一次
+                    delay(OCR_RETRY_DELAY_MS)
+                    pos = findOcrTextPosition(input.targetText)
+                }
                 if (pos != null) {
                     return dispatchOneInput(input.copy(x = pos.first, y = pos.second), width, height)
                 }
@@ -877,11 +925,17 @@ private const val SPEED_CURVE_FACTOR = 0.7
         if (target != null) {
             return dispatchTapOnNode(input, target, width, height)
         }
-        val pos = findOcrTextPosition(text)
+        var pos = findOcrTextPosition(text)
+        if (pos == null) {
+            // 截图可能被系统频率限制拒绝（MIUI 等），稍等重试一次再放弃
+            delay(OCR_RETRY_DELAY_MS)
+            pos = findOcrTextPosition(text)
+        }
         if (pos != null) {
             return dispatchOneInput(input.copy(x = pos.first, y = pos.second), width, height)
         }
-        LogX.w(TAG, "FIND_AND_TAP text not found: '$text'")
+        val snapshotAgeMs = lastOcrSnapshot?.let { SystemClock.elapsedRealtime() - it.capturedAtMs }
+        LogX.w(TAG, "FIND_AND_TAP text not found: '$text', lastOcrSnapshotAge=$snapshotAgeMs")
         Toast.makeText(this, getString(R.string.tap_text_not_found, text), Toast.LENGTH_LONG).show()
         return false
     }
@@ -1815,12 +1869,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastOcrAt >= MACRO_WAIT_OCR_INTERVAL_MS) {
                         lastOcrAt = now
-                        val bitmap = captureScreenBitmap()
-                        if (bitmap != null) {
-                            val screenText = recognizeScreenText(bitmap)
-                            bitmap.recycle()
-                            ocrExists = screenText.contains(text)
-                        }
+                        // 每次轮询重新截图识别并刷新快照，供后面的“点文字”直接复用
+                        ocrExists = takeOcrSnapshot()?.contains(text) == true
                     }
                 }
                 val exists = nodeExists || ocrExists
@@ -1841,19 +1891,59 @@ private const val SPEED_CURVE_FACTOR = 0.7
         }
     }
 
-    /* 使用 ML Kit 中文模型识别整屏文字（宏等待条件的 OCR 兜底） */
-
-    private suspend fun recognizeScreenText(bitmap: Bitmap): String = withContext(Dispatchers.IO) {
+    /**
+     * 重新截图并用 ML Kit 识别整屏文字，更新 OCR 快照缓存。
+     * 等待条件 / 点文字等连续动作共享同一次截图，避免系统截图频率限制导致失败。
+     *
+     * @return 本次识别的快照；截图失败返回 null
+     */
+    private suspend fun takeOcrSnapshot(): OcrSnapshot? {
+        val bitmap = captureScreenBitmap() ?: return null
         try {
-            val recognizer = textRecognizer ?: TextRecognition.getClient(
-                ChineseTextRecognizerOptions.Builder().build()
-            ).also { textRecognizer = it }
-            val image = InputImage.fromBitmap(bitmap, 0)
-            Tasks.await(recognizer.process(image)).text
-        } catch (e: Exception) {
-            LogX.w(TAG, "Macro wait OCR failed", e)
-            ""
+            val width = bitmap.width.coerceAtLeast(1).toFloat()
+            val height = bitmap.height.coerceAtLeast(1).toFloat()
+            val lines = withContext(Dispatchers.IO) {
+                try {
+                    val recognizer = textRecognizer ?: TextRecognition.getClient(
+                        ChineseTextRecognizerOptions.Builder().build()
+                    ).also { textRecognizer = it }
+                    val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
+                    result.textBlocks.flatMap { block ->
+                        block.lines.mapNotNull { line ->
+                            val box = line.boundingBox ?: return@mapNotNull null
+                            val text = line.text.trim()
+                            if (text.isEmpty()) return@mapNotNull null
+                            OcrLineInfo(
+                                text = text,
+                                left = box.left.toFloat(),
+                                top = box.top.toFloat(),
+                                right = box.right.toFloat(),
+                                bottom = box.bottom.toFloat()
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    LogX.w(TAG, "OCR snapshot failed", e)
+                    emptyList()
+                }
+            }
+            val snapshot = OcrSnapshot(SystemClock.elapsedRealtime(), width, height, lines)
+            lastOcrSnapshot = snapshot
+            LogX.d(TAG, "OCR snapshot refreshed: lines=${lines.size}")
+            return snapshot
+        } finally {
+            bitmap.recycle()
         }
+    }
+
+    /* 获取 OCR 快照：缓存未过期直接复用（等待命中后紧接着的点击动作不再重复截图） */
+    private suspend fun getOcrSnapshot(maxAgeMs: Long): OcrSnapshot? {
+        val cached = lastOcrSnapshot
+        val now = SystemClock.elapsedRealtime()
+        if (cached != null && now - cached.capturedAtMs <= maxAgeMs) {
+            return cached
+        }
+        return takeOcrSnapshot()
     }
 
     /* BFS 查找第一个文本/描述包含目标文字的节点（不区分大小写） */
@@ -2356,36 +2446,9 @@ private const val SPEED_CURVE_FACTOR = 0.7
     /* 回放定位：OCR 在整屏找包含目标文字的行，返回归一化中心坐标 */
     private suspend fun findOcrTextPosition(targetText: String): Pair<Float, Float>? {
         if (targetText.isBlank()) return null
-        val bitmap = captureScreenBitmap() ?: return null
-        try {
-            val targetLower = targetText.lowercase()
-            val width = bitmap.width.coerceAtLeast(1).toFloat()
-            val height = bitmap.height.coerceAtLeast(1).toFloat()
-            val result = withContext(Dispatchers.IO) {
-                try {
-                    val recognizer = textRecognizer ?: TextRecognition.getClient(
-                        ChineseTextRecognizerOptions.Builder().build()
-                    ).also { textRecognizer = it }
-                    Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
-                } catch (e: Exception) {
-                    null
-                }
-            }
-            if (result != null) {
-                for (block in result.textBlocks) {
-                    for (line in block.lines) {
-                        val box = line.boundingBox
-                        if (box != null && line.text.lowercase().contains(targetLower)) {
-                            return (box.centerX().toFloat() / width).coerceIn(0f, 1f) to
-                                (box.centerY().toFloat() / height).coerceIn(0f, 1f)
-                        }
-                    }
-                }
-            }
-            return null
-        } finally {
-            bitmap.recycle()
-        }
+        // 优先复用最近一次 OCR 快照（例如刚被“等待条件”识别出的那一次），
+        // 避免紧接着截图触发 MIUI 等系统的截图频率限制
+        return getOcrSnapshot(OCR_SNAPSHOT_TTL_MS)?.positionOf(targetText)
     }
 
     /**
