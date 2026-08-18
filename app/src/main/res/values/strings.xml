@@ -43,7 +43,7 @@
     <string name="desc_resume_all">恢复所有自动功能</string>
     <string name="automation_paused">已暂停所有自动功能</string>
     <string name="automation_resumed">已恢复自动功能</string>
-    <string name="record_instruction_format">正在录制「%1$s」：直接在屏幕上进行[点击/滑动]，所有动作会被记录（含等待时间），按音量上键↑保存，按音量下↓键取消</string>
+    <string name="record_instruction_format">正在记录「%1$s」：直接在屏幕上[点击/滑动]，可点顶部[＋等待/＋点文字]插入关键词步骤，按音量上↑保存，按音量下↓取消</string>
     <string name="record_cancelled">已取消录制</string>
     <string name="record_empty">未录制到任何操作</string>
     <string name="record_name_title">动作录制</string>
@@ -76,6 +76,11 @@
     <string name="wait_for_disappear">等文字消失</string>
     <string name="wait_for_empty">请输入等待文字</string>
     <string name="wait_for_timeout">等待「%1$s」超时，回放已中止</string>
+    <string name="record_launch_once_label">第一步仅首轮执行（用于点击桌面图标启动App）</string>
+    <string name="tap_text_title">点击指定文字</string>
+    <string name="tap_text_hint">要点击的文字（如：继续、领取）</string>
+    <string name="tap_text_empty">请输入要点击的文字</string>
+    <string name="tap_text_not_found">未找到要点击的文字「%1$s」，回放已中止</string>
     <string name="desc_record">录制操作宏</string>
     <string name="desc_play">回放操作宏</string>
     <string name="macro_not_found">还没有录制记录，请先点录制按钮新建</string>

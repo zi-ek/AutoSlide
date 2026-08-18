@@ -38,6 +38,7 @@ import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.BaseAdapter
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
@@ -78,6 +79,7 @@ import com.ziek.autoslide.SlideEventHub
 import com.ziek.autoslide.KEY_FLOATING_DESIRED
 import com.ziek.autoslide.KEY_MACRO_PREFIX
 import com.ziek.autoslide.KEY_MACRO_LOOP_COUNT
+import com.ziek.autoslide.KEY_MACRO_LAUNCH_ONCE
 import com.ziek.autoslide.MacroSync
 import com.ziek.autoslide.input.AutoSlideInput
 import com.ziek.autoslide.input.AutoSlideInputCodec
@@ -469,9 +471,25 @@ class FloatingWindowService : Service() {
             }
         }
         inputLayout.addView(input)
-        val container = FrameLayout(dialogContext).apply {
+        val launchOnceCheck = CheckBox(dialogContext).apply {
+            text = getString(R.string.record_launch_once_label)
+            textSize = 14f
+            isChecked = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .getBoolean(KEY_MACRO_LAUNCH_ONCE, true)
+        }
+        val container = LinearLayout(dialogContext).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(12), dp(24), 0)
             addView(inputLayout)
+            addView(
+                launchOnceCheck,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(8)
+                }
+            )
         }
         val builder = MaterialAlertDialogBuilder(dialogContext)
             .setTitle(R.string.record_name_title)
@@ -481,7 +499,11 @@ class FloatingWindowService : Service() {
                 if (name.isEmpty()) {
                     Toast.makeText(this, R.string.record_name_empty, Toast.LENGTH_SHORT).show()
                 } else {
-                    startRecordingTrajectory(name)
+                    val launchOnce = launchOnceCheck.isChecked
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
+                        putBoolean(KEY_MACRO_LAUNCH_ONCE, launchOnce)
+                    }
+                    startRecordingTrajectory(name, launchOnce)
                 }
             }
             .setNegativeButton(R.string.cancel, null)
@@ -806,8 +828,9 @@ class FloatingWindowService : Service() {
         playbackCountdownLabel = label
         playbackCountdownJob = serviceScope.launch {
             // 倒计时期间自动回桌面查找并打开与录制名称匹配的 App（找不到则照常回放）
+            var autoLaunched = false
             val autoLaunchJob = launch {
-                runCatching { service.autoFindAndOpenAppByName(name) }
+                autoLaunched = runCatching { service.autoFindAndOpenAppByName(name) }.getOrDefault(false)
             }
             for (i in 10 downTo 0) {
                 circle.text = i.toString()
@@ -818,10 +841,11 @@ class FloatingWindowService : Service() {
             playbackCountdownLabel?.let { runCatching { windowManager.removeView(it) } }
             playbackCountdownLabel = null
             // 倒计时结束但 App 还在翻页查找时，最多再等 30 秒（多页桌面翻页+OCR 较慢）
-            withTimeoutOrNull(30_000) { autoLaunchJob.join() }
+            withTimeoutOrNull(30_000) { autoLaunchJob.join(); autoLaunched }
             val started = service.playMacro(
                 name,
                 loopCount,
+                skipLaunchOnce = autoLaunched,
                 onFinished = { showPlaybackFinishedDialog() },
                 onActionStart = { input -> playbackFeedbackView?.showAction(input) },
                 onEnd = {
@@ -969,8 +993,9 @@ class FloatingWindowService : Service() {
      * 开始录制操作宏（与方向键解耦）
      *
      * @param name 录制名称
+     * @param markFirstLaunchOnly 是否把第一个触摸动作标记为“仅首轮执行”
      */
-    private fun startRecordingTrajectory(name: String) {
+    private fun startRecordingTrajectory(name: String, markFirstLaunchOnly: Boolean = true) {
         AutoSlideService.getInstance()?.stopSlide()
         // 录制期间完全隐藏悬浮窗（不显示悬浮球）
         hideFloatingWindow()
@@ -998,7 +1023,11 @@ class FloatingWindowService : Service() {
             },
             onAddWaitFor = {
                 showWaitForDialog(recordView)
-            }
+            },
+            onAddTapText = {
+                showTapTextDialog(recordView)
+            },
+            markFirstLaunchOnly = markFirstLaunchOnly
         )
         // 创建录制视图布局参数
         val density = resources.displayMetrics.density
@@ -1075,6 +1104,44 @@ class FloatingWindowService : Service() {
                     Toast.makeText(this, R.string.wait_for_empty, Toast.LENGTH_SHORT).show()
                 } else {
                     recordView.addWaitForAction(text, disappearRadio.isChecked)
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .let { showSystemAlertDialog(it) }
+    }
+
+    /* 弹出「插入点击文字」窗口：输入文字，回放时先找到该文字再点击 */
+    private fun showTapTextDialog(recordView: InputRecorderView) {
+        val dialogContext = createDialogContext()
+        val inputLayout = TextInputLayout(dialogContext).apply {
+            boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
+            hint = getString(R.string.tap_text_hint)
+        }
+        val input = TextInputEditText(inputLayout.context).apply {
+            isSingleLine = true
+            // 服务上下文创建输入框时禁用文本选择工具条，
+            // 避免部分机型（如 ColorOS）在弹出选择工具栏时 getDisplay 崩溃
+            customSelectionActionModeCallback = object : ActionMode.Callback {
+                override fun onCreateActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
+                override fun onPrepareActionMode(mode: ActionMode?, menu: Menu?): Boolean = false
+                override fun onActionItemClicked(mode: ActionMode?, item: MenuItem?): Boolean = false
+                override fun onDestroyActionMode(mode: ActionMode?) {}
+            }
+        }
+        inputLayout.addView(input)
+        val container = FrameLayout(dialogContext).apply {
+            setPadding(dp(24), dp(12), dp(24), 0)
+            addView(inputLayout)
+        }
+        MaterialAlertDialogBuilder(dialogContext)
+            .setTitle(R.string.tap_text_title)
+            .setView(container)
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                val text = input.text.toString().trim()
+                if (text.isEmpty()) {
+                    Toast.makeText(this, R.string.tap_text_empty, Toast.LENGTH_SHORT).show()
+                } else {
+                    recordView.addTapTextAction(text)
                 }
             }
             .setNegativeButton(R.string.cancel, null)

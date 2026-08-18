@@ -105,6 +105,7 @@ const val DEFAULT_KEYWORD_DIRECTION = DIRECTION_UP
 // 值为 PlainApp 输入框架的 JSON 数组（点击/长按/滑动/等待）
 const val KEY_MACRO_PREFIX = "macro_"
 const val KEY_MACRO_LOOP_COUNT = "macroLoopCount"     // 回放时记住上次使用的循环次数
+const val KEY_MACRO_LAUNCH_ONCE = "macroLaunchOnce"   // 录制时第一步是否标记为“仅首轮执行”（默认开启）
 
 /**
  * 兼容读取关键词时间参数（单位：秒）

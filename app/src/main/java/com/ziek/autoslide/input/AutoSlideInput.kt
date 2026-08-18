@@ -20,7 +20,8 @@ enum class AutoSlideInputAction {
     LONG_PRESS, // 长按
     SWIPE,      // 滑动（含路径点）
     BACK,       // 返回（系统返回键/边缘滑动返回）
-    WAIT_FOR    // 等待条件：等屏幕出现/消失指定文字（宏回放时使用）
+    WAIT_FOR,   // 等待条件：等屏幕出现/消失指定文字（宏回放时使用）
+    FIND_AND_TAP // 按文字点击：回放时先在节点树/OCR 中找到指定文字再点击（不依赖录制坐标）
 }
 
 /**
@@ -39,6 +40,8 @@ enum class AutoSlideInputAction {
  * @param waitTimeoutMs 等待超时时间（毫秒），超时后回放中止
  * @param targetId 录制时点击位置的控件 id（回放时优先按控件定位，找不到则退回坐标）
  * @param targetText 录制时点击位置的控件文字/OCR 识别文字（回放时按文字定位）
+ * @param launchOnce 仅首轮执行：循环回放时第一轮执行，从第二轮起跳过
+ *                   （用于“回桌面点击图标启动 App”这类只需执行一次的动作）
  */
 data class AutoSlideInput(
     val action: AutoSlideInputAction,
@@ -53,7 +56,8 @@ data class AutoSlideInput(
     val waitDisappear: Boolean = false,
     val waitTimeoutMs: Long = 30_000L,
     val targetId: String = "",
-    val targetText: String = ""
+    val targetText: String = "",
+    val launchOnce: Boolean = false
 ) {
     /* 序列化为 JSON 对象 */
     fun toJson(): JSONObject = JSONObject().apply {
@@ -69,6 +73,7 @@ data class AutoSlideInput(
         put("waitTimeout", waitTimeoutMs)
         put("targetId", targetId)
         put("targetText", targetText)
+        put("launchOnce", launchOnce)
         if (points.isNotEmpty()) {
             put("points", JSONArray().apply { points.forEach { put(it.toDouble()) } })
         }
@@ -93,7 +98,8 @@ data class AutoSlideInput(
                     waitDisappear = obj.optBoolean("waitDisappear", false),
                     waitTimeoutMs = obj.optLong("waitTimeout", 30_000L).coerceIn(1_000L, 120_000L),
                     targetId = obj.optString("targetId", ""),
-                    targetText = obj.optString("targetText", "")
+                    targetText = obj.optString("targetText", ""),
+                    launchOnce = obj.optBoolean("launchOnce", false)
                 )
             } catch (e: Exception) {
                 Log.e("AutoSlideInputCodec", "fromJson failed, action=${obj.optString("action")}", e)

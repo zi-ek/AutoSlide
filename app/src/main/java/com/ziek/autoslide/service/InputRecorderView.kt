@@ -22,8 +22,9 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.FrameLayout
 import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.graphics.toColorInt
 import com.ziek.autoslide.input.AutoSlideInput
@@ -43,6 +44,9 @@ import kotlin.math.sqrt
  * @param onCancelled 取消回调
  * @param onStrokeRecorded 每录完一个动作后的实时同步回调（挂起函数，等派发完成再恢复触摸）
  * @param onAddWaitFor 点击「等待」按钮的回调（由外层弹出输入窗口，确认后调用 [addWaitForAction]）
+ * @param onAddTapText 点击「点文字」按钮的回调（由外层弹出输入窗口，确认后调用 [addTapTextAction]）
+ * @param markFirstLaunchOnly 是否把第一个触摸动作标记为“仅首轮执行”
+ *                            （用于“回桌面点击图标启动 App”这类只需执行一次的动作）
  */
 @SuppressLint("ViewConstructor")
 class InputRecorderView(
@@ -51,7 +55,9 @@ class InputRecorderView(
     private val onRecorded: (List<AutoSlideInput>) -> Unit,
     private val onCancelled: () -> Unit,
     private val onStrokeRecorded: suspend (AutoSlideInput) -> Unit,
-    private val onAddWaitFor: () -> Unit
+    private val onAddWaitFor: () -> Unit,
+    private val onAddTapText: () -> Unit,
+    private val markFirstLaunchOnly: Boolean = false
 ) : FrameLayout(context) {
 
     private val screenWidth: Int
@@ -72,6 +78,8 @@ class InputRecorderView(
     private val recordedStrokes = mutableListOf<List<Float>>()
     /* 已插入的等待条件标记（绿色文字显示在屏幕上） */
     private val recordedWaitMarks = mutableListOf<String>()
+    /* 已插入的“点击指定文字”标记（橙色文字显示在屏幕上） */
+    private val recordedTapTextMarks = mutableListOf<String>()
     /* 当前手势的起点与按下时间 */
     private var startX = 0f
     private var startY = 0f
@@ -111,6 +119,15 @@ class InputRecorderView(
         setShadowLayer(5f, 0f, 0f, Color.BLACK)
     }
 
+    /* 点击指定文字标记画笔：橙色提示 */
+    private val tapTextMarkPaint = Paint().apply {
+        color = Color.parseColor("#FFB300")
+        textSize = 28f
+        isAntiAlias = true
+        textAlign = Paint.Align.CENTER
+        setShadowLayer(5f, 0f, 0f, Color.BLACK)
+    }
+
     /* 绘制当前轨迹的视图 */
     private val drawView = object : View(context) {
         override fun onDraw(canvas: Canvas) {
@@ -125,15 +142,19 @@ class InputRecorderView(
             if (touching) {
                 drawStroke(canvas, currentPoints)
             }
-            // 底部显示已录制数量
+            // 底部显示已记录数量
             if (!touching && recordedInputs.isNotEmpty()) {
-                val countText = "已录制 ${recordedInputs.size} 个动作，可继续操作，按音量上↑键保存"
+                val countText = "已记录 ${recordedInputs.size} 个动作，可继续操作，按音量上↑键保存"
                 canvas.drawText(countText, w / 2f, h - 5f * density, hintPaint)
             }
             // 绘制已插入的等待条件标记（从屏幕上方往下排，不遮挡底部操作区）
             var markY = 100f * density
             for (mark in recordedWaitMarks) {
                 canvas.drawText(mark, w / 2f, markY, waitMarkPaint)
+                markY += 40f * density
+            }
+            for (mark in recordedTapTextMarks) {
+                canvas.drawText(mark, w / 2f, markY, tapTextMarkPaint)
                 markY += 40f * density
             }
         }
@@ -158,7 +179,7 @@ class InputRecorderView(
             setTextColor(Color.WHITE)
             textSize = 14f
             gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(Color.parseColor("#99000000"))
+            setBackgroundColor(Color.parseColor("#993366cc"))
             setPadding(dp(12), dp(8), dp(12), dp(8))
             isClickable = false
             isFocusable = false
@@ -166,14 +187,14 @@ class InputRecorderView(
         addView(
             instructionView,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                topMargin = dp(12)
+                topMargin = dp(150)
                 marginStart = dp(12)
                 marginEnd = dp(12)
             }
         )
         addView(drawView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-        // 右上角「等待」按钮：插入“等屏幕出现/消失指定文字”的条件步骤
+        // 顶部居中的「＋等待」「＋点文字」按钮行：插入文字条件 / 按文字点击步骤
         val waitButton = Button(context).apply {
             text = "＋等待"
             textSize = 22f
@@ -182,8 +203,27 @@ class InputRecorderView(
             isClickable = true
             setOnClickListener { onAddWaitFor() }
         }
+        val tapTextButton = Button(context).apply {
+            text = "＋点文字"
+            textSize = 22f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#b45309"))
+            isClickable = true
+            setOnClickListener { onAddTapText() }
+        }
+        val markButtonRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            addView(
+                waitButton,
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    marginEnd = dp(8)
+                }
+            )
+            addView(tapTextButton, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
         addView(
-            waitButton,
+            markButtonRow,
             LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
                 // 顶部水平居中，避免遮挡右上角等常见操作元素
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
@@ -217,6 +257,34 @@ class InputRecorderView(
         drawView.invalidate()
     }
 
+    /**
+     * 插入一条“点击指定文字”动作（由外层弹窗确认后调用）。
+     * 回放时先在无障碍节点树 / OCR 中找到该文字再点击，不依赖录制时的固定坐标，
+     * 用于广告等原因导致按钮位置变化的场景。
+     *
+     * @param text 要点击的文字
+     */
+    fun addTapTextAction(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        val now = SystemClock.elapsedRealtime()
+        val delayMs = if (lastStrokeEndAt == 0L) {
+            0L
+        } else {
+            (now - lastStrokeEndAt).coerceIn(0L, MAX_RECORD_WAIT_MS)
+        }
+        recordedInputs.add(
+            AutoSlideInput(
+                action = AutoSlideInputAction.FIND_AND_TAP,
+                delayMs = delayMs,
+                targetText = trimmed
+            )
+        )
+        recordedTapTextMarks.add("点击文字：$trimmed")
+        lastStrokeEndAt = now
+        drawView.invalidate()
+    }
+
     /* 窗口挂载后请求焦点并记录画布位置 */
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -245,6 +313,7 @@ class InputRecorderView(
                 }
                 // 返回键录制成 BACK 动作并立即执行，让录制中的 App 正常返回
                 recordBackAction()
+                markFirstLaunchIfNeeded()
                 AutoSlideService.getInstance()
                     ?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                 true
@@ -411,6 +480,22 @@ class InputRecorderView(
         lastStrokeEndAt = now
     }
 
+    /* 标记第一个“实际触摸”动作（点击/长按/滑动/返回）为仅首轮执行；先插入的等待条件不算 */
+    private fun markFirstLaunchIfNeeded() {
+        if (!markFirstLaunchOnly) return
+        for (i in recordedInputs.indices) {
+            val item = recordedInputs[i]
+            val isTouch = item.action == AutoSlideInputAction.TAP ||
+                item.action == AutoSlideInputAction.LONG_PRESS ||
+                item.action == AutoSlideInputAction.SWIPE ||
+                item.action == AutoSlideInputAction.BACK
+            if (isTouch && !item.launchOnce) {
+                recordedInputs[i] = item.copy(launchOnce = true)
+                return
+            }
+        }
+    }
+
     /* 追加一个归一化采样点 */
     private fun addPoint(event: MotionEvent) {
         currentPoints.add((event.rawX / screenWidth).coerceIn(0f, 1f))
@@ -480,6 +565,7 @@ class InputRecorderView(
             recordedInputs.add(input)
             // 把这条笔画保留下来持续显示
             recordedStrokes.add(currentPoints.toList())
+            markFirstLaunchIfNeeded()
         }
     }
 

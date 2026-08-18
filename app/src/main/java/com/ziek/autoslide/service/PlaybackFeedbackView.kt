@@ -116,6 +116,11 @@ class PlaybackFeedbackView(context: Context) : View(context) {
                 // 一旦把关键词画在屏幕上，OCR 会读到自己画的字并立刻判定条件成立。
                 canvas.drawText("等待条件中…", width / 2f, height * 0.35f, waitPaint)
             }
+
+            AutoSlideInputAction.FIND_AND_TAP -> {
+                // 与等待条件同理：不能把目标文字画上屏，否则 OCR 会读到自己画的字
+                canvas.drawText("按文字定位中…", width / 2f, height * 0.35f, waitPaint)
+            }
         }
     }
 }

@@ -818,6 +818,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 // 等待条件由 playMacro 专门处理，不会走到这里（防御分支）
                 true
             }
+
+            AutoSlideInputAction.FIND_AND_TAP -> {
+                // 按文字点击由 dispatchOneInputSmart 专门处理，这里防御性转发
+                dispatchTapText(input, width, height)
+            }
         }
     }
 
@@ -831,25 +836,24 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * @return 手势是否成功派发
      */
     private suspend fun dispatchOneInputSmart(input: AutoSlideInput, width: Int, height: Int): Boolean {
+        // 按文字点击：只认文字，不认坐标（广告导致按钮位置变化时也能点到）
+        if (input.action == AutoSlideInputAction.FIND_AND_TAP) {
+            return dispatchTapText(input, width, height)
+        }
         if (input.action == AutoSlideInputAction.TAP || input.action == AutoSlideInputAction.LONG_PRESS) {
             // 1) 节点树控件定位（id 优先，其次文字）
             val target = findNodeByTarget(input.targetId, input.targetText)
             if (target != null) {
-                val bounds = Rect()
-                runCatching { target.getBoundsInScreen(bounds) }
-                if (!bounds.isEmpty) {
-                    return dispatchOneInput(
-                        input.copy(
-                            x = bounds.centerX().toFloat() / width,
-                            y = bounds.centerY().toFloat() / height
-                        ),
-                        width,
-                        height
-                    )
-                }
+                return dispatchTapOnNode(input, target, width, height)
             }
-            // 2) OCR 画面文字定位（节点树没有的画面文字，如视频上的「继续观看」）
+            // 1.5) 按钮/广告内容加载慢时，节点树延迟重试一次再决定是否退回坐标
             if (input.targetText.isNotEmpty()) {
+                delay(NODE_TREE_RETRY_DELAY_MS)
+                val retry = findNodeByTarget(input.targetId, input.targetText)
+                if (retry != null) {
+                    return dispatchTapOnNode(input, retry, width, height)
+                }
+                // 2) OCR 画面文字定位（节点树没有的画面文字，如视频上的「继续观看」）
                 val pos = findOcrTextPosition(input.targetText)
                 if (pos != null) {
                     return dispatchOneInput(input.copy(x = pos.first, y = pos.second), width, height)
@@ -858,6 +862,49 @@ private const val SPEED_CURVE_FACTOR = 0.7
         }
         // 3) 退回录制坐标
         return dispatchOneInput(input, width, height)
+    }
+
+    /* 按文字点击：节点树 → 延迟重试 → OCR，找不到就失败（回放中止，不乱点录制坐标） */
+    private suspend fun dispatchTapText(input: AutoSlideInput, width: Int, height: Int): Boolean {
+        val text = input.targetText.trim()
+        if (text.isEmpty()) return false
+        var target = findNodeByTarget("", text)
+        if (target == null) {
+            // 内容加载慢：延迟重试一次再交给 OCR
+            delay(NODE_TREE_RETRY_DELAY_MS)
+            target = findNodeByTarget("", text)
+        }
+        if (target != null) {
+            return dispatchTapOnNode(input, target, width, height)
+        }
+        val pos = findOcrTextPosition(text)
+        if (pos != null) {
+            return dispatchOneInput(input.copy(x = pos.first, y = pos.second), width, height)
+        }
+        LogX.w(TAG, "FIND_AND_TAP text not found: '$text'")
+        Toast.makeText(this, getString(R.string.tap_text_not_found, text), Toast.LENGTH_LONG).show()
+        return false
+    }
+
+    /* 点击定位到的节点：优先取节点本身/最近可点击祖先的中心（点按钮比点文字更稳） */
+    private suspend fun dispatchTapOnNode(
+        input: AutoSlideInput,
+        node: AccessibilityNodeInfo,
+        width: Int,
+        height: Int
+    ): Boolean {
+        val tapNode = findClickableSelfOrAncestor(node) ?: node
+        val bounds = Rect()
+        runCatching { tapNode.getBoundsInScreen(bounds) }
+        if (bounds.isEmpty) return false
+        return dispatchOneInput(
+            input.copy(
+                x = bounds.centerX().toFloat() / width,
+                y = bounds.centerY().toFloat() / height
+            ),
+            width,
+            height
+        )
     }
 
     /* 构建单个手势描述 */
@@ -1536,6 +1583,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * 回放按钮：立即执行一次指定名称的录制记录（不进入自动滑动循环）
      *
      * @param name 录制名称
+     * @param skipLaunchOnce 是否跳过全部“仅首轮执行”动作（回放前已自动打开 App 时传 true）
      * @param onFinished 完整回放结束后的回调（被中断时不回调）
      * @param onActionStart 每个动作开始前的回调（用于显示点击圈圈/滑动痕迹）
      * @param onEnd 回放结束（无论完成还是被中断）后的清理回调
@@ -1544,6 +1592,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
     fun playMacro(
         name: String,
         loopCount: Int = 1,
+        skipLaunchOnce: Boolean = false,
         onFinished: (() -> Unit)? = null,
         onActionStart: ((AutoSlideInput) -> Unit)? = null,
         onEnd: (() -> Unit)? = null
@@ -1581,6 +1630,13 @@ private const val SPEED_CURVE_FACTOR = 0.7
                             completed = false
                             roundOk = false
                             break
+                        }
+                        // 仅首轮执行：循环从第二轮起跳过（例如“回桌面点击图标启动 App”）；
+                        // 回放前已自动打开 App 时第一轮也跳过
+                        if ((round > 1 || skipLaunchOnce) && input.launchOnce) {
+                            LogX.i(TAG, "PlayMacro skip launchOnce action: ${input.action} at round $round")
+                            prevInput = input
+                            continue
                         }
                         // 等待条件：等屏幕出现/消失指定文字，满足后继续（或点击），超时中止回放
                         if (input.action == AutoSlideInputAction.WAIT_FOR) {
@@ -2231,12 +2287,12 @@ private const val SPEED_CURVE_FACTOR = 0.7
             }
         }
 
-    /* 回放定位：按 id（精确）或文字（包含，不区分大小写）在节点树中查找可见控件 */
+    /* 回放定位：按 id（精确）或文字（包含，不区分大小写）在节点树中查找最合适的可见控件 */
     private fun findNodeByTarget(targetId: String, targetText: String): AccessibilityNodeInfo? {
         val root = rootInActiveWindow ?: return null
-        // id 优先：精确匹配
+        // id 优先：精确匹配（同样优先可点击/面积小的节点）
         if (targetId.isNotEmpty()) {
-            findNodeByBfs(root) { node ->
+            findBestNodeByBfs(root) { node ->
                 val id = runCatching { node.viewIdResourceName }.getOrNull()
                 id.equals(targetId, ignoreCase = true)
             }?.let { return it }
@@ -2244,24 +2300,31 @@ private const val SPEED_CURVE_FACTOR = 0.7
         // 文字匹配：text/desc 包含目标文字
         if (targetText.isNotEmpty()) {
             val targetLower = targetText.lowercase()
-            findNodeByBfs(root) { node ->
+            return findBestNodeByBfs(root) { node ->
                 val text = runCatching { node.text?.toString() }.getOrNull()
                 val desc = runCatching { node.contentDescription?.toString() }.getOrNull()
                 text?.lowercase()?.contains(targetLower) == true ||
                     desc?.lowercase()?.contains(targetLower) == true
-            }?.let { return it }
+            }
         }
         return null
     }
 
-    /* BFS 遍历节点树，返回第一个满足条件且可见、有位置的节点 */
-    private fun findNodeByBfs(
+    /**
+     * BFS 遍历节点树，在满足条件的节点里挑选“最像按钮”的一个：
+     * 优先可点击（自身或祖先可点击），其次面积最小（避免选中大容器/整页）。
+     * 全部只考虑可见且有实际位置的节点。
+     */
+    private fun findBestNodeByBfs(
         root: AccessibilityNodeInfo,
         condition: (AccessibilityNodeInfo) -> Boolean
     ): AccessibilityNodeInfo? {
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
         var scanned = 0
+        var best: AccessibilityNodeInfo? = null
+        var bestClickable = false
+        var bestArea = Long.MAX_VALUE
         while (queue.isNotEmpty() && scanned < SKIP_NODE_SCAN_LIMIT) {
             val node = queue.removeFirst()
             scanned++
@@ -2269,14 +2332,25 @@ private const val SPEED_CURVE_FACTOR = 0.7
             val bounds = Rect()
             runCatching { node.getBoundsInScreen(bounds) }
             if (bounds.isEmpty) continue
-            if (condition(node)) return node
+            if (condition(node)) {
+                val clickable = findClickableSelfOrAncestor(node) != null
+                val area = bounds.width().toLong() * bounds.height().toLong()
+                val better = best == null ||
+                    (clickable && !bestClickable) ||
+                    (clickable == bestClickable && area < bestArea)
+                if (better) {
+                    best = node
+                    bestClickable = clickable
+                    bestArea = area
+                }
+            }
             val childCount = runCatching { node.childCount }.getOrDefault(0)
             for (i in 0 until childCount) {
                 val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
                 queue.add(child)
             }
         }
-        return null
+        return best
     }
 
     /* 回放定位：OCR 在整屏找包含目标文字的行，返回归一化中心坐标 */
