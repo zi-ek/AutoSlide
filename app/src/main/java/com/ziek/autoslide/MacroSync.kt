@@ -45,15 +45,6 @@ object MacroSync {
     }
 
     /**
-     * 立即上传本机录制脚本
-     *
-     * @param context 上下文
-     */
-    fun uploadNow(context: Context) {
-        scope.launch { doUpload(context) }
-    }
-
-    /**
      * 收集本机全部录制脚本。
      *
      * 每条记录在 SharedPreferences 里的键是 `macro_名称`，
