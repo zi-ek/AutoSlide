@@ -626,9 +626,9 @@ function dashboardHtml(stats, announcement) {
   `;
 
   return pageShell({
-    title: 'AutoSlide 统计后台',
+    title: '自动滑屏器app统计台',
     eyebrow: 'AutoSlide · Fleet Monitor',
-    heading: '统计后台',
+    heading: '滑屏器 统计台',
     headerRight,
     body,
   });
