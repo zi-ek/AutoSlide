@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--底部导航选中态的胶囊底：只在 state_selected 时显示浅色胶囊，未选中透明-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/nav_indicator" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+</selector>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--底部导航⌈我的⌋图标：线条风格的人像-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12,3.4C9.68,3.4 7.8,5.28 7.8,7.6C7.8,9.92 9.68,11.8 12,11.8C14.32,11.8 16.2,9.92 16.2,7.6C16.2,5.28 14.32,3.4 12,3.4ZM12,5C13.44,5 14.6,6.16 14.6,7.6C14.6,9.04 13.44,10.2 12,10.2C10.56,10.2 9.4,9.04 9.4,7.6C9.4,6.16 10.56,5 12,5Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12,13.2C8.13,13.2 5,15.68 5,18.74V19.8C5,20.24 5.36,20.6 5.8,20.6H18.2C18.64,20.6 19,20.24 19,19.8V18.74C19,15.68 15.87,13.2 12,13.2ZM12,14.8C15.06,14.8 17.4,16.66 17.4,18.74V19H6.6V18.74C6.6,16.66 8.94,14.8 12,14.8Z" />
+</vector>

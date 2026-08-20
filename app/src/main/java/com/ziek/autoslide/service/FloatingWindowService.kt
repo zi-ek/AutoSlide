@@ -154,6 +154,9 @@ class FloatingWindowService : Service() {
         // 注册拖拽事件处理
         setupDragging()
         setupControlButtons()
+        // 先以全透明添加：gravity 是 TOP|START，addView 那一刻 x/y 还是 0，
+        // 直接可见就会在左上角闪一帧再跳到目标位置。等下面 post 里定好位再一起显形。
+        layoutParams.alpha = 0f
         // 添加悬浮窗到窗口管理器
         try {
             windowManager.addView(rootView, layoutParams)
@@ -168,15 +171,17 @@ class FloatingWindowService : Service() {
             stopSelf()
             return
         }
-        // 悬浮窗默认停靠在屏幕右下角（等布局完成拿到实际宽高后设置位置）
+        // 悬浮窗默认贴右边缘、上下居中（等布局完成拿到实际宽高后设置位置）
         rootView.post {
             if (!::rootView.isInitialized || !::layoutParams.isInitialized) {
                 return@post
             }
             val displayMetrics = resources.displayMetrics
-            // 计算右下角坐标，并保证不小于 0
+            // 贴右边缘，垂直方向取屏幕中线，均保证不小于 0
             layoutParams.x = (displayMetrics.widthPixels - rootView.width + currentRightInset()).coerceAtLeast(0)
-            layoutParams.y = (displayMetrics.heightPixels - rootView.height).coerceAtLeast(0)
+            layoutParams.y = ((displayMetrics.heightPixels - rootView.height) / 2).coerceAtLeast(0)
+            // 位置和透明度一次提交：用户看到的第一帧就已经在目标位置
+            layoutParams.alpha = 1f
             runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
         }
         // 监听自动滑动服务事件
@@ -475,7 +480,7 @@ class FloatingWindowService : Service() {
             text = getString(R.string.record_launch_once_label)
             textSize = 14f
             isChecked = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .getBoolean(KEY_MACRO_LAUNCH_ONCE, true)
+                .getBoolean(KEY_MACRO_LAUNCH_ONCE, false)
         }
         val container = LinearLayout(dialogContext).apply {
             orientation = LinearLayout.VERTICAL

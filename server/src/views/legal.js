@@ -3,7 +3,6 @@
 /**
  * 用户协议与隐私政策页面。
  *
- * 内容必须与应用的真实行为一致：AutoSlide 有自建后端，会上报安装信息、
  * 备份录制配置、承载反馈聊天室，与「无服务器、不收集数据」的说法不同，
  * 改动任一联网行为时务必同步更新本文件。
  */
@@ -30,11 +29,22 @@ const legalStyles = `
   .legal-sec { margin: 28px 0; }
   .legal-h2 { font-size: 17px; font-weight: 600; margin: 0 0 10px; }
   .legal-p { line-height: 1.85; margin: 8px 0; }
-  .legal-table-wrap { overflow-x: auto; margin: 12px 0; }
-  .legal-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  .legal-table-wrap { overflow-x: auto; margin: 12px 0; -webkit-overflow-scrolling: touch; }
+  .legal-table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 480px; }
   .legal-table th, .legal-table td { border: 1px solid rgba(128,128,128,.35); padding: 8px 10px; text-align: left; vertical-align: top; }
-  .legal-table th { font-weight: 600; }
+  .legal-table th { font-weight: 600; white-space: nowrap; }
+  .legal-table td { white-space: normal; }
   .legal-updated { font-size: 13px; opacity: .7; margin-bottom: 18px; }
+
+  @media (max-width: 640px) {
+    .legal-sec { margin: 20px 0; }
+    .legal-h2 { font-size: 15px; margin: 0 0 8px; }
+    .legal-p { font-size: 14px; line-height: 1.75; margin: 6px 0; }
+    .legal-table-wrap { margin: 8px -14px; border-radius: 0; }
+    .legal-table { font-size: 13px; min-width: 420px; }
+    .legal-table th, .legal-table td { padding: 6px 8px; }
+    .legal-updated { font-size: 12px; margin-bottom: 14px; }
+  }
 </style>`;
 
 const UPDATED = '2026 年 8 月 17 日';
@@ -45,7 +55,7 @@ function termsHtml() {
     `<p class="legal-updated">最后更新：${UPDATED}</p>`,
     section('一、应用信息', [
       '本协议适用于「自动滑屏器」（AutoSlide）Android 应用。',
-      '本应用为开源软件，源码托管于 <a href="https://github.com/zi-ek/AutoSlide">github.com/zi-ek/AutoSlide</a>，以 Apache License 2.0 授权。',
+      '本应用为开源软件，源码托管于 <a href="https://github.com/zi-ek/AutoSlide">github.com</a>，以 Apache License 2.0 授权。',
       '如需联系开发者，可通过应用内「反馈」功能，或在上述仓库提交 Issue。',
     ]),
     section('二、许可与使用限制', [
@@ -87,12 +97,6 @@ function privacyHtml() {
         '统计安装数量与版本分布，排查特定机型或系统版本上的问题',
       ],
       [
-        '录制脚本备份',
-        '仅你创建的录制脚本（即「导出」功能涉及的内容）：脚本名称与其中的点击、滑动、等待动作。',
-        '<strong>是</strong>，脚本变化时自动上传',
-        '备份脚本，便于误删后找回',
-      ],
-      [
         '反馈内容',
         '设备标识、设备名称，以及你在反馈中主动输入的文字与图片',
         '<strong>是</strong>，仅在你主动发送时',
@@ -108,7 +112,7 @@ function privacyHtml() {
     ['权限', '是否必需', '用途'],
     [
       ['无障碍服务', '核心功能必需', '读取屏幕内容，执行滑动与点击'],
-      ['悬浮窗', '使用悬浮球时必需', '显示悬浮控制球，以及保持后台运行的 1×1 透明窗口'],
+      ['悬浮窗', '使用悬浮球时必需', '显示悬浮控制球，以及保持后台运行的透明窗口'],
       ['通知', '可选', '显示常驻运行状态通知，有助于降低被系统清理的概率'],
       ['网络', '可选', '设备信息上报、脚本备份、反馈、检查更新、出口地址探测'],
       ['写入安全设置', '可选', '自动开启无障碍服务，需 ADB 或 Shizuku 授予'],

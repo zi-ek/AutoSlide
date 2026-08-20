@@ -4,6 +4,7 @@
     <string name="accessibility_service_description">自动滑动器需要无障碍服务权限来执行屏幕滑动操作</string>
     <string name="show_floating_window">显示悬浮窗</string>
     <string name="close_floating_window">关闭悬浮窗</string>
+    <string name="back_to_desktop">回到桌面</string>
     <string name="pause_time">停顿时间（秒）点击可修改 ：</string>
     <string name="custom_pause_time">自定义停顿时间（秒）</string>
     <string name="invalid_input_number">请输入有效数字</string>
@@ -97,7 +98,6 @@
     <string name="speed_label_slow">慢</string>
     <string name="speed_label_fast">快</string>
     <string name="check_update">检查更新</string>
-    <string name="chat_room">反馈</string>
     <string name="status_channel_name">常驻服务</string>
     <string name="status_channel_desc">显示应用的运行状态，并在被系统清理后自动恢复无障碍</string>
     <string name="status_a11y_running">无障碍正在运行</string>
@@ -198,4 +198,11 @@
     <string name="chat_delete_confirm">确定删除该频道吗？所有成员和消息都会被删除，且无法恢复。</string>
     <string name="chat_deleted">频道已删除</string>
     <string name="chat_delete_failed">删除失败：%1$s</string>
+    <!--底部导航栏-->
+    <string name="nav_home">首页</string>
+    <string name="nav_chat">交流</string>
+    <string name="nav_mine">我的</string>
+    <!--「我的」页签-->
+    <string name="mine_import_settings">导入配置</string>
+    <string name="mine_version_format">v%s</string>
 </resources>

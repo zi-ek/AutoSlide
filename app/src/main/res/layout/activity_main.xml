@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 主界面布局：
-     整页放在可滚动容器里，从上到下依次是：
-     顶部工具栏 -> 必要权限卡片 -> 滑动设置卡片（模式按钮/停顿时间/速度） ->
-     关键词检测分区（仅关键词检测模式显示）-> 自动点击跳过卡片 -> 开始按钮 -> 检查更新按钮 -->
+<!-- 主界面布局：底部导航栏 + 三个页签
+     首页：滑动设置卡片（模式按钮/停顿时间/速度）-> 关键词检测分区（仅关键词检测模式显示）->
+           自动点击跳过卡片 -> 悬浮窗开关 + 回到桌面
+     刷金币：view_chat_list（聊天室，逻辑在 ChatListPanel）
+     我的：view_mine（数据统计 / 必要权限 / 检查更新 / 导入配置 / 协议 / 打赏）
+     三个页签同时 inflate，靠 visibility 切换，切页不重建、不丢状态 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
@@ -11,149 +13,19 @@
     android:background="@color/window_background"
     android:orientation="vertical">
 
-    <!-- 固定顶部的数据统计卡片，不随页面滚动 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content">
-
-        <!--数据统计卡片-->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/statisticsCard"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="@dimen/margin_medium"
-            android:layout_marginTop="@dimen/margin_medium"
-            app:cardBackgroundColor="@color/surface"
-            app:cardCornerRadius="20dp"
-            app:cardElevation="0dp"
-            app:strokeWidth="0dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="@dimen/margin_medium">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/title_statistics"
-                        android:textColor="@color/text_primary"
-                        android:textSize="@dimen/text_size_subtitle"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/chatRoomText"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:background="@drawable/bg_chat_room_circle"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:gravity="center"
-                        android:paddingHorizontal="14dp"
-                        android:paddingVertical="7dp"
-                        android:text="@string/chat_room"
-                        android:textColor="@color/on_primary"
-                        android:textSize="15sp"
-                        android:textStyle="bold"
-                        tools:ignore="ClickableViewAccessibility" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/margin_small"
-                    android:orientation="horizontal"
-                    android:baselineAligned="false">
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:gravity="center"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:id="@+id/totalSwipesText"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textColor="@color/primary"
-                            android:textSize="20sp"
-                            android:textStyle="bold"
-                            tools:text="128" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/total_swipes_label"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:gravity="center"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:id="@+id/keywordMatchesText"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textColor="@color/primary"
-                            android:textSize="20sp"
-                            android:textStyle="bold"
-                            tools:text="45" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/keyword_matches_label"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:gravity="center"
-                        android:orientation="vertical">
-
-                        <TextView
-                            android:id="@+id/savedDistanceText"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:textColor="@color/primary"
-                            android:textSize="20sp"
-                            android:textStyle="bold"
-                            tools:text="15.5 米" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/saved_distance_label"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-                </LinearLayout>
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-    </LinearLayout>
-
-    <!-- 可滚动区域：从必要权限卡片开始 -->
-    <androidx.core.widget.NestedScrollView
+    <!--页签内容区：三个页面叠在一起，同一时刻只显示一个-->
+    <FrameLayout
+        android:id="@+id/pageContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_weight="1">
+
+    <!--============ 页签一：首页 ============-->
+    <!-- 整页可滚动：滑动设置 -> 关键词/自动点击 -> 悬浮窗开关 + 回到桌面 -->
+    <androidx.core.widget.NestedScrollView
+        android:id="@+id/pageHome"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
         android:fillViewport="true">
 
         <LinearLayout
@@ -162,143 +34,7 @@
             android:orientation="vertical"
             android:paddingBottom="@dimen/margin_large">
 
-        <!--权限设置卡片-->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/permissionCard"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginHorizontal="@dimen/margin_medium"
-            android:layout_marginTop="@dimen/margin_medium"
-            app:cardBackgroundColor="@color/surface"
-            app:cardCornerRadius="20dp"
-            app:cardElevation="0dp"
-            app:strokeWidth="0dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="@dimen/margin_medium">
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/title_required_permission"
-                    android:textColor="@color/text_primary"
-                    android:textSize="@dimen/text_size_subtitle"
-                    android:textStyle="bold" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/margin_small"
-                    android:orientation="horizontal"
-                    android:baselineAligned="false">
-
-                    <!--无障碍服务权限-->
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:gravity="center"
-                        android:orientation="vertical">
-
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/accessibilityServicePermissionSwitch"
-                            android:layout_width="wrap_content"
-                            android:layout_height="23dp"
-                            android:contentDescription="@string/accessibility_service_permission_switch"
-                            app:thumbTint="@color/switch_thumb_color"
-                            app:trackTint="@color/switch_track_color" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="21dp"
-                            android:text="@string/bind_accessibility_service"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <!--分割线-->
-                    <View
-                        android:layout_width="1dp"
-                        android:layout_height="match_parent"
-                        android:layout_marginVertical="8dp"
-                        android:background="#1A000000" />
-
-                    <!--悬浮窗权限-->
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:gravity="center"
-                        android:orientation="vertical">
-
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/overlayPermissionSwitch"
-                            android:layout_width="wrap_content"
-                            android:layout_height="21dp"
-                            android:contentDescription="@string/overlay_permission_switch"
-                            app:thumbTint="@color/switch_thumb_color"
-                            app:trackTint="@color/switch_track_color" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/overlay_permission_title"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-
-                    <!--分割线-->
-                    <View
-                        android:layout_width="1dp"
-                        android:layout_height="match_parent"
-                        android:layout_marginVertical="8dp"
-                        android:background="#1A000000" />
-
-                    <!--常驻通知（GKD ControlPage 的「常驻通知」开关）-->
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:gravity="center"
-                        android:orientation="vertical">
-
-                        <com.google.android.material.switchmaterial.SwitchMaterial
-                            android:id="@+id/statusServiceSwitch"
-                            android:layout_width="wrap_content"
-                            android:layout_height="21dp"
-                            android:contentDescription="@string/status_service_switch"
-                            app:thumbTint="@color/switch_thumb_color"
-                            app:trackTint="@color/switch_track_color" />
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="@string/status_service_title"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-                    </LinearLayout>
-                </LinearLayout>
-
-                <!--保活提示：点击查看磁贴复活说明（被 force-stop 后唯一的复活入口）-->
-                <TextView
-                    android:id="@+id/keepAliveHintText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center_horizontal"
-                    android:layout_marginTop="@dimen/margin_small"
-                    android:text="@string/keep_alive_hint_text"
-                    android:textColor="@color/text_secondary"
-                    android:textSize="12sp"
-                    android:background="?attr/selectableItemBackground"
-                    android:clickable="true"
-                    android:focusable="true" />
-
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
+        <!--滑动设置卡片-->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/settingsCard"
             android:layout_width="match_parent"
@@ -832,53 +568,67 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!--悬浮窗显示/关闭按钮-->
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/startButton"
+        <!--底部操作行：悬浮窗开关 + 回到桌面，同款样式左右各占一半-->
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="64dp"
+            android:layout_height="wrap_content"
             android:layout_marginHorizontal="@dimen/margin_medium"
             android:layout_marginTop="@dimen/margin_large"
-            android:text="@string/show_floating_window"
-            android:textColor="@color/on_primary"
-            android:textSize="18sp"
-            app:backgroundTint="@color/primary"
-            app:cornerRadius="32dp"
-            tools:ignore="VisualLintButtonSize" />
+            android:baselineAligned="false"
+            android:orientation="horizontal">
 
-        <!--检查更新按钮-->
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/checkUpdateButton"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="@dimen/margin_medium"
-            android:text="@string/check_update"
-            android:textColor="@color/text_secondary"
-            app:cornerRadius="18dp" />
+            <!--悬浮窗显示/关闭按钮-->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/startButton"
+                android:layout_width="0dp"
+                android:layout_height="64dp"
+                android:layout_weight="1"
+                android:text="@string/show_floating_window"
+                android:textColor="@color/on_primary"
+                android:textSize="18sp"
+                app:backgroundTint="@color/primary"
+                app:cornerRadius="32dp"
+                tools:ignore="VisualLintButtonSize" />
 
-        <!--微信打赏二维码-->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="@dimen/margin_medium"
-            android:text="@string/donate_tip"
-            android:textColor="@color/text_secondary"
-            android:textSize="13sp" />
+            <!--回到桌面：开完悬浮窗直接去目标 App，省得手动划返回。样式与左边按钮完全一致，两个各占一半-->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/backToDesktopButton"
+                android:layout_width="0dp"
+                android:layout_height="64dp"
+                android:layout_marginStart="@dimen/margin_small"
+                android:layout_weight="1"
+                android:text="@string/back_to_desktop"
+                android:textColor="@color/on_primary"
+                android:textSize="18sp"
+                app:backgroundTint="@color/primary"
+                app:cornerRadius="32dp"
+                tools:ignore="VisualLintButtonSize" />
+        </LinearLayout>
 
-        <ImageView
-            android:id="@+id/wxImageView"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="@dimen/margin_small"
-            android:adjustViewBounds="true"
-            android:contentDescription="@string/donate_qr_desc"
-            android:maxWidth="220dp"
-            android:maxHeight="220dp"
-            android:src="@mipmap/wx" />
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
+
+    <!--============ 页签二：刷金币（聊天室）============-->
+    <include
+        android:id="@+id/chatPanel"
+        layout="@layout/view_chat_list"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
+    <!--============ 页签三：我的 ============-->
+    <include
+        android:id="@+id/minePanel"
+        layout="@layout/view_mine"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+    </FrameLayout>
+
+    <!--底部导航栏-->
+    <include
+        android:id="@+id/bottomNav"
+        layout="@layout/view_bottom_nav"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
 </LinearLayout>

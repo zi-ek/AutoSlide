@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
+    <!-- 基础样式占位符：防止使用点号(.)命名法时找不到父类 -->
+    <style name="Widget.AutoSlide" parent="" />
+
     <!-- ==================== 弹窗统一主题 ====================
          所有 MaterialAlertDialogBuilder 构建的弹窗都会自动套用这套样式：
          大圆角（和卡片的 20dp 呼应）、主题色按钮、加粗标题，
@@ -46,6 +49,50 @@
         <item name="android:textColor">@color/text_secondary</item>
         <item name="android:textSize">15sp</item>
         <item name="android:lineSpacingExtra">2dp</item>
+    </style>
+
+    <!-- ==================== 「我的」页签的列表行 ====================
+         行高 54dp、左右 16dp 留白、右侧灰色箭头，三段样式拼出一条可点击的设置项。 -->
+    <style name="Widget.AutoSlide.MineRow">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">54dp</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:paddingHorizontal">@dimen/margin_medium</item>
+        <item name="android:background">?attr/selectableItemBackground</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <style name="Widget.AutoSlide.MineRow.Title">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">15sp</item>
+    </style>
+
+    <!--行右侧的附加信息（如版本号），排在标题和箭头之间-->
+    <style name="Widget.AutoSlide.MineRow.Value">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginEnd">6dp</item>
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
+    <style name="Widget.AutoSlide.MineRow.Arrow">
+        <item name="android:layout_width">20dp</item>
+        <item name="android:layout_height">20dp</item>
+        <item name="android:src">@drawable/ic_arrow_right</item>
+        <item name="android:tint">@color/nav_item_unselected</item>
+    </style>
+
+    <style name="Widget.AutoSlide.MineRow.Divider">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">0.5dp</item>
+        <item name="android:layout_marginStart">@dimen/margin_medium</item>
+        <item name="android:background">@color/dialog_divider</item>
     </style>
 
 </resources>

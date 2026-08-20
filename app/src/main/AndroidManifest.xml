@@ -51,9 +51,6 @@
             </intent-filter>
         </activity>
         <activity
-            android:name=".chat.ChatListActivity"
-            android:exported="false" />
-        <activity
             android:name=".chat.ChatActivity"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />

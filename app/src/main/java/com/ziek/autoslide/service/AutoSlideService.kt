@@ -322,9 +322,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
         private const val KUAISHOU_LITE_PACKAGE = "com.kuaishou.nebula"
         private const val KUAISHOU_AUTOPLAY_TEXT = "自动上滑"
         private const val DOUYIN_AUTOPLAY_COOLDOWN_MS = 5_000L
-        /* 推送通知弹窗：识别到标题后自动点「忽略」 */
-        private const val PUSH_NOTIFICATION_DIALOG_TEXT = "打开推送通知"
-        private const val PUSH_IGNORE_TEXT = "忽略"
+        /* 推送通知弹窗：命中任一标题后自动点「忽略」类按钮。
+           findAccessibilityNodeInfosByText 是整串包含匹配、不认正则，
+           多关键词只能拆成列表逐个找，不能写成「A|B」。 */
+        private val PUSH_NOTIFICATION_DIALOG_TEXTS = listOf("打开推送通知", "开启推送提醒")
+        private val PUSH_IGNORE_TEXTS = listOf("忽略", "取消")
         private const val PUSH_DIALOG_DISMISS_COOLDOWN_MS = 5_000L
         /* 快手自定义开关的状态：1=开 0=关 -1=未知（无法判断时禁止点击） */
         private const val KUAISHOU_STATE_ON = 1
@@ -1223,7 +1225,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         }
     }
 
-    /* 检测「打开推送通知」弹窗，存在时自动点击「忽略」按钮（带冷却，避免重复点击） */
+    /* 检测推送通知类弹窗，存在时自动点击「忽略/取消」按钮（带冷却，避免重复点击） */
     private fun maybeDismissPushNotificationDialog() {
         if (automationPaused) return
         val now = SystemClock.elapsedRealtime()
@@ -1231,26 +1233,32 @@ private const val SPEED_CURVE_FACTOR = 0.7
             return
         }
         val root = rootInActiveWindow ?: return
-        val titleNodes = root.findAccessibilityNodeInfosByText(PUSH_NOTIFICATION_DIALOG_TEXT)
-        if (titleNodes.isEmpty()) {
+        val hasDialog = PUSH_NOTIFICATION_DIALOG_TEXTS.any { keyword ->
+            val nodes = root.findAccessibilityNodeInfosByText(keyword)
+            val hit = nodes.isNotEmpty()
+            nodes.forEach { runCatching { it.recycle() } }
+            hit
+        }
+        if (!hasDialog) {
             return
         }
-        titleNodes.forEach { runCatching { it.recycle() } }
-        // 弹窗存在：优先找「忽略」按钮点击
-        val ignoreNodes = root.findAccessibilityNodeInfosByText(PUSH_IGNORE_TEXT)
+        // 弹窗存在：按「忽略」->「取消」的顺序找按钮点击
         var clicked = false
-        try {
-            for (node in ignoreNodes) {
-                if (node.text?.toString()?.trim() != PUSH_IGNORE_TEXT) continue
-                val target = if (node.isClickable) node else node.parent
-                clicked = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
-                if (clicked) {
-                    LogX.i(TAG, "已自动点击「忽略」关闭推送通知弹窗")
-                    break
+        outer@ for (keyword in PUSH_IGNORE_TEXTS) {
+            val ignoreNodes = root.findAccessibilityNodeInfosByText(keyword)
+            try {
+                for (node in ignoreNodes) {
+                    if (node.text?.toString()?.trim() != keyword) continue
+                    val target = if (node.isClickable) node else node.parent
+                    if (target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) {
+                        clicked = true
+                        LogX.i(TAG, "已自动点击「$keyword」关闭推送通知弹窗")
+                        break@outer
+                    }
                 }
+            } finally {
+                ignoreNodes.forEach { runCatching { it.recycle() } }
             }
-        } finally {
-            ignoreNodes.forEach { runCatching { it.recycle() } }
         }
         // 没有「忽略」按钮时（另一种弹窗格式），找关闭按钮（关闭/取消）
         if (!clicked && tryClickCloseButton(root)) {

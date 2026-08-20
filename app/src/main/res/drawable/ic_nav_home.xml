@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--底部导航⌈首页⌋图标：线条风格的房子-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12,3.2L3.6,9.6C3.22,9.89 3,10.34 3,10.82V19.2C3,20.19 3.81,21 4.8,21H9.2C9.64,21 10,20.64 10,20.2V15.4C10,14.96 10.36,14.6 10.8,14.6H13.2C13.64,14.6 14,14.96 14,15.4V20.2C14,20.64 14.36,21 14.8,21H19.2C20.19,21 21,20.19 21,19.2V10.82C21,10.34 20.78,9.89 20.4,9.6L12,3.2ZM12,5.72L19,11.05V19H15.6V15.4C15.6,14.08 14.52,13 13.2,13H10.8C9.48,13 8.4,14.08 8.4,15.4V19H5V11.05L12,5.72Z" />
+</vector>

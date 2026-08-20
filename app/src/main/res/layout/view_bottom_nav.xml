@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 底部导航栏：首页 / 刷金币 / 我的
+     每个页签是「胶囊底 + 图标 + 文字」的竖排结构，
+     选中态靠 View.isSelected 驱动：胶囊底(bg_nav_indicator)显形、图标文字变主题色(nav_item_color)。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/nav_bar_bg"
+    android:orientation="vertical">
+
+    <!--顶部细分割线，和内容区拉开层次-->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0.5dp"
+        android:background="@color/nav_divider" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:baselineAligned="false"
+        android:orientation="horizontal"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
+
+        <!--页签：首页-->
+        <LinearLayout
+            android:id="@+id/navHome"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/navHomeIcon"
+                android:layout_width="56dp"
+                android:layout_height="32dp"
+                android:background="@drawable/bg_nav_indicator"
+                android:contentDescription="@string/nav_home"
+                android:duplicateParentState="true"
+                android:padding="4dp"
+                android:src="@drawable/ic_nav_home"
+                app:tint="@color/nav_item_color" />
+
+            <TextView
+                android:id="@+id/navHomeText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:duplicateParentState="true"
+                android:text="@string/nav_home"
+                android:textColor="@color/nav_item_color"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!--页签：刷金币（聊天室）-->
+        <LinearLayout
+            android:id="@+id/navChat"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/navChatIcon"
+                android:layout_width="56dp"
+                android:layout_height="32dp"
+                android:background="@drawable/bg_nav_indicator"
+                android:contentDescription="@string/nav_chat"
+                android:duplicateParentState="true"
+                android:padding="4dp"
+                android:src="@drawable/ic_nav_chat"
+                app:tint="@color/nav_item_color" />
+
+            <TextView
+                android:id="@+id/navChatText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:duplicateParentState="true"
+                android:text="@string/nav_chat"
+                android:textColor="@color/nav_item_color"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!--页签：我的-->
+        <LinearLayout
+            android:id="@+id/navMine"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_horizontal"
+            android:orientation="vertical">
+
+            <ImageView
+                android:id="@+id/navMineIcon"
+                android:layout_width="56dp"
+                android:layout_height="32dp"
+                android:background="@drawable/bg_nav_indicator"
+                android:contentDescription="@string/nav_mine"
+                android:duplicateParentState="true"
+                android:padding="4dp"
+                android:src="@drawable/ic_nav_mine"
+                app:tint="@color/nav_item_color" />
+
+            <TextView
+                android:id="@+id/navMineText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:duplicateParentState="true"
+                android:text="@string/nav_mine"
+                android:textColor="@color/nav_item_color"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

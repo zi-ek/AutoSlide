@@ -65,7 +65,7 @@ const val DEFAULT_PAUSE_TIME = 15                    // 默认固定停顿 15 �
 const val DEFAULT_MIN_PAUSE_TIME = 5                // 默认随机停顿下限 5 秒
 const val DEFAULT_MAX_PAUSE_TIME = 30                // 默认随机停顿上限 30 秒
 // 默认关键词（用中文逗号分隔，供第一次打开应用时预填）
-const val DEFAULT_KEYWORDS = "上滑，继续，查看详情，点击进入，限时，抢购，购物"
+const val DEFAULT_KEYWORDS = "上滑继续，查看详情，点击进入，限时，抢购，购物"
 const val DEFAULT_KEYWORD_IGNORE_CASE = true        // 默认忽略大小写
 const val DEFAULT_KEYWORD_INTERVAL = 2           // 默认每 2 秒检测一次
 const val DEFAULT_KEYWORD_COOLDOWN = 3           // 默认触发后冷却 3 秒
@@ -105,7 +105,7 @@ const val DEFAULT_KEYWORD_DIRECTION = DIRECTION_UP
 // 值为 PlainApp 输入框架的 JSON 数组（点击/长按/滑动/等待）
 const val KEY_MACRO_PREFIX = "macro_"
 const val KEY_MACRO_LOOP_COUNT = "macroLoopCount"     // 回放时记住上次使用的循环次数
-const val KEY_MACRO_LAUNCH_ONCE = "macroLaunchOnce"   // 录制时第一步是否标记为“仅首轮执行”（默认开启）
+const val KEY_MACRO_LAUNCH_ONCE = "macroLaunchOnce"   // 录制时第一步是否标记为“仅首轮执行”（默认关闭）
 
 /**
  * 兼容读取关键词时间参数（单位：秒）

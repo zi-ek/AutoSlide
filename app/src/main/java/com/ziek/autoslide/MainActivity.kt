@@ -40,6 +40,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
+import androidx.activity.OnBackPressedCallback
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.slider.RangeSlider
@@ -48,7 +49,7 @@ import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import com.google.android.accessibility.selecttospeak.SelectToSpeakService
 import com.ziek.autoslide.databinding.ActivityMainBinding
-import com.ziek.autoslide.chat.ChatListActivity
+import com.ziek.autoslide.chat.ChatListPanel
 import com.ziek.autoslide.priv.PrivilegeShizukuExternalStarter
 import com.ziek.autoslide.service.AutoSlideService
 import com.ziek.autoslide.service.AutoSlideTileService
@@ -76,6 +77,9 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding // 视图绑定对象（访问布局控件）
     private lateinit var preferences: SharedPreferences // 本地设置存储
+    private lateinit var chatPanel: ChatListPanel // ⌈刷金币⌋页签的聊天室逻辑
+    private var currentTab = TAB_HOME // 当前选中的底部导航页签
+    private var backToHomeCallback: OnBackPressedCallback? = null // 返回键回首页的回调，只在非首页时启用
     var ioDispatcher: CoroutineDispatcher = Dispatchers.IO // IO 线程调度器（权限检查等耗时操作）
     var mainDispatcher: CoroutineDispatcher = Dispatchers.Main // 主线程调度器（更新 UI）
 
@@ -90,6 +94,10 @@ class MainActivity : AppCompatActivity() {
         private const val OPTION_MANUAL = 0
         private const val OPTION_SHIZUKU = 1
         private const val OPTION_ADB = 2
+        // 底部导航页签下标
+        private const val TAB_HOME = 0
+        private const val TAB_CHAT = 1
+        private const val TAB_MINE = 2
     }
 
     /* 本界面创建时刻，与 [App.startTime] 比较判断是否跟着进程一起启动（GKD: MainActivity.startTime） */
@@ -164,7 +172,7 @@ class MainActivity : AppCompatActivity() {
      * @param checked 开关状态
      */
     private fun updateAccessibilitySwitchState(checked: Boolean) {
-        updateSwitchState(binding.accessibilityServicePermissionSwitch, checked, accessibilitySwitchListener)
+        updateSwitchState(binding.minePanel.accessibilityServicePermissionSwitch, checked, accessibilitySwitchListener)
     }
 
     /**
@@ -173,7 +181,7 @@ class MainActivity : AppCompatActivity() {
      * @param checked 开关状态
      */
     private fun updateOverlaySwitchState(checked: Boolean) {
-        updateSwitchState(binding.overlayPermissionSwitch, checked, overlaySwitchListener)
+        updateSwitchState(binding.minePanel.overlayPermissionSwitch, checked, overlaySwitchListener)
     }
 
     /**
@@ -182,7 +190,7 @@ class MainActivity : AppCompatActivity() {
      * @param checked 开关状态
      */
     private fun updateStatusServiceSwitchState(checked: Boolean) {
-        updateSwitchState(binding.statusServiceSwitch, checked, statusServiceSwitchListener)
+        updateSwitchState(binding.minePanel.statusServiceSwitch, checked, statusServiceSwitchListener)
     }
 
     /**
@@ -203,9 +211,9 @@ class MainActivity : AppCompatActivity() {
         setupSpeedControl()
         setupKeywordControls()
         setupSkipControls()
-        binding.accessibilityServicePermissionSwitch.setOnCheckedChangeListener(accessibilitySwitchListener)
-        binding.overlayPermissionSwitch.setOnCheckedChangeListener(overlaySwitchListener)
-        binding.statusServiceSwitch.setOnCheckedChangeListener(statusServiceSwitchListener)
+        binding.minePanel.accessibilityServicePermissionSwitch.setOnCheckedChangeListener(accessibilitySwitchListener)
+        binding.minePanel.overlayPermissionSwitch.setOnCheckedChangeListener(overlaySwitchListener)
+        binding.minePanel.statusServiceSwitch.setOnCheckedChangeListener(statusServiceSwitchListener)
         // 常驻通知开关跟随服务实际运行状态（GKD: checked = manageRunning && store.enableStatusService）
         lifecycleScope.launch {
             StatusService.isForeground.collect { foreground ->
@@ -217,9 +225,10 @@ class MainActivity : AppCompatActivity() {
             AutoSlideService.getInstance()?.setDouyinAutoPlayEnabled(isChecked)
         }
         setupStartButton()
+        setupBackToDesktopButton()
         updateFloatingWindowButton()
-        setupUpdateButton()
-        setupChatRoomText()
+        setupBottomNav()
+        setupMinePage()
         setupKeepAliveHint()
         // GKD: MainActivity.onCreate 里的 StatusService.autoStart()
         StatusService.autoStart(this)
@@ -263,6 +272,8 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateFloatingWindowButton()
+        // 停在聊天室页签时（比如从某个频道退回来），回到前台刷新一次列表
+        if (currentTab == TAB_CHAT) chatPanel.onShow()
         // 使用协程异步检查权限并同步开关状态
         lifecycleScope.launch(ioDispatcher) {
             val hasWriteSecure = hasWriteSecureSettingsPermission()
@@ -391,9 +402,9 @@ class MainActivity : AppCompatActivity() {
         val keywordMatches = preferences.getInt(KEY_STATS_KEYWORD_MATCHES, 0)
         val savedDistanceM = preferences.getInt(KEY_STATS_SAVED_DISTANCE, 0) / 1000f
 
-        binding.totalSwipesText.text = totalSwipes.toString()
-        binding.keywordMatchesText.text = keywordMatches.toString()
-        binding.savedDistanceText.text = String.format(Locale.getDefault(), "%.1f %s", savedDistanceM, getString(R.string.distance_unit))
+        binding.minePanel.totalSwipesText.text = totalSwipes.toString()
+        binding.minePanel.keywordMatchesText.text = keywordMatches.toString()
+        binding.minePanel.savedDistanceText.text = String.format(Locale.getDefault(), "%.1f %s", savedDistanceM, getString(R.string.distance_unit))
     }
 
     /* 绑定停顿相关控件事件并持久化用户设置 */
@@ -973,6 +984,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /* 绑定⌈回到桌面⌋按钮：跳到系统桌面，方便开完悬浮窗直接去目标 App */
+    private fun setupBackToDesktopButton() {
+        binding.backToDesktopButton.setOnClickListener {
+            val home = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            // 个别 ROM 不响应 HOME intent，退回把任务压到后台，效果同样是离开本页
+            runCatching { startActivity(home) }
+                .onFailure {
+                    LogX.w(TAG, "back to desktop failed, fallback to moveTaskToBack", it)
+                    moveTaskToBack(true)
+                }
+        }
+    }
+
     /**
      * 开启常驻通知（GKD: StatusService.requestStart —— 先确保权限，再启动，最后置开关为 true）。
      * Android 13+ 缺通知权限时先申请，授权结果回来后再启动。
@@ -1007,10 +1034,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /* 绑定⌈检查更新⌋按钮点击事件 */
-    private fun setupUpdateButton() {
-        binding.checkUpdateButton.setOnClickListener {
+    /* 绑定⌈我的⌋页签：版本号（显示在检查更新一行右侧）+ 检查更新 / 导入配置入口 */
+    private fun setupMinePage() {
+        val mine = binding.minePanel
+        mine.mineVersionText.text = getString(R.string.mine_version_format, getAppVersionName())
+        mine.mineCheckUpdateRow.setOnClickListener {
             UpdateChecker.checkUpdate(this, showToastOnLatest = true)
+        }
+        mine.mineImportRow.setOnClickListener {
+            startActivity(Intent(this, ImportSettingsActivity::class.java))
         }
     }
 
@@ -1038,7 +1070,7 @@ class MainActivity : AppCompatActivity() {
      * 磁贴在快捷设置面板可见时下拉绑定本服务，是唯一的复活入口——GKD 的「无感保活」同理。
      */
     private fun setupKeepAliveHint() {
-        binding.keepAliveHintText.setOnClickListener {
+        binding.minePanel.keepAliveHintText.setOnClickListener {
             MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.keep_alive_hint_title)
                 .setMessage(R.string.keep_alive_hint_message)
@@ -1067,11 +1099,48 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /* 绑定⌈反馈⌋文字点击事件，打开 App 内反馈页面 */
-    private fun setupChatRoomText() {
-        binding.chatRoomText.setOnClickListener {
-            startActivity(Intent(this, ChatListActivity::class.java))
+    /**
+     * 初始化底部导航栏。
+     *
+     * 三个页面在 onCreate 时就都 inflate 好了，切页只是改 visibility：
+     * 首页的滑动设置、聊天室的列表滚动位置都不会因为切页丢掉。
+     */
+    private fun setupBottomNav() {
+        chatPanel = ChatListPanel(this, binding.chatPanel) {
+            // 用户不肯设昵称，聊天室没法用，切回首页
+            switchTab(TAB_HOME)
         }
+        binding.bottomNav.navHome.setOnClickListener { switchTab(TAB_HOME) }
+        binding.bottomNav.navChat.setOnClickListener { switchTab(TAB_CHAT) }
+        binding.bottomNav.navMine.setOnClickListener { switchTab(TAB_MINE) }
+        switchTab(TAB_HOME)
+
+        // 非首页时，返回键先回首页，而不是直接退出应用
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                switchTab(TAB_HOME)
+            }
+        }.also { backToHomeCallback = it })
+    }
+
+    /**
+     * 切换底部导航页签
+     *
+     * @param tab [TAB_HOME] / [TAB_CHAT] / [TAB_MINE]
+     */
+    private fun switchTab(tab: Int) {
+        currentTab = tab
+        binding.pageHome.isVisible = tab == TAB_HOME
+        binding.chatPanel.root.isVisible = tab == TAB_CHAT
+        binding.minePanel.root.isVisible = tab == TAB_MINE
+        binding.bottomNav.navHome.isSelected = tab == TAB_HOME
+        binding.bottomNav.navChat.isSelected = tab == TAB_CHAT
+        binding.bottomNav.navMine.isSelected = tab == TAB_MINE
+        backToHomeCallback?.isEnabled = tab != TAB_HOME
+        // 进入聊天室页签时才拉公告和频道列表，首页启动不产生多余请求
+        if (tab == TAB_CHAT) chatPanel.onShow()
+        // 统计卡片现在在「我的」里，切过去时刷一次，避免看到进入 App 那一刻的旧数字
+        if (tab == TAB_MINE) updateStatistics()
     }
 
     /**
