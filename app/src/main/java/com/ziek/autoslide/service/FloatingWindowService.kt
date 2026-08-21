@@ -70,6 +70,7 @@ import com.ziek.autoslide.KEY_MIN_PAUSE_TIME
 import com.ziek.autoslide.KEY_PAUSE_MODE
 import com.ziek.autoslide.KEY_PAUSE_TIME
 import com.ziek.autoslide.KEY_SPEED
+import com.ziek.autoslide.License
 import com.ziek.autoslide.MainActivity
 import com.ziek.autoslide.PAUSE_MODE_KEYWORD
 import com.ziek.autoslide.PREFS_NAME
@@ -154,6 +155,9 @@ class FloatingWindowService : Service() {
         // 注册拖拽事件处理
         setupDragging()
         setupControlButtons()
+        // 先以全透明添加：gravity 是 TOP|START，addView 那一刻 x/y 还是 0，
+        // 直接可见就会在左上角闪一帧再跳到目标位置。等下面 post 里定好位再一起显形。
+        layoutParams.alpha = 0f
         // 添加悬浮窗到窗口管理器
         try {
             windowManager.addView(rootView, layoutParams)
@@ -168,15 +172,17 @@ class FloatingWindowService : Service() {
             stopSelf()
             return
         }
-        // 悬浮窗默认停靠在屏幕右下角（等布局完成拿到实际宽高后设置位置）
+        // 悬浮窗默认贴右边缘、上下居中（等布局完成拿到实际宽高后设置位置）
         rootView.post {
             if (!::rootView.isInitialized || !::layoutParams.isInitialized) {
                 return@post
             }
             val displayMetrics = resources.displayMetrics
-            // 计算右下角坐标，并保证不小于 0
+            // 贴右边缘，垂直方向取屏幕中线，均保证不小于 0
             layoutParams.x = (displayMetrics.widthPixels - rootView.width + currentRightInset()).coerceAtLeast(0)
-            layoutParams.y = (displayMetrics.heightPixels - rootView.height).coerceAtLeast(0)
+            layoutParams.y = ((displayMetrics.heightPixels - rootView.height) / 2).coerceAtLeast(0)
+            // 位置和透明度一次提交：用户看到的第一帧就已经在目标位置
+            layoutParams.alpha = 1f
             runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
         }
         // 监听自动滑动服务事件
@@ -475,7 +481,7 @@ class FloatingWindowService : Service() {
             text = getString(R.string.record_launch_once_label)
             textSize = 14f
             isChecked = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                .getBoolean(KEY_MACRO_LAUNCH_ONCE, true)
+                .getBoolean(KEY_MACRO_LAUNCH_ONCE, false)
         }
         val container = LinearLayout(dialogContext).apply {
             orientation = LinearLayout.VERTICAL
@@ -552,6 +558,19 @@ class FloatingWindowService : Service() {
         // 触摸反馈用的可点击态背景（涟漪效果，来自当前主题的 selectableItemBackground）
         val rippleOutValue = TypedValue()
         dialogContext.theme.resolveAttribute(android.R.attr.selectableItemBackground, rippleOutValue, true)
+        // 行尾「清除」的右侧留白，取弹窗标题同一个内边距值：
+        // MaterialAlertDialog 的标题/正文左右都用 dialogPreferredPadding，直接复用才能真正对齐，
+        // 写死 dp 在不同 ROM 改过对话框样式时会对不上。取不到再退回 24dp。
+        val dialogEdgePadding = TypedValue().let { out ->
+            if (dialogContext.theme.resolveAttribute(
+                    androidx.appcompat.R.attr.dialogPreferredPadding, out, true
+                )
+            ) {
+                TypedValue.complexToDimensionPixelSize(out.data, resources.displayMetrics)
+            } else {
+                dp(24)
+            }
+        }
         val adapter = object : BaseAdapter() {
             override fun getCount(): Int = names.size
             override fun getItem(position: Int): Any = names[position]
@@ -562,7 +581,7 @@ class FloatingWindowService : Service() {
                 val row = LinearLayout(dialogContext).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(18), dp(0), dp(10), dp(0))
+                    setPadding(dp(18), dp(0), dialogEdgePadding, dp(0))
                     if (rippleOutValue.resourceId != 0) {
                         setBackgroundResource(rippleOutValue.resourceId)
                     }
@@ -581,10 +600,15 @@ class FloatingWindowService : Service() {
                     // 无背景，仅红色文字
                     setTextColor(Color.parseColor("#E53935"))
                     setBackgroundColor(Color.TRANSPARENT)
+                    // minWidth/minHeight 只管 TextView 自己那一层；View 层的
+                    // minimumWidth 来自主题 buttonStyle 的 88dp，不一并清掉的话
+                    // 文字会被居中在一个 88dp 宽的空盒子里，看着就是间距特别大
                     minWidth = 0
                     minHeight = 0
-                    // 收窄左内边距，让导出能贴过来（Button 默认左右各有约 20dp 内边距）
-                    setPadding(dp(0), paddingTop, paddingRight, paddingBottom)
+                    minimumWidth = 0
+                    minimumHeight = 0
+                    // 水平内边距归零；与弹窗右边缘的留白由行的右内边距统一提供
+                    setPadding(0, paddingTop, 0, paddingBottom)
                     setOnClickListener {
                         confirmDeleteMacro(name)
                     }
@@ -595,10 +619,15 @@ class FloatingWindowService : Service() {
                     isAllCaps = false
                     setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.primary))
                     setBackgroundColor(Color.TRANSPARENT)
+                    // minWidth/minHeight 只管 TextView 自己那一层；View 层的
+                    // minimumWidth 来自主题 buttonStyle 的 88dp，不一并清掉的话
+                    // 文字会被居中在一个 88dp 宽的空盒子里，看着就是间距特别大
                     minWidth = 0
                     minHeight = 0
-                    // 收窄右内边距，把导出向右推去贴近清除
-                    setPadding(paddingLeft, paddingTop, dp(0), paddingBottom)
+                    minimumWidth = 0
+                    minimumHeight = 0
+                    // 水平内边距归零，按钮宽度就等于文字宽度，间距全部交给外边距算
+                    setPadding(0, paddingTop, 0, paddingBottom)
                     setOnClickListener {
                         playListDialog?.dismiss()
                         // 临时隐藏悬浮窗，避免遮挡系统分享面板；12 秒后自动恢复
@@ -607,8 +636,38 @@ class FloatingWindowService : Service() {
                         exportSlideSettings()
                     }
                 }
+                val shareButton = Button(dialogContext).apply {
+                    text = getString(R.string.macro_share)
+                    textSize = 14f
+                    isAllCaps = false
+                    setTextColor(ContextCompat.getColor(this@FloatingWindowService, R.color.primary))
+                    setBackgroundColor(Color.TRANSPARENT)
+                    // minWidth/minHeight 只管 TextView 自己那一层；View 层的
+                    // minimumWidth 来自主题 buttonStyle 的 88dp，不一并清掉的话
+                    // 文字会被居中在一个 88dp 宽的空盒子里，看着就是间距特别大
+                    minWidth = 0
+                    minHeight = 0
+                    minimumWidth = 0
+                    minimumHeight = 0
+                    setPadding(0, paddingTop, 0, paddingBottom)
+                    setOnClickListener {
+                        confirmShareMacro(name)
+                    }
+                }
+                // 「一个汉字」取实际字宽而不是写死 dp，系统字体放大时间距跟着一起放大
+                val charWidth = shareButton.paint.measureText("字").toInt()
+                // 导出 —(1 字)— 分享 —(2 字)— 清除
+                shareButton.layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginStart = charWidth }
+                clearButton.layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginStart = charWidth * 2 }
                 row.addView(nameView)
                 row.addView(exportButton)
+                row.addView(shareButton)
                 row.addView(clearButton)
                 // 点击整行开始回放
                 row.setOnClickListener {
@@ -773,7 +832,16 @@ class FloatingWindowService : Service() {
     }
 
     /* 进入回放：关闭列表、进入全屏反馈层、显示倒计时 */
+    /* 试用到期时给出提示并拦下动作 */
+    private fun blockedByLicense(): Boolean {
+        if (!License.blocked) return false
+        Toast.makeText(this, R.string.license_blocked_toast, Toast.LENGTH_LONG).show()
+        return true
+    }
+
     private fun startPlayback(name: String, loopCount: Int) {
+        // 试用到期：在这里就挡住，不让用户白等完倒计时才发现回放起不来
+        if (blockedByLicense()) return
         playListDialog?.dismiss()
         enterPlaybackMode()
         showPlaybackCountdown(name, loopCount)
@@ -965,13 +1033,48 @@ class FloatingWindowService : Service() {
             .let { showSystemAlertDialog(it) }
     }
 
+    /**
+     * 分享确认。
+     *
+     * 上传是把用户自己录的脚本发到服务器，属于对外动作，必须由用户明确点头；
+     * 弹窗里写清上传范围，取消则原样退回动作列表。
+     */
+    private fun confirmShareMacro(name: String) {
+        playListDialog?.dismiss()
+        playListDialog = null
+        MaterialAlertDialogBuilder(createDialogContext())
+            .setTitle(R.string.macro_share_title)
+            .setMessage(getString(R.string.macro_share_message, name))
+            .setPositiveButton(R.string.confirm) { _, _ ->
+                shareMacro(name)
+                // 分享后回到动作列表，方便接着分享下一条
+                showPlayListDialog()
+            }
+            .setNegativeButton(R.string.cancel) { _, _ ->
+                // 取消分享，恢复动作列表
+                showPlayListDialog()
+            }
+            .let { showSystemAlertDialog(it) }
+    }
+
+    /* 上传单条脚本，结果用吐司反馈（用 applicationContext，服务提前销毁也不会崩） */
+    private fun shareMacro(name: String) {
+        val toastContext = applicationContext
+        Toast.makeText(toastContext, R.string.macro_sharing, Toast.LENGTH_SHORT).show()
+        MacroSync.share(toastContext, name) { ok ->
+            Toast.makeText(
+                toastContext,
+                if (ok) R.string.macro_share_success else R.string.macro_share_failed,
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
     /* 删除指定名称的录制记录 */
     private fun deleteMacro(name: String) {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
             remove(KEY_MACRO_PREFIX + name)
         }
-        // 同步整份脚本文件到服务器
-        MacroSync.schedule(this)
         Toast.makeText(this, R.string.macro_deleted, Toast.LENGTH_SHORT).show()
     }
 
@@ -1202,8 +1305,6 @@ class FloatingWindowService : Service() {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
             putString(KEY_MACRO_PREFIX + name, AutoSlideInputCodec.encode(inputs))
         }
-        // 同步整份脚本文件到服务器
-        MacroSync.schedule(this)
     }
 
     /**
@@ -1344,6 +1445,7 @@ class FloatingWindowService : Service() {
 
     /* 启动自动滑动服务 */
     private fun startSlide() {
+        if (blockedByLicense()) return
         minimize()
         // 从本地配置文件读取当前设置
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)

@@ -40,6 +40,17 @@ const val KEY_FLOATING_DESIRED = "floatingDesired"
 // 自动化总暂停：暂停后停止所有自动滑动、识别与自动点击，直到用户主动恢复
 const val KEY_AUTOMATION_PAUSED = "automationPaused"
 
+// ==================== 使用时长授权 ====================
+// 试用期与分享奖励的判定全部由服务端做，本地这几个键只是缓存服务端的结论，
+// 断网时按缓存放行（联系不上服务器不影响正常使用）。
+const val KEY_LIC_EXPIRE_AT = "licExpireAt"           // 到期时间（服务端下发的绝对时间戳，毫秒）
+const val KEY_LIC_SERVER_TIME = "licServerTime"       // 最后一次见到的服务端时间，用于识别本地时钟被改早
+const val KEY_LIC_CODE = "licCode"                    // 本机邀请码
+const val KEY_LIC_INVITE_URL = "licInviteUrl"         // 分享链接（落地页地址）
+const val KEY_LIC_INVITED_COUNT = "licInvitedCount"   // 已成功邀请的人数
+const val KEY_LIC_BONUS_DAYS = "licBonusDays"         // 已获得的奖励天数
+const val KEY_LIC_CAN_BIND = "licCanBind"             // 本机是否还能填写别人的邀请码
+
 // ==================== 统计数据 ====================
 const val KEY_STATS_TOTAL_SWIPES = "stats_total_swipes"
 const val KEY_STATS_KEYWORD_MATCHES = "stats_keyword_matches"
@@ -59,13 +70,17 @@ val SERVER_BASE_URL: String = BuildConfig.SERVER_BASE_URL
 val URL_TERMS: String = "$SERVER_BASE_URL/terms"
 val URL_PRIVACY: String = "$SERVER_BASE_URL/privacy"
 
+// 分享落地页：好友打开后能看到邀请码和下载入口，由 server/src/license.js 提供。
+// 正常情况下用服务端下发的 inviteUrl，这里只是拿不到时的兜底拼接。
+val URL_INVITE_PREFIX: String = "$SERVER_BASE_URL/invite?code="
+
 // ==================== 默认值 ====================
 const val DEFAULT_SPEED = 50                        // 默认滑动速度（中等）
 const val DEFAULT_PAUSE_TIME = 15                    // 默认固定停顿 15 秒
 const val DEFAULT_MIN_PAUSE_TIME = 5                // 默认随机停顿下限 5 秒
 const val DEFAULT_MAX_PAUSE_TIME = 30                // 默认随机停顿上限 30 秒
 // 默认关键词（用中文逗号分隔，供第一次打开应用时预填）
-const val DEFAULT_KEYWORDS = "上滑，继续，查看详情，点击进入，限时，抢购，购物"
+const val DEFAULT_KEYWORDS = "上滑继续，查看详情，点击进入，限时，抢购，购物"
 const val DEFAULT_KEYWORD_IGNORE_CASE = true        // 默认忽略大小写
 const val DEFAULT_KEYWORD_INTERVAL = 2           // 默认每 2 秒检测一次
 const val DEFAULT_KEYWORD_COOLDOWN = 3           // 默认触发后冷却 3 秒
@@ -105,7 +120,7 @@ const val DEFAULT_KEYWORD_DIRECTION = DIRECTION_UP
 // 值为 PlainApp 输入框架的 JSON 数组（点击/长按/滑动/等待）
 const val KEY_MACRO_PREFIX = "macro_"
 const val KEY_MACRO_LOOP_COUNT = "macroLoopCount"     // 回放时记住上次使用的循环次数
-const val KEY_MACRO_LAUNCH_ONCE = "macroLaunchOnce"   // 录制时第一步是否标记为“仅首轮执行”（默认开启）
+const val KEY_MACRO_LAUNCH_ONCE = "macroLaunchOnce"   // 录制时第一步是否标记为“仅首轮执行”（默认关闭）
 
 /**
  * 兼容读取关键词时间参数（单位：秒）

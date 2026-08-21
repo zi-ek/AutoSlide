@@ -20,4 +20,9 @@
     <color name="floating_btn_record_icon">#E53935</color>
     <color name="floating_panel_bg">#3F2B2B2E</color>
     <color name="dialog_divider">#1F000000</color>
+    <!--底部导航栏-->
+    <color name="nav_bar_bg">#FFFFFFFF</color>
+    <color name="nav_divider">#14000000</color>
+    <color name="nav_indicator">#E3EEFF</color>
+    <color name="nav_item_unselected">#8A8F98</color>
 </resources>

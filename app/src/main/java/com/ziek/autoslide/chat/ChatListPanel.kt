@@ -1,45 +1,54 @@
 package com.ziek.autoslide.chat
 
+/**
+ * 聊天室页面逻辑（底部导航「刷金币」页签的内容）。
+ *
+ * 原来这套逻辑住在独立的 ChatListActivity 里，加了底部导航后
+ * 聊天室变成主界面的一个页签，于是把逻辑搬到这个 Panel：
+ * 只依赖宿主 Activity + view_chat_list 的 ViewBinding，不再自己管窗口。
+ */
+
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
-import android.os.Bundle
-import android.widget.FrameLayout
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.widget.FrameLayout
+import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
-import android.widget.PopupWindow
-import android.graphics.Color
-import android.graphics.drawable.ColorDrawable
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import com.ziek.autoslide.R
-import com.ziek.autoslide.databinding.ActivityChatListBinding
+import com.ziek.autoslide.databinding.ViewChatListBinding
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-/** 聊天室首页：昵称设置、频道列表、新建/加入频道 */
-class ChatListActivity : AppCompatActivity() {
+/**
+ * @param activity 宿主界面，用于弹窗、跳转和协程作用域
+ * @param binding view_chat_list 的绑定
+ * @param onNicknameCancelled 用户拒绝设置昵称时的回调（宿主可以切回首页）
+ */
+class ChatListPanel(
+    private val activity: AppCompatActivity,
+    private val binding: ViewChatListBinding,
+    private val onNicknameCancelled: () -> Unit,
+) {
 
-    private lateinit var binding: ActivityChatListBinding
     private val channels = mutableListOf<ChatChannel>()
-    private lateinit var adapter: ChannelAdapter
+    private val adapter = ChannelAdapter()
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        binding = ActivityChatListBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+    /* 昵称弹窗只弹一次，避免页签来回切时反复打扰 */
+    private var nicknameDialogShowing = false
 
-        adapter = ChannelAdapter()
+    init {
         binding.channelListView.adapter = adapter
         binding.channelListView.setOnItemClickListener { _, _, position, _ ->
             openChannel(channels[position])
@@ -49,29 +58,18 @@ class ChatListActivity : AppCompatActivity() {
             if (channel.joined) {
                 showChannelMenu(channel)
             } else {
-                Toast.makeText(this, R.string.chat_tap_to_join, Toast.LENGTH_SHORT).show()
+                Toast.makeText(activity, R.string.chat_tap_to_join, Toast.LENGTH_SHORT).show()
             }
             true
         }
         binding.chatRefreshButton.setOnClickListener { loadChannels() }
         binding.chatAddButton.setOnClickListener { showAddMenu() }
         binding.announcementCard.setOnClickListener { showAnnouncementDialog() }
-
-        // Android 15+ 边到边：内容会顶到状态栏，手动加上系统栏内边距
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-            ViewCompat.setOnApplyWindowInsetsListener(binding.root) { view, insets ->
-                val bars = insets.getInsets(
-                    WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-                )
-                view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-                insets
-            }
-        }
     }
 
-    override fun onResume() {
-        super.onResume()
-        if (ChatStorage.nickName(this).isBlank()) {
+    /** 页签被切到前台、或宿主 onResume 时调用：没昵称先要昵称，有昵称就刷新公告和频道 */
+    fun onShow() {
+        if (ChatStorage.nickName(activity).isBlank()) {
             showNicknameDialog()
         } else {
             loadAnnouncement()
@@ -80,7 +78,8 @@ class ChatListActivity : AppCompatActivity() {
     }
 
     private fun showAddMenu() {
-        val menuBinding = LayoutInflater.from(this).inflate(R.layout.layout_chat_add_menu, binding.root, false)
+        val menuBinding = LayoutInflater.from(activity)
+            .inflate(R.layout.layout_chat_add_menu, binding.root, false)
         val popup = PopupWindow(
             menuBinding,
             dp(200),
@@ -101,26 +100,29 @@ class ChatListActivity : AppCompatActivity() {
     }
 
     private fun loadAnnouncement() {
-        lifecycleScope.launch {
+        activity.lifecycleScope.launch {
             runCatching { ChatApi.getAnnouncement() }
                 .onSuccess { ann ->
-                    binding.announcementTitleText.text = ann.title.ifBlank { getString(R.string.chat_announcement) }
+                    binding.announcementTitleText.text =
+                        ann.title.ifBlank { activity.getString(R.string.chat_announcement) }
                     binding.announcementContentText.text =
-                        ann.content.ifBlank { getString(R.string.chat_announcement_empty) }
+                        ann.content.ifBlank { activity.getString(R.string.chat_announcement_empty) }
                 }
                 .onFailure {
-                    binding.announcementTitleText.text = getString(R.string.chat_announcement)
-                    binding.announcementContentText.text = getString(R.string.chat_announcement_empty)
+                    binding.announcementTitleText.text =
+                        activity.getString(R.string.chat_announcement)
+                    binding.announcementContentText.text =
+                        activity.getString(R.string.chat_announcement_empty)
                 }
         }
     }
 
     private fun showAnnouncementDialog() {
-        lifecycleScope.launch {
+        activity.lifecycleScope.launch {
             runCatching { ChatApi.getAnnouncement() }
                 .onSuccess { ann ->
-                    MaterialAlertDialogBuilder(this@ChatListActivity)
-                        .setTitle(ann.title.ifBlank { getString(R.string.chat_announcement) })
+                    MaterialAlertDialogBuilder(activity)
+                        .setTitle(ann.title.ifBlank { activity.getString(R.string.chat_announcement) })
                         .setMessage(ann.content)
                         .setPositiveButton(R.string.confirm, null)
                         .show()
@@ -129,44 +131,58 @@ class ChatListActivity : AppCompatActivity() {
     }
 
     private fun showNicknameDialog() {
+        if (nicknameDialogShowing) return
+        nicknameDialogShowing = true
         val fields = createDialogInput(R.string.chat_nickname_hint, ChatStorage.defaultNickName())
-        MaterialAlertDialogBuilder(this)
+        MaterialAlertDialogBuilder(activity)
             .setTitle(R.string.chat_nickname_title)
             .setView(fields.container)
             .setPositiveButton(R.string.confirm) { _, _ ->
                 val name = fields.input.text?.toString()?.trim().orEmpty()
                 if (name.isEmpty()) {
-                    Toast.makeText(this, R.string.chat_nickname_empty, Toast.LENGTH_SHORT).show()
+                    Toast.makeText(activity, R.string.chat_nickname_empty, Toast.LENGTH_SHORT).show()
+                    nicknameDialogShowing = false
                     showNicknameDialog()
                 } else {
-                    ChatStorage.setNickName(this, name)
+                    ChatStorage.setNickName(activity, name)
+                    loadAnnouncement()
                     loadChannels()
                 }
             }
-            .setNegativeButton(R.string.cancel) { _, _ -> finish() }
+            .setNegativeButton(R.string.cancel) { _, _ -> onNicknameCancelled() }
             .setCancelable(false)
+            .setOnDismissListener { nicknameDialogShowing = false }
             .show()
     }
 
     private fun showCreateDialog() {
         val fields = createDialogInput(R.string.chat_channel_name_hint)
-        MaterialAlertDialogBuilder(this)
+        MaterialAlertDialogBuilder(activity)
             .setTitle(R.string.chat_create_title)
             .setView(fields.container)
             .setPositiveButton(R.string.confirm) { _, _ ->
                 val name = fields.input.text?.toString()?.trim().orEmpty()
                 if (name.isEmpty()) {
-                    Toast.makeText(this, R.string.chat_channel_name_empty, Toast.LENGTH_SHORT).show()
+                    Toast.makeText(activity, R.string.chat_channel_name_empty, Toast.LENGTH_SHORT)
+                        .show()
                     return@setPositiveButton
                 }
-                lifecycleScope.launch {
+                activity.lifecycleScope.launch {
                     runCatching {
-                        ChatApi.createChannel(name, ChatStorage.deviceId(this@ChatListActivity), ChatStorage.nickName(this@ChatListActivity))
+                        ChatApi.createChannel(
+                            name,
+                            ChatStorage.deviceId(activity),
+                            ChatStorage.nickName(activity),
+                        )
                     }.onSuccess { channel ->
                         loadChannels()
                         openChat(channel)
                     }.onFailure { e ->
-                        Toast.makeText(this@ChatListActivity, getString(R.string.chat_create_failed, e.message ?: ""), Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            activity,
+                            activity.getString(R.string.chat_create_failed, e.message ?: ""),
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 }
             }
@@ -176,10 +192,10 @@ class ChatListActivity : AppCompatActivity() {
 
     private fun showChannelMenu(channel: ChatChannel) {
         val members = channel.members.joinToString("\n") { it.name }
-        val isOwner = channel.creatorId == ChatStorage.deviceId(this)
-        MaterialAlertDialogBuilder(this)
+        val isOwner = channel.creatorId == ChatStorage.deviceId(activity)
+        MaterialAlertDialogBuilder(activity)
             .setTitle(channel.name)
-            .setMessage(getString(R.string.chat_channel_detail, channel.members.size, members))
+            .setMessage(activity.getString(R.string.chat_channel_detail, channel.members.size, members))
             .setPositiveButton(if (isOwner) R.string.chat_delete else R.string.chat_leave) { _, _ ->
                 if (isOwner) confirmDelete(channel) else confirmLeave(channel)
             }
@@ -188,20 +204,20 @@ class ChatListActivity : AppCompatActivity() {
     }
 
     private fun confirmDelete(channel: ChatChannel) {
-        MaterialAlertDialogBuilder(this)
+        MaterialAlertDialogBuilder(activity)
             .setTitle(R.string.chat_delete)
             .setMessage(R.string.chat_delete_confirm)
             .setPositiveButton(R.string.confirm) { _, _ ->
-                lifecycleScope.launch {
+                activity.lifecycleScope.launch {
                     runCatching {
-                        ChatApi.deleteChannel(channel.id, ChatStorage.deviceId(this@ChatListActivity))
+                        ChatApi.deleteChannel(channel.id, ChatStorage.deviceId(activity))
                     }.onSuccess {
-                        Toast.makeText(this@ChatListActivity, R.string.chat_deleted, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(activity, R.string.chat_deleted, Toast.LENGTH_SHORT).show()
                         loadChannels()
                     }.onFailure { e ->
                         Toast.makeText(
-                            this@ChatListActivity,
-                            getString(R.string.chat_delete_failed, e.message ?: ""),
+                            activity,
+                            activity.getString(R.string.chat_delete_failed, e.message ?: ""),
                             Toast.LENGTH_SHORT,
                         ).show()
                     }
@@ -212,18 +228,22 @@ class ChatListActivity : AppCompatActivity() {
     }
 
     private fun confirmLeave(channel: ChatChannel) {
-        MaterialAlertDialogBuilder(this)
+        MaterialAlertDialogBuilder(activity)
             .setTitle(R.string.chat_leave)
             .setMessage(R.string.chat_leave_confirm)
             .setPositiveButton(R.string.confirm) { _, _ ->
-                lifecycleScope.launch {
+                activity.lifecycleScope.launch {
                     runCatching {
-                        ChatApi.leaveChannel(channel.id, ChatStorage.deviceId(this@ChatListActivity))
+                        ChatApi.leaveChannel(channel.id, ChatStorage.deviceId(activity))
                     }.onSuccess {
-                        Toast.makeText(this@ChatListActivity, R.string.chat_left, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(activity, R.string.chat_left, Toast.LENGTH_SHORT).show()
                         loadChannels()
                     }.onFailure { e ->
-                        Toast.makeText(this@ChatListActivity, getString(R.string.chat_join_failed, e.message ?: ""), Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            activity,
+                            activity.getString(R.string.chat_join_failed, e.message ?: ""),
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 }
             }
@@ -232,8 +252,8 @@ class ChatListActivity : AppCompatActivity() {
     }
 
     private fun loadChannels() {
-        lifecycleScope.launch {
-            runCatching { ChatApi.getChannels(ChatStorage.deviceId(this@ChatListActivity)) }
+        activity.lifecycleScope.launch {
+            runCatching { ChatApi.getChannels(ChatStorage.deviceId(activity)) }
                 .onSuccess { list ->
                     channels.clear()
                     channels.addAll(list)
@@ -242,14 +262,18 @@ class ChatListActivity : AppCompatActivity() {
                     binding.chatEmptyContainer.isVisible = channels.isEmpty()
                 }
                 .onFailure { e ->
-                    Toast.makeText(this@ChatListActivity, getString(R.string.chat_load_failed, e.message ?: ""), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        activity,
+                        activity.getString(R.string.chat_load_failed, e.message ?: ""),
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 }
         }
     }
 
     private fun openChat(channel: ChatChannel) {
-        startActivity(
-            Intent(this, ChatActivity::class.java)
+        activity.startActivity(
+            Intent(activity, ChatActivity::class.java)
                 .putExtra(ChatActivity.EXTRA_CHANNEL_ID, channel.id)
                 .putExtra(ChatActivity.EXTRA_CHANNEL_NAME, channel.name)
         )
@@ -261,27 +285,27 @@ class ChatListActivity : AppCompatActivity() {
             openChat(channel)
             return
         }
-        lifecycleScope.launch {
+        activity.lifecycleScope.launch {
             runCatching {
                 ChatApi.joinChannel(
                     channel.id,
-                    ChatStorage.deviceId(this@ChatListActivity),
-                    ChatStorage.nickName(this@ChatListActivity),
+                    ChatStorage.deviceId(activity),
+                    ChatStorage.nickName(activity),
                 )
             }.onSuccess { joined ->
                 loadChannels()
                 openChat(joined)
             }.onFailure { e ->
                 Toast.makeText(
-                    this@ChatListActivity,
-                    getString(R.string.chat_join_failed, e.message ?: ""),
+                    activity,
+                    activity.getString(R.string.chat_join_failed, e.message ?: ""),
                     Toast.LENGTH_SHORT,
                 ).show()
             }
         }
     }
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int = (value * activity.resources.displayMetrics.density).toInt()
 
     private class DialogInputFields(
         val container: FrameLayout,
@@ -290,16 +314,16 @@ class ChatListActivity : AppCompatActivity() {
 
     /** 和“新建录制”弹窗统一：Material Outlined 输入框 + 24dp 左右留白 */
     private fun createDialogInput(hintRes: Int, prefill: String = ""): DialogInputFields {
-        val inputLayout = TextInputLayout(this).apply {
+        val inputLayout = TextInputLayout(activity).apply {
             boxBackgroundMode = TextInputLayout.BOX_BACKGROUND_OUTLINE
-            hint = getString(hintRes)
+            hint = activity.getString(hintRes)
         }
         val input = TextInputEditText(inputLayout.context).apply {
             isSingleLine = true
             if (prefill.isNotEmpty()) setText(prefill)
         }
         inputLayout.addView(input)
-        val container = FrameLayout(this).apply {
+        val container = FrameLayout(activity).apply {
             setPadding(dp(24), dp(12), dp(24), 0)
             addView(inputLayout)
         }
@@ -312,7 +336,7 @@ class ChatListActivity : AppCompatActivity() {
         override fun getItemId(position: Int) = position.toLong()
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val view = convertView ?: LayoutInflater.from(this@ChatListActivity)
+            val view = convertView ?: LayoutInflater.from(activity)
                 .inflate(R.layout.item_chat_channel, parent, false)
             val channel = channels[position]
             val avatar = view.findViewById<TextView>(R.id.channelAvatarText)
@@ -324,9 +348,9 @@ class ChatListActivity : AppCompatActivity() {
             }
             view.findViewById<TextView>(R.id.channelNameText).text = channel.name
             val preview = if (channel.joined) {
-                channel.lastMessageText.ifBlank { getString(R.string.chat_no_message) }
+                channel.lastMessageText.ifBlank { activity.getString(R.string.chat_no_message) }
             } else {
-                getString(R.string.chat_not_joined)
+                activity.getString(R.string.chat_not_joined)
             }
             view.findViewById<TextView>(R.id.channelPreviewText).text = preview
             view.findViewById<TextView>(R.id.channelTimeText).text =

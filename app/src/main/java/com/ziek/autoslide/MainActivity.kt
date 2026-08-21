@@ -13,47 +13,63 @@ import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
+import android.content.ContentValues
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.provider.Settings
 import android.service.quicksettings.TileService
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
 import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.BaseAdapter
+import android.widget.Button
 import android.widget.CompoundButton
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.net.toUri
-import androidx.core.view.WindowCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
+import com.google.android.accessibility.selecttospeak.SelectToSpeakService
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.slider.RangeSlider
 import com.google.android.material.slider.Slider
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
-import com.google.android.accessibility.selecttospeak.SelectToSpeakService
+import com.ziek.autoslide.chat.ChatListPanel
 import com.ziek.autoslide.databinding.ActivityMainBinding
-import com.ziek.autoslide.chat.ChatListActivity
 import com.ziek.autoslide.priv.PrivilegeShizukuExternalStarter
 import com.ziek.autoslide.service.AutoSlideService
 import com.ziek.autoslide.service.AutoSlideTileService
 import com.ziek.autoslide.service.FloatingWindowService
 import com.ziek.autoslide.service.StatusService
+import java.util.Locale
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -63,7 +79,6 @@ import org.json.JSONObject
 import priv.kit.core.Privilege
 import priv.kit.core.PrivilegeStartupException
 import rikka.shizuku.Shizuku
-import java.util.Locale
 import android.R as AndroidR
 import com.google.android.material.R as MaterialR
 
@@ -76,6 +91,9 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding // 视图绑定对象（访问布局控件）
     private lateinit var preferences: SharedPreferences // 本地设置存储
+    private lateinit var chatPanel: ChatListPanel // ⌈刷金币⌋页签的聊天室逻辑
+    private var currentTab = TAB_HOME // 当前选中的底部导航页签
+    private var backToHomeCallback: OnBackPressedCallback? = null // 返回键回首页的回调，只在非首页时启用
     var ioDispatcher: CoroutineDispatcher = Dispatchers.IO // IO 线程调度器（权限检查等耗时操作）
     var mainDispatcher: CoroutineDispatcher = Dispatchers.Main // 主线程调度器（更新 UI）
 
@@ -84,12 +102,17 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val SHIZUKU_PERMISSION_REQUEST_CODE = 100
         private const val REQUEST_NOTIFICATION_PERMISSION = 101
+        private const val REQUEST_SAVE_QR_PERMISSION = 102
         /* 首次 resume 跳过自愈的时间窗（GKD 同款 2 秒） */
         private const val FIRST_RESUME_SKIP_MS = 2000L
         // 无障碍授权方式选项常量
         private const val OPTION_MANUAL = 0
         private const val OPTION_SHIZUKU = 1
         private const val OPTION_ADB = 2
+        // 底部导航页签下标
+        private const val TAB_HOME = 0
+        private const val TAB_CHAT = 1
+        private const val TAB_MINE = 2
     }
 
     /* 本界面创建时刻，与 [App.startTime] 比较判断是否跟着进程一起启动（GKD: MainActivity.startTime） */
@@ -164,7 +187,7 @@ class MainActivity : AppCompatActivity() {
      * @param checked 开关状态
      */
     private fun updateAccessibilitySwitchState(checked: Boolean) {
-        updateSwitchState(binding.accessibilityServicePermissionSwitch, checked, accessibilitySwitchListener)
+        updateSwitchState(binding.minePanel.accessibilityServicePermissionSwitch, checked, accessibilitySwitchListener)
     }
 
     /**
@@ -173,7 +196,7 @@ class MainActivity : AppCompatActivity() {
      * @param checked 开关状态
      */
     private fun updateOverlaySwitchState(checked: Boolean) {
-        updateSwitchState(binding.overlayPermissionSwitch, checked, overlaySwitchListener)
+        updateSwitchState(binding.minePanel.overlayPermissionSwitch, checked, overlaySwitchListener)
     }
 
     /**
@@ -182,7 +205,7 @@ class MainActivity : AppCompatActivity() {
      * @param checked 开关状态
      */
     private fun updateStatusServiceSwitchState(checked: Boolean) {
-        updateSwitchState(binding.statusServiceSwitch, checked, statusServiceSwitchListener)
+        updateSwitchState(binding.minePanel.statusServiceSwitch, checked, statusServiceSwitchListener)
     }
 
     /**
@@ -203,9 +226,9 @@ class MainActivity : AppCompatActivity() {
         setupSpeedControl()
         setupKeywordControls()
         setupSkipControls()
-        binding.accessibilityServicePermissionSwitch.setOnCheckedChangeListener(accessibilitySwitchListener)
-        binding.overlayPermissionSwitch.setOnCheckedChangeListener(overlaySwitchListener)
-        binding.statusServiceSwitch.setOnCheckedChangeListener(statusServiceSwitchListener)
+        binding.minePanel.accessibilityServicePermissionSwitch.setOnCheckedChangeListener(accessibilitySwitchListener)
+        binding.minePanel.overlayPermissionSwitch.setOnCheckedChangeListener(overlaySwitchListener)
+        binding.minePanel.statusServiceSwitch.setOnCheckedChangeListener(statusServiceSwitchListener)
         // 常驻通知开关跟随服务实际运行状态（GKD: checked = manageRunning && store.enableStatusService）
         lifecycleScope.launch {
             StatusService.isForeground.collect { foreground ->
@@ -217,17 +240,16 @@ class MainActivity : AppCompatActivity() {
             AutoSlideService.getInstance()?.setDouyinAutoPlayEnabled(isChecked)
         }
         setupStartButton()
+        setupBackToDesktopButton()
         updateFloatingWindowButton()
-        setupUpdateButton()
-        setupChatRoomText()
+        setupBottomNav()
+        setupMinePage()
         setupKeepAliveHint()
         // GKD: MainActivity.onCreate 里的 StatusService.autoStart()
         StatusService.autoStart(this)
         // 首启使用声明：同意之前不做任何上报/网络动作（GKD 同样把这些挡在 termsAccepted 之后）
         TermsAcceptDialog.showIfNeeded(this) {
             reportInstallIfNeeded()
-            // 启动时同步一次录制脚本（补传上次未上传的 slide_settings.xml）
-            MacroSync.schedule(this, delayMs = 3000)
         }
         // 注册Shizuku监听器
         binding.root.post {
@@ -263,6 +285,8 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateFloatingWindowButton()
+        // 停在聊天室页签时（比如从某个频道退回来），回到前台刷新一次列表
+        if (currentTab == TAB_CHAT) chatPanel.onShow()
         // 使用协程异步检查权限并同步开关状态
         lifecycleScope.launch(ioDispatcher) {
             val hasWriteSecure = hasWriteSecureSettingsPermission()
@@ -300,11 +324,20 @@ class MainActivity : AppCompatActivity() {
         // startForeground 会被后台限制拒绝；此刻界面在前台，正是允许启动前台服务的时机。
         StatusService.autoStart(this)
         UpdateChecker.onHostResumed(this)
-        // 打开 App 时主动检查更新（每天最多一次，有新版本自动弹窗）。
+        // 打开 App 时主动检查更新（每次启动查一次，有新版本弹出不可取消的强制更新弹窗；
+        // 断网或连不上服务器时只是查不到新版本，不影响正常使用）。
         // 未同意使用声明前不发起任何网络请求（GKD: termsAcceptedFlow.value 才允许 recheck）
         if (TermsAcceptDialog.isAccepted(this)) {
             UpdateChecker.checkUpdateIfNeeded(this)
+            // 使用时长：先按本地缓存判定（到期立刻挡住），再去服务端同步一次最新状态
+            License.revalidate(this)
+            LicenseDialog.showIfExpired(this)
+            License.syncIfNeeded(this) {
+                updateLicenseText()
+                LicenseDialog.showIfExpired(this)
+            }
         }
+        updateLicenseText()
     }
 
     /* 活动销毁时移除Shizuku权限请求监听器 */
@@ -391,9 +424,9 @@ class MainActivity : AppCompatActivity() {
         val keywordMatches = preferences.getInt(KEY_STATS_KEYWORD_MATCHES, 0)
         val savedDistanceM = preferences.getInt(KEY_STATS_SAVED_DISTANCE, 0) / 1000f
 
-        binding.totalSwipesText.text = totalSwipes.toString()
-        binding.keywordMatchesText.text = keywordMatches.toString()
-        binding.savedDistanceText.text = String.format(Locale.getDefault(), "%.1f %s", savedDistanceM, getString(R.string.distance_unit))
+        binding.minePanel.totalSwipesText.text = totalSwipes.toString()
+        binding.minePanel.keywordMatchesText.text = keywordMatches.toString()
+        binding.minePanel.savedDistanceText.text = String.format(Locale.getDefault(), "%.1f %s", savedDistanceM, getString(R.string.distance_unit))
     }
 
     /* 绑定停顿相关控件事件并持久化用户设置 */
@@ -973,6 +1006,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /* 绑定⌈回到桌面⌋按钮：跳到系统桌面，方便开完悬浮窗直接去目标 App */
+    private fun setupBackToDesktopButton() {
+        binding.backToDesktopButton.setOnClickListener {
+            val home = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            // 个别 ROM 不响应 HOME intent，退回把任务压到后台，效果同样是离开本页
+            runCatching { startActivity(home) }
+                .onFailure {
+                    LogX.w(TAG, "back to desktop failed, fallback to moveTaskToBack", it)
+                    moveTaskToBack(true)
+                }
+        }
+    }
+
     /**
      * 开启常驻通知（GKD: StatusService.requestStart —— 先确保权限，再启动，最后置开关为 true）。
      * Android 13+ 缺通知权限时先申请，授权结果回来后再启动。
@@ -996,6 +1045,14 @@ class MainActivity : AppCompatActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_SAVE_QR_PERMISSION) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                saveDonateQrCode()
+            } else {
+                Toast.makeText(this, R.string.donate_qr_need_storage, Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         if (requestCode != REQUEST_NOTIFICATION_PERMISSION) return
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             StatusService.start(this)
@@ -1007,12 +1064,217 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /* 绑定⌈检查更新⌋按钮点击事件 */
-    private fun setupUpdateButton() {
-        binding.checkUpdateButton.setOnClickListener {
-            UpdateChecker.checkUpdate(this, showToastOnLatest = true)
+    /* 刷新⌈分享得时长⌋一行右侧的文案：剩余天数 / 已到期 / 还没同步过 */
+    private fun updateLicenseText() {
+        val status = License.statusFlow.value
+        binding.minePanel.licenseText.text = when {
+            License.blocked -> getString(R.string.license_entry_expired)
+            status.known -> getString(R.string.license_entry_trial, License.remainDays(this))
+            else -> getString(R.string.license_entry_unknown)
         }
     }
+
+    /* 绑定⌈我的⌋页签：版本号（显示在检查更新一行右侧）+ 检查更新 / 导入配置入口 */
+    private fun setupMinePage() {
+        val mine = binding.minePanel
+        mine.mineVersionText.text = getString(R.string.mine_version_format, getAppVersionName())
+        mine.mineCheckUpdateRow.setOnClickListener {
+            UpdateChecker.checkUpdate(this, showToastOnLatest = true)
+        }
+        mine.mineImportRow.setOnClickListener {
+            startActivity(Intent(this, ImportSettingsActivity::class.java))
+        }
+        mine.mineScriptLibRow.setOnClickListener { showScriptLibraryDialog() }
+        mine.mineLicenseRow.setOnClickListener { LicenseDialog.showShareDialog(this) }
+        // 长按打赏二维码存到相册：微信不能直接识别屏幕上的码，得先存下来再从相册选
+        mine.wxImageView.setOnLongClickListener {
+            requestSaveDonateQrCode()
+            true
+        }
+    }
+
+    /* Android 9 及以下写相册要存储权限，先要权限再存；10 起走 MediaStore 不需要 */
+    private fun requestSaveDonateQrCode() {
+        val needLegacyPermission = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        if (needLegacyPermission) {
+            requestPermissions(
+                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                REQUEST_SAVE_QR_PERMISSION
+            )
+            return
+        }
+        saveDonateQrCode()
+    }
+
+    /**
+     * 把打赏二维码写进相册的 Pictures/AutoSlide 目录。
+     *
+     * Android 10 起 MediaStore 是分区存储下唯一不用权限就能写相册的通道：
+     * 先以 IS_PENDING=1 插入占位，写完再清零——中途失败的话相册里不会出现半张图。
+     * 9 及以下没有 IS_PENDING，直接按 DATA 路径写。
+     */
+    private fun saveDonateQrCode() {
+        val result = runCatching {
+            val bitmap = BitmapFactory.decodeResource(resources, R.mipmap.wx)
+                ?: error("二维码资源解码失败")
+            val name = "AutoSlide-donate-${System.currentTimeMillis()}.png"
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, name)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/AutoSlide")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+            }
+            val resolver = contentResolver
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: error("相册不可写")
+            try {
+                resolver.openOutputStream(uri)?.use { out ->
+                    check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) { "图片编码失败" }
+                } ?: error("相册不可写")
+            } catch (e: Exception) {
+                // 写失败就把占位记录删掉，别在相册里留一条打不开的空条目
+                runCatching { resolver.delete(uri, null, null) }
+                throw e
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+            }
+        }
+        result
+            .onSuccess { Toast.makeText(this, R.string.donate_qr_saved, Toast.LENGTH_SHORT).show() }
+            .onFailure {
+                LogX.w(TAG, "save donate qr failed", it)
+                Toast.makeText(
+                    this,
+                    getString(R.string.donate_qr_save_failed, it.message ?: ""),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+    }
+
+    /**
+     * 脚本库弹窗：列出所有人分享上来的脚本，点「使用」直接落到本机动作列表。
+     *
+     * 列表先弹出来再异步加载，网络慢的时候用户能立刻看到「正在加载」而不是干等着没反应。
+     */
+    private fun showScriptLibraryDialog() {
+        val listView = ListView(this).apply {
+            divider = ColorDrawable(ContextCompat.getColor(this@MainActivity, R.color.dialog_divider))
+            dividerHeight = 1
+            // 行内有「使用」按钮，必须让子项可获得焦点，否则整行抢走第一次点击
+            itemsCanFocus = true
+        }
+        val hintText = TextView(this).apply {
+            setPadding(dp(24), dp(28), dp(24), dp(28))
+            gravity = Gravity.CENTER
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text_secondary))
+            textSize = 14f
+            setText(R.string.script_lib_loading)
+        }
+        val container = FrameLayout(this).apply {
+            addView(listView)
+            addView(hintText)
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.script_lib_title)
+            .setView(container)
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+
+        lifecycleScope.launch {
+            val result = runCatching { MacroSync.listLibrary() }
+            if (isFinishing || isDestroyed) return@launch
+            result
+                .onSuccess { scripts ->
+                    if (scripts.isEmpty()) {
+                        hintText.setText(R.string.script_lib_empty)
+                    } else {
+                        hintText.isVisible = false
+                        listView.adapter = ScriptLibraryAdapter(scripts) { item ->
+                            importLibraryScript(item, dialog)
+                        }
+                    }
+                }
+                .onFailure {
+                    LogX.w(TAG, "load script library failed", it)
+                    hintText.text = getString(R.string.script_lib_load_failed, it.message ?: "")
+                }
+        }
+    }
+
+    /** 脚本库列表适配器：一行一条脚本，右侧「使用」触发导入 */
+    private inner class ScriptLibraryAdapter(
+        private val items: List<MacroSync.LibraryScript>,
+        private val onUse: (MacroSync.LibraryScript) -> Unit,
+    ) : BaseAdapter() {
+        override fun getCount(): Int = items.size
+        override fun getItem(position: Int): Any = items[position]
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+            val view = convertView
+                ?: layoutInflater.inflate(R.layout.item_script_lib, parent, false)
+            val item = items[position]
+            view.findViewById<TextView>(R.id.scriptNameText).text = item.name
+            // 来源信息拼成一行：几个动作 + 是谁的设备（设备名为空时只显示动作数）
+            val source = listOf(item.deviceName, item.updatedAt)
+                .filter { it.isNotBlank() }
+                .joinToString(" · ")
+            view.findViewById<TextView>(R.id.scriptMetaText).text =
+                getString(R.string.script_lib_meta, item.actionCount, source)
+            view.findViewById<Button>(R.id.scriptUseButton).setOnClickListener { onUse(item) }
+            return view
+        }
+    }
+
+    /**
+     * 把脚本库里的一条导入本机。
+     *
+     * 重名不覆盖：本机已有同名脚本时自动加序号，避免把用户自己录的东西冲掉。
+     */
+    private fun importLibraryScript(item: MacroSync.LibraryScript, dialog: AlertDialog) {
+        Toast.makeText(this, R.string.script_lib_importing, Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val result = runCatching { MacroSync.fetchActions(item) }
+            if (isFinishing || isDestroyed) return@launch
+            result
+                .onSuccess { encoded ->
+                    val name = uniqueMacroName(item.name)
+                    preferences.edit { putString(KEY_MACRO_PREFIX + name, encoded) }
+                    dialog.dismiss()
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.script_lib_imported, name),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                .onFailure {
+                    LogX.w(TAG, "import library script failed: ${item.name}", it)
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.script_lib_import_failed, it.message ?: ""),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+        }
+    }
+
+    /* 本机已有同名脚本时挨个试「名称 2」「名称 3」…，直到不冲突 */
+    private fun uniqueMacroName(base: String): String {
+        if (!preferences.contains(KEY_MACRO_PREFIX + base)) return base
+        var index = 2
+        while (preferences.contains(KEY_MACRO_PREFIX + "$base $index")) index++
+        return "$base $index"
+    }
+
+    /* dp -> px */
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     /**
      * 申请忽略电池优化（Android 标准保活四要素之一）。
@@ -1038,7 +1300,7 @@ class MainActivity : AppCompatActivity() {
      * 磁贴在快捷设置面板可见时下拉绑定本服务，是唯一的复活入口——GKD 的「无感保活」同理。
      */
     private fun setupKeepAliveHint() {
-        binding.keepAliveHintText.setOnClickListener {
+        binding.minePanel.keepAliveHintText.setOnClickListener {
             MaterialAlertDialogBuilder(this)
                 .setTitle(R.string.keep_alive_hint_title)
                 .setMessage(R.string.keep_alive_hint_message)
@@ -1067,11 +1329,48 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    /* 绑定⌈反馈⌋文字点击事件，打开 App 内反馈页面 */
-    private fun setupChatRoomText() {
-        binding.chatRoomText.setOnClickListener {
-            startActivity(Intent(this, ChatListActivity::class.java))
+    /**
+     * 初始化底部导航栏。
+     *
+     * 三个页面在 onCreate 时就都 inflate 好了，切页只是改 visibility：
+     * 首页的滑动设置、聊天室的列表滚动位置都不会因为切页丢掉。
+     */
+    private fun setupBottomNav() {
+        chatPanel = ChatListPanel(this, binding.chatPanel) {
+            // 用户不肯设昵称，聊天室没法用，切回首页
+            switchTab(TAB_HOME)
         }
+        binding.bottomNav.navHome.setOnClickListener { switchTab(TAB_HOME) }
+        binding.bottomNav.navChat.setOnClickListener { switchTab(TAB_CHAT) }
+        binding.bottomNav.navMine.setOnClickListener { switchTab(TAB_MINE) }
+        switchTab(TAB_HOME)
+
+        // 非首页时，返回键先回首页，而不是直接退出应用
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                switchTab(TAB_HOME)
+            }
+        }.also { backToHomeCallback = it })
+    }
+
+    /**
+     * 切换底部导航页签
+     *
+     * @param tab [TAB_HOME] / [TAB_CHAT] / [TAB_MINE]
+     */
+    private fun switchTab(tab: Int) {
+        currentTab = tab
+        binding.pageHome.isVisible = tab == TAB_HOME
+        binding.chatPanel.root.isVisible = tab == TAB_CHAT
+        binding.minePanel.root.isVisible = tab == TAB_MINE
+        binding.bottomNav.navHome.isSelected = tab == TAB_HOME
+        binding.bottomNav.navChat.isSelected = tab == TAB_CHAT
+        binding.bottomNav.navMine.isSelected = tab == TAB_MINE
+        backToHomeCallback?.isEnabled = tab != TAB_HOME
+        // 进入聊天室页签时才拉公告和频道列表，首页启动不产生多余请求
+        if (tab == TAB_CHAT) chatPanel.onShow()
+        // 统计卡片现在在「我的」里，切过去时刷一次，避免看到进入 App 那一刻的旧数字
+        if (tab == TAB_MINE) updateStatistics()
     }
 
     /**

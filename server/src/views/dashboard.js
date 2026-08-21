@@ -179,8 +179,13 @@ function statTile(value, label, mono) {
 
 const dashboardStyles = `
 <style>
-  .toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:18px; }
-  .toolbar .links { display:flex; gap:16px; font-size:13px; }
+  .admin-links { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .admin-links a {
+    padding:7px 14px; border:1px solid var(--border); border-radius:10px;
+    background:var(--panel); color:var(--text-dim); font-size:12.5px; white-space:nowrap;
+  }
+  .admin-links a:hover { background:rgba(217,119,87,.08); color:var(--clay); text-decoration:none; }
+  .admin-arrow { color:var(--clay); font-family:var(--mono); }
 
   .notice { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:20px; }
   .notice-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
@@ -214,8 +219,8 @@ const dashboardStyles = `
   .bar-value { font-family:var(--mono); font-size:12px; color:var(--text); text-align:right; }
   .bar-pct { font-family:var(--mono); font-size:11px; color:var(--text-faint); text-align:right; }
 
-  .donut-wrap { display:flex; align-items:center; gap:120px; flex-wrap:wrap; }
-  .donut { width:205px; height:205px; flex:none; }
+  .donut-wrap { display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
+  .donut { width:300px; height:300px; flex:none; }
   .donut-seg { transition:opacity .15s; }
   .donut:hover .donut-seg { opacity:.55; }
   .donut .donut-seg:hover { opacity:1; }
@@ -233,6 +238,8 @@ const dashboardStyles = `
     background:var(--panel); color:var(--text); font-size:13px; font-family:var(--sans);
   }
   .table-count { font-family:var(--mono); font-size:12px; color:var(--text-faint); }
+  /* LIVE 指示与设备计数并排靠右，跟搜索框分列工具栏两端 */
+  .table-tools-right { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
   .table-wrap table thead th { cursor:pointer; user-select:none; white-space:nowrap; }
   .table-wrap table thead th::after { content:''; }
   .table-wrap table thead th.asc::after { content:' ▲'; font-size:9px; }
@@ -559,13 +566,20 @@ function dashboardHtml(stats, announcement) {
     .join('');
 
   const total = devices.length;
+  // 品牌分布同时喂给顶部的「品牌数」卡片，两处共用一份统计，数字不会对不上
+  const brands = countBy(devices, (d) => d.brand);
   const charts = [
-    barChart('品牌分布', countBy(devices, (d) => d.brand), total),
+    barChart('品牌分布', brands, total),
     donutChart('系统版本', sortByVersionDesc(countBy(devices, (d) => d.android)), total),
     donutChart('应用版本', countBy(devices, (d) => d.appVersion), total),
   ].join('');
 
-  const headerRight = `<div class="live"><span class="dot"></span>LIVE · 最近上报 ${esc(stats.last_update || '-')}</div>`;
+  // 管理入口放在标题右侧；LIVE 指示挪到设备日志的工具栏里，紧挨着设备计数
+  const headerRight = `<div class="admin-links">
+      <a href="/admin/release">发版管理 <span class="admin-arrow">→</span></a>
+      <a href="/admin/scripts">脚本管理 <span class="admin-arrow">→</span></a>
+      <a href="/invites">邀请与时长 <span class="admin-arrow">→</span></a>
+    </div>`;
 
   const body = `
     ${dashboardStyles}
@@ -584,10 +598,10 @@ function dashboardHtml(stats, announcement) {
     </div>
 
     <div class="tiles">
-      ${statTile(stats.install_count || 0, '安装次数')}
+      ${statTile(brands.length, '手机品牌数')}
       ${statTile(stats.update_count || 0, '更新次数')}
       ${statTile(stats.unique_devices || 0, '设备数')}
-      ${statTile(stats.last_update || '-', '最近上报', true)}
+      ${statTile(stats.install_count || 0, '安装次数')}
     </div>
 
     <p class="section-label">设备构成 · Fleet Composition</p>
@@ -596,7 +610,10 @@ function dashboardHtml(stats, announcement) {
     <p class="section-label">设备日志 · Device Log</p>
     <div class="table-tools">
       <input id="deviceSearch" type="search" placeholder="搜索品牌 / 型号 / 设备 ID / IP…" />
-      <span class="table-count" id="deviceCount"></span>
+      <div class="table-tools-right">
+        <div class="live"><span class="dot"></span>LIVE · 最近上报 ${esc(stats.last_update || '-')}</div>
+        <span class="table-count" id="deviceCount"></span>
+      </div>
     </div>
     <div class="panel table-wrap">
       <table id="deviceTable">
@@ -628,7 +645,7 @@ function dashboardHtml(stats, announcement) {
   return pageShell({
     title: '自动滑屏器app统计台',
     eyebrow: 'AutoSlide · Fleet Monitor',
-    heading: '滑屏器 统计台',
+    heading: 'AutoSlide 数据端',
     headerRight,
     body,
   });
