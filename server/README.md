@@ -20,9 +20,15 @@
   }
   ```
 - `GET /api/stats`：返回统计 JSON。
+- `GET /api/license?deviceId=..`：返回该设备的试用/奖励时长、到期时间与邀请码，首次访问即建档。
+- `POST /api/license/bind`：新设备填写好友邀请码，body 为 `{"deviceId":"..","code":"ABC123"}`。
+- `GET /invite?code=..`：分享落地页，好友从这里下载并抄走邀请码。
+- `GET /invites`：邀请与时长一览（排查刷量用）。
 - `GET /`：统计看板页面。
 
-数据保存在 `data/stats.json`，可随时备份。
+数据保存在 `data/stats.json`，邀请关系与试用起点在 `data/license.json`，都可随时备份。
+
+> ⚠️ `data/license.json` 里存着每台设备的试用起点和邀请关系，**删掉它等于给所有人重置 30 天试用**，备份时别漏。
 
 ## PVE 部署步骤
 

@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 聊天室页面（底部导航「刷金币」页签的内容）：
+     公告卡片 + 频道列表，逻辑在 ChatListPanel 里，可被任意 Activity 内嵌复用。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"

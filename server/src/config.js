@@ -30,6 +30,18 @@ const LIMIT_CHAT_IMAGE = 6 * 1024 * 1024;
 /* IP 归属地缓存上限，防止长期运行后无限增长 */
 const IP_CACHE_MAX = 5000;
 
+/* 单个 APK 的体积上限：发版上传接口据此中断超大请求 */
+const LIMIT_APK = 200 * 1024 * 1024;
+
+/**
+ * 管理口令：删除已分享脚本、上传 APK、写 update.json 三处共用。
+ *
+ * 只从环境变量读，不写进代码库；在 systemd 单元里配：
+ *   Environment=AUTOSLIDE_ADMIN_TOKEN=你的口令
+ * 没配置时相关接口一律拒绝（fail closed），不会退化成人人可写。
+ */
+const ADMIN_TOKEN = process.env.AUTOSLIDE_ADMIN_TOKEN || '';
+
 module.exports = {
   PORT,
   DATA_DIR,
@@ -46,4 +58,6 @@ module.exports = {
   LIMIT_CHAT_BODY,
   LIMIT_CHAT_IMAGE,
   IP_CACHE_MAX,
+  LIMIT_APK,
+  ADMIN_TOKEN,
 };

@@ -569,6 +569,14 @@ function dashboardHtml(stats, announcement) {
 
   const body = `
     ${dashboardStyles}
+    <div class="toolbar">
+      <div class="links">
+        <a href="/admin/release">发版管理 · 上传 APK</a>
+        <a href="/admin/scripts">脚本库管理</a>
+        <a href="/invites">邀请与时长</a>
+      </div>
+    </div>
+
     <div class="notice">
       <div class="notice-head">
         <b>公告栏</b>

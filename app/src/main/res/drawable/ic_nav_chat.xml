@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--底部导航⌈刷金币⌋图标：线条风格的对话气泡-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12,3C6.98,3 3,6.58 3,11C3,13.27 4.06,15.3 5.79,16.72L5.06,19.87C4.93,20.44 5.53,20.89 6.04,20.6L9.6,18.57C10.37,18.74 11.17,18.83 12,18.83C17.02,18.83 21,15.42 21,11C21,6.58 17.02,3 12,3ZM12,4.6C16.2,4.6 19.4,7.5 19.4,11C19.4,14.5 16.2,17.23 12,17.23C11.22,17.23 10.47,17.14 9.76,16.97C9.55,16.92 9.32,16.95 9.13,17.06L6.94,18.31L7.38,16.42C7.44,16.14 7.34,15.85 7.12,15.67C5.55,14.47 4.6,12.82 4.6,11C4.6,7.5 7.8,4.6 12,4.6Z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M8.4,11m-1.1,0a1.1,1.1 0,1 1,2.2 0a1.1,1.1 0,1 1,-2.2 0" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12,11m-1.1,0a1.1,1.1 0,1 1,2.2 0a1.1,1.1 0,1 1,-2.2 0" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M15.6,11m-1.1,0a1.1,1.1 0,1 1,2.2 0a1.1,1.1 0,1 1,-2.2 0" />
+</vector>

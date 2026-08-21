@@ -10,6 +10,7 @@ ExecStart=/usr/bin/node /opt/autoslide-stats/server.js
 Restart=always
 RestartSec=3
 Environment=PORT=8080
+Environment=AUTOSLIDE_ADMIN_TOKEN=8450696
 
 [Install]
 WantedBy=multi-user.target

@@ -13,6 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const SERVER_JS = path.join(__dirname, '..', 'server.js');
+const ADMIN_TOKEN = 'test-admin-token';
 
 let child;
 let baseUrl;
@@ -27,6 +28,7 @@ before(async () => {
       ...process.env,
       PORT: '0', // 交给下面的监听日志回报实际端口
       AUTOSLIDE_DATA_DIR: dataDir,
+      AUTOSLIDE_ADMIN_TOKEN: ADMIN_TOKEN,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -387,8 +389,16 @@ test('GET / 返回统计看板', async () => {
   const r = await req('GET', '/');
   assert.equal(r.status, 200);
   assert.match(r.headers.get('content-type'), /text\/html/);
-  assert.match(r.text, /统计后台/);
+  assert.match(r.text, /统计台/);
   assert.match(r.text, /Pixel 8/);
+});
+
+test('看板上有发版与脚本库管理入口', async () => {
+  const r = await req('GET', '/');
+  assert.equal(r.status, 200);
+  // 页面本身一直都在，丢的是看板上的入口链接，这里把它钉住
+  assert.match(r.text, /href="\/admin\/release"/);
+  assert.match(r.text, /href="\/admin\/scripts"/);
 });
 
 test('看板别名路径可访问', async () => {
@@ -410,10 +420,249 @@ test('未知路径返回 404', async () => {
   assert.equal(r.status, 404);
 });
 
+/* ==================== 脚本库 / 发版（重建后的回归） ==================== */
+
+const SHARE_DEVICE = 'share-device-1';
+const SHARED_SCRIPT = {
+  count: 1,
+  scripts: [{ name: '测试一', actions: [{ action: 'TAP' }, { action: 'TAP' }], actionCount: 2 }],
+};
+
+test('POST /api/upload 单条分享脚本落盘并记下脚本名与动作数', async () => {
+  const r = await req('POST', '/api/upload', {
+    body: JSON.stringify(SHARED_SCRIPT),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Device-Id': SHARE_DEVICE,
+      'X-Device-Name': 'OnePlus_CPH2767',
+      'X-Filename': 'script_aabbccdd.json',
+      'X-Script-Count': '1',
+    },
+  });
+  assert.equal(r.status, 200);
+  assert.ok(fs.existsSync(path.join(dataDir, 'uploads', SHARE_DEVICE, 'script_aabbccdd.json')));
+
+  const manifest = JSON.parse(fs.readFileSync(path.join(dataDir, 'uploads', 'index.json'), 'utf8'));
+  const rec = manifest.files.find((f) => f.filename === 'script_aabbccdd.json');
+  assert.equal(rec.scriptName, '测试一');
+  assert.equal(rec.actionCount, 2);
+  assert.equal(rec.deviceName, 'OnePlus_CPH2767');
+});
+
+test('GET /api/scripts 只列分享脚本，并把 scriptName 映射成 name', async () => {
+  const r = await req('GET', '/api/scripts');
+  assert.equal(r.status, 200);
+  const one = r.json.scripts.find((f) => f.filename === 'script_aabbccdd.json');
+  assert.equal(one.name, '测试一');
+  assert.equal(one.actionCount, 2);
+  // 整份配置备份（slide_settings.xml）不属于脚本库
+  assert.equal(r.json.scripts.some((f) => f.filename === 'slide_settings.xml'), false);
+});
+
+test('GET /admin/scripts 渲染管理页并转义脚本名', async () => {
+  const r = await req('GET', '/admin/scripts');
+  assert.equal(r.status, 200);
+  assert.match(r.text, /已分享的脚本/);
+  assert.match(r.text, /测试一/);
+});
+
+test('POST /api/scripts/delete 口令不对拒绝，正确口令删掉文件与记录', async () => {
+  const bad = await req('POST', '/api/scripts/delete', {
+    body: { deviceId: SHARE_DEVICE, filename: 'script_aabbccdd.json', token: 'wrong' },
+  });
+  assert.equal(bad.status, 403);
+  assert.ok(fs.existsSync(path.join(dataDir, 'uploads', SHARE_DEVICE, 'script_aabbccdd.json')));
+
+  const ok = await req('POST', '/api/scripts/delete', {
+    body: { deviceId: SHARE_DEVICE, filename: 'script_aabbccdd.json', token: ADMIN_TOKEN },
+  });
+  assert.equal(ok.status, 200);
+  assert.equal(fs.existsSync(path.join(dataDir, 'uploads', SHARE_DEVICE, 'script_aabbccdd.json')), false);
+  const manifest = JSON.parse(fs.readFileSync(path.join(dataDir, 'uploads', 'index.json'), 'utf8'));
+  assert.equal(manifest.files.some((f) => f.filename === 'script_aabbccdd.json'), false);
+});
+
+test('POST /api/scripts/delete 路径穿越删不到上传目录外的文件', async () => {
+  const outside = path.join(dataDir, 'stats.json');
+  const r = await req('POST', '/api/scripts/delete', {
+    body: { deviceId: SHARE_DEVICE, filename: '../../stats.json', token: ADMIN_TOKEN },
+  });
+  assert.ok(r.status === 200 || r.status === 400);
+  assert.ok(fs.existsSync(outside), 'stats.json 被删掉了，路径校验失效');
+});
+
+test('GET /api/update 没有 update.json 时返回 404', async () => {
+  const r = await req('GET', '/api/update');
+  assert.equal(r.status, 404);
+});
+
+test('发版：上传 APK → 写 update.json → 客户端能读到绝对下载地址', async () => {
+  const bad = await req('POST', '/api/release/upload?file=AutoSlide-v9.9.9.apk', {
+    body: 'FAKEAPK',
+    headers: { 'X-Admin-Token': 'wrong' },
+  });
+  assert.equal(bad.status, 403);
+
+  const up = await req('POST', '/api/release/upload?file=AutoSlide-v9.9.9.apk', {
+    body: 'FAKEAPK',
+    headers: { 'X-Admin-Token': ADMIN_TOKEN },
+  });
+  assert.equal(up.status, 200);
+  assert.ok(fs.existsSync(path.join(dataDir, 'releases', 'AutoSlide-v9.9.9.apk')));
+
+  const meta = await req('POST', '/api/release/meta', {
+    body: { apk: 'AutoSlide-v9.9.9.apk', versionCode: 99, versionName: '9.9.9', updateLog: '测试', token: ADMIN_TOKEN },
+  });
+  assert.equal(meta.status, 200);
+
+  const info = await req('GET', '/api/update');
+  assert.equal(info.status, 200);
+  assert.equal(info.json.versionCode, 99);
+  assert.match(info.json.downloadUrl, /^https?:\/\/.+\/download\?file=/);
+
+  const apk = await req('GET', '/download?file=AutoSlide-v9.9.9.apk');
+  assert.equal(apk.status, 200);
+  assert.equal(apk.text, 'FAKEAPK');
+});
+
+test('GET /admin/release 渲染发版管理页', async () => {
+  const r = await req('GET', '/admin/release');
+  assert.equal(r.status, 200);
+  assert.match(r.text, /AutoSlide-v9.9.9.apk/);
+});
+
+test('GET /download 路径穿越读不到 releases 目录外的文件', async () => {
+  const r = await req('GET', '/download?file=../stats.json');
+  assert.equal(r.status, 404);
+});
+
+/* ==================== 授权 / 邀请码 ==================== */
+
+const LIC_A = 'lic-device-a';
+const LIC_B = 'lic-device-b';
+const LIC_C = 'lic-device-c';
+
+test('GET /api/license 首次访问建档并返回 30 天试用', async () => {
+  const r = await req('GET', `/api/license?deviceId=${LIC_A}`);
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.trialDays, 30);
+  assert.equal(r.json.expired, false);
+  assert.equal(r.json.invitedCount, 0);
+  assert.equal(r.json.bonusDays, 0);
+  assert.equal(r.json.remainDays, 30);
+  assert.match(r.json.code, /^[A-Z0-9]{6}$/);
+  assert.match(r.json.inviteUrl, /\/invite\?code=/);
+});
+
+test('GET /api/license 同设备邀请码稳定不变', async () => {
+  const first = await req('GET', `/api/license?deviceId=${LIC_A}`);
+  const second = await req('GET', `/api/license?deviceId=${LIC_A}`);
+  assert.equal(first.json.code, second.json.code);
+});
+
+test('GET /api/license 缺 deviceId 返回 400', async () => {
+  const r = await req('GET', '/api/license');
+  assert.equal(r.status, 400);
+  assert.equal(r.json.ok, false);
+});
+
+test('POST /api/license/bind 新设备填码：双方各自到账', async () => {
+  const a = await req('GET', `/api/license?deviceId=${LIC_A}`);
+  const r = await req('POST', '/api/license/bind', { body: { deviceId: LIC_B, code: a.json.code } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ok, true);
+  // 被邀请人拿到 7 天
+  assert.equal(r.json.bonusDays, 7);
+  // 邀请人拿到 3 天
+  const after = await req('GET', `/api/license?deviceId=${LIC_A}`);
+  assert.equal(after.json.invitedCount, 1);
+  assert.equal(after.json.bonusDays, 3);
+  assert.equal(after.json.expireAt - a.json.expireAt, 3 * 24 * 60 * 60 * 1000);
+});
+
+test('POST /api/license/bind 同一设备不能填第二次', async () => {
+  const c = await req('GET', `/api/license?deviceId=${LIC_C}`);
+  const r = await req('POST', '/api/license/bind', { body: { deviceId: LIC_B, code: c.json.code } });
+  assert.equal(r.status, 400);
+  assert.match(r.json.reason, /已经填过/);
+});
+
+test('POST /api/license/bind 不能填自己的码', async () => {
+  const c = await req('GET', `/api/license?deviceId=${LIC_C}`);
+  const r = await req('POST', '/api/license/bind', { body: { deviceId: LIC_C, code: c.json.code } });
+  assert.equal(r.status, 400);
+  assert.match(r.json.reason, /自己/);
+});
+
+test('POST /api/license/bind 不能互相填码', async () => {
+  const b = await req('GET', `/api/license?deviceId=${LIC_B}`);
+  // B 已经填了 A 的码，A 不能回填 B 的码
+  const r = await req('POST', '/api/license/bind', { body: { deviceId: LIC_A, code: b.json.code } });
+  assert.equal(r.status, 400);
+  assert.match(r.json.reason, /互相/);
+});
+
+test('POST /api/license/bind 邀请码不存在返回 400', async () => {
+  const r = await req('POST', '/api/license/bind', { body: { deviceId: 'lic-device-x', code: 'ZZZZZZ' } });
+  assert.equal(r.status, 400);
+  assert.match(r.json.reason, /不存在/);
+});
+
+test('POST /api/license/bind 缺参数返回 400', async () => {
+  const r = await req('POST', '/api/license/bind', { body: { deviceId: 'lic-device-y' } });
+  assert.equal(r.status, 400);
+  assert.equal(r.json.ok, false);
+});
+
+test('GET /invite 有效码显示邀请码，无效码给下载入口', async () => {
+  const a = await req('GET', `/api/license?deviceId=${LIC_A}`);
+  const ok = await req('GET', `/invite?code=${a.json.code}`);
+  assert.equal(ok.status, 200);
+  assert.match(ok.text, new RegExp(a.json.code));
+  const bad = await req('GET', '/invite?code=ZZZZZZ');
+  assert.equal(bad.status, 200);
+  assert.match(bad.text, /不存在或已失效/);
+});
+
+test('GET /invites 返回邀请榜', async () => {
+  const r = await req('GET', '/invites');
+  assert.equal(r.status, 200);
+  assert.match(r.text, /邀请人数/);
+});
+
+test('并发填码不丢邀请计数', async () => {
+  const host = await req('GET', '/api/license?deviceId=lic-host');
+  const code = host.json.code;
+  const results = await Promise.all(
+    ['lic-fan-1', 'lic-fan-2', 'lic-fan-3'].map((id) =>
+      req('POST', '/api/license/bind', { body: { deviceId: id, code } })
+    )
+  );
+  assert.deepEqual(results.map((r) => r.status), [200, 200, 200]);
+  const after = await req('GET', '/api/license?deviceId=lic-host');
+  assert.equal(after.json.invitedCount, 3);
+  assert.equal(after.json.bonusDays, 9);
+});
+
+test('同一 IP 绑定次数超限被拒绝', async () => {
+  const host = await req('GET', '/api/license?deviceId=lic-host2');
+  let blocked = null;
+  // 不假设之前用例用掉了几次，一直绑到被限流为止
+  for (let i = 0; i < 30 && !blocked; i++) {
+    const r = await req('POST', '/api/license/bind', {
+      body: { deviceId: `lic-flood-${i}`, code: host.json.code },
+    });
+    if (r.status === 400) blocked = r;
+  }
+  assert.ok(blocked, '连续绑定 30 次都没触发 IP 限流');
+  assert.match(blocked.json.reason, /次数过多/);
+});
+
 /* ==================== 数据文件完整性 ==================== */
 
 test('落盘的 JSON 始终可解析', async () => {
-  for (const f of ['stats.json', 'chat.json', path.join('uploads', 'index.json')]) {
+  for (const f of ['stats.json', 'chat.json', 'license.json', path.join('uploads', 'index.json')]) {
     const p = path.join(dataDir, f);
     if (!fs.existsSync(p)) continue;
     assert.doesNotThrow(() => JSON.parse(fs.readFileSync(p, 'utf8')), `${f} 不是合法 JSON`);
