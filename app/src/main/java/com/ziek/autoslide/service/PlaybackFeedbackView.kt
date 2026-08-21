@@ -14,6 +14,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Typeface
 import android.view.View
 import com.ziek.autoslide.input.AutoSlideInput
 import com.ziek.autoslide.input.AutoSlideInputAction
@@ -45,10 +46,11 @@ class PlaybackFeedbackView(context: Context) : View(context) {
 
     /* 等待条件提示文字画笔 */
     private val waitPaint = Paint().apply {
-        color = Color.GREEN
-        textSize = 32f
+        color = Color.BLUE
+        textSize = 100f
         isAntiAlias = true
         textAlign = Paint.Align.CENTER
+        typeface = Typeface.DEFAULT_BOLD
         setShadowLayer(5f, 0f, 0f, Color.BLACK)
     }
 

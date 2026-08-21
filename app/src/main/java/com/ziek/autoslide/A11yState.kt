@@ -227,7 +227,14 @@ object A11yState {
             .toMutableSet()
     }
 
-    /* 写回系统的无障碍服务启用列表（GKD: App.putSecureA11yServices，用 flattenToShortString） */
+    /**
+     * 写回系统的无障碍服务启用列表（GKD: App.putSecureA11yServices，用 flattenToShortString）。
+     *
+     * 必须连带写 ACCESSIBILITY_ENABLED 总开关：组件在启用列表里但总开关为 0 时，
+     * AMS 根本不会 bind，摘除再加回的自愈动作会永远空转（实测 MIUI 13 上服务被杀后
+     * 总开关会被置 0，此后自愈每轮都停在 "restart a11y service failed"）。
+     * 顺序也不能反 —— 先写列表再开总开关，否则 AMS 在总开关变化时发现无服务可绑，会把它重新置 0。
+     */
     private fun putSecureA11yServices(services: Set<ComponentName>) {
         val app = appContext ?: return
         runCatching {
@@ -236,6 +243,12 @@ object A11yState {
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
                 services.joinToString(SEPARATOR.toString()) { it.flattenToShortString() }
             )
+            Settings.Secure.putInt(
+                app.contentResolver,
+                Settings.Secure.ACCESSIBILITY_ENABLED,
+                if (services.isEmpty()) 0 else 1
+            )
         }.onFailure { LogX.w(TAG, "put a11y services failed", it) }
     }
+
 }

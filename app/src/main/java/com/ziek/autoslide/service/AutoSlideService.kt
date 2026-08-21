@@ -112,7 +112,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.hypot
+import androidx.core.graphics.get
 import kotlin.math.ln
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.math.roundToLong
 import kotlin.random.asKotlinRandom
 
@@ -286,6 +288,13 @@ private const val GESTURE_CALLBACK_TIMEOUT_MS = 3000L
 /* 宏循环轮次之间的随机间隔范围（毫秒）：避免操作过快被判定为作弊 */
 private const val MACRO_LOOP_GAP_MIN_MS = 5_000L
 private const val MACRO_LOOP_GAP_MAX_MS = 15_000L
+/* 宏回放等待条件的结果三态 */
+private enum class MacroWaitResult {
+    SATISFIED,   // 条件满足
+    TIMEOUT,     // 等到超时（是否继续由 waitContinueOnTimeout 决定）
+    INTERRUPTED  // 回放被中断（用户操作/重新启停），必须立刻收场
+}
+
 /* 宏回放等待条件：节点树轮询间隔（毫秒） */
 private const val MACRO_WAIT_POLL_INTERVAL_MS = 300L
 /* 宏回放等待条件：OCR 兜底识别间隔（毫秒），节点树找不到文字时才启用 */
@@ -746,6 +755,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /** 当前是否因使用时长到期而被限制 */
+    @Suppress("unused")
     fun isLicenseBlocked(): Boolean = licenseBlocked
 
     /* 到期后用户还去点方向键/回放时的提示 */
@@ -1257,16 +1267,16 @@ private const val SPEED_CURVE_FACTOR = 0.7
         // 长按前先记一下屏幕亮度，用于长按后判断菜单是否真的弹出来了（有些菜单文字不在无障碍树里）
         val brightnessBefore = screenBrightness()
         dispatchLongPress()
-        delay(550)
+        delay(550.milliseconds)
         dispatchSwipeUpLowerHalf()
-        delay(550)
+        delay(550.milliseconds)
         // 3. 菜单弹出后再找一次；找不到就结束，不做任何多余点击
         if (tryHandleAutoplaySwitch(targetText)) {
             finishDouyinAutoPlaySuccess(targetText)
         } else {
             LogX.w(TAG, "未找到「$targetText」开关，放弃操作，不乱点其它按钮")
             // 等菜单稳定后，只有菜单还开着才按返回关闭，避免误退当前页面
-            delay(400)
+            delay(400.milliseconds)
             if (isMenuStillOpen(targetText) || isLongPressMenuVisible(brightnessBefore)) {
                 LogX.i(TAG, "长按菜单仍处于打开状态，按返回键关闭菜单")
                 runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
@@ -1294,9 +1304,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         val root = rootInActiveWindow ?: return
         val hasDialog = PUSH_NOTIFICATION_DIALOG_TEXTS.any { keyword ->
             val nodes = root.findAccessibilityNodeInfosByText(keyword)
-            val hit = nodes.isNotEmpty()
-            nodes.forEach { runCatching { it.recycle() } }
-            hit
+            nodes.isNotEmpty()
         }
         if (!hasDialog) {
             return
@@ -1305,30 +1313,28 @@ private const val SPEED_CURVE_FACTOR = 0.7
         var clicked = false
         outer@ for (keyword in PUSH_IGNORE_TEXTS) {
             val ignoreNodes = root.findAccessibilityNodeInfosByText(keyword)
-            try {
-                for (node in ignoreNodes) {
-                    if (node.text?.toString()?.trim() != keyword) continue
-                    val target = if (node.isClickable) node else node.parent
-                    if (target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) {
-                        clicked = true
-                        LogX.i(TAG, "已自动点击「$keyword」关闭推送通知弹窗")
-                        break@outer
-                    }
+            for (node in ignoreNodes) {
+                if (node.text?.toString()?.trim() != keyword) continue
+                val target = if (node.isClickable) node else node.parent
+                if (target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) {
+                    clicked = true
+                    LogX.i(TAG, "已自动点击「$keyword」关闭推送通知弹窗")
+                    break@outer
                 }
-            } finally {
-                ignoreNodes.forEach { runCatching { it.recycle() } }
             }
         }
         // 没有「忽略」按钮时（另一种弹窗格式），找关闭按钮（关闭/取消）
-        if (!clicked && tryClickCloseButton(root)) {
-            clicked = true
-            LogX.i(TAG, "已自动点击关闭按钮关闭推送通知弹窗")
+        if (!clicked) {
+            if (tryClickCloseButton(root)) {
+                clicked = true
+                LogX.i(TAG, "已自动点击关闭按钮关闭推送通知弹窗")
+            }
         }
         // 最后兜底：按返回键关闭弹窗（绝不点「立即开启」）
         if (!clicked) {
             runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
-            clicked = true
             LogX.i(TAG, "未找到忽略/关闭按钮，使用返回键关闭推送通知弹窗")
+            clicked = true
         }
         if (clicked) {
             lastPushDialogDismissAt = now
@@ -1340,7 +1346,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         val queue = java.util.ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
         while (queue.isNotEmpty()) {
-            val node = queue.poll()
+            val node = queue.poll() ?: continue
             val desc = node.contentDescription?.toString() ?: ""
             if ((desc.contains("关闭") || desc.contains("取消")) && node.isClickable) {
                 if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
@@ -1359,7 +1365,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         LogX.i(TAG, "Douyin autoplay switch handled")
         douyinAutoPlayCompleted = true
         // 等开关动画结束后，只有菜单还开着才按返回关闭（快手点完开关可能自动收起菜单，此时不能再按返回）
-        delay(400)
+        delay(400.milliseconds)
         if (isMenuStillOpen(targetText)) {
             runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
         }
@@ -1369,9 +1375,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
     private fun isMenuStillOpen(targetText: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val nodes = root.findAccessibilityNodeInfosByText(targetText)
-        val open = nodes.isNotEmpty()
-        nodes.forEach { runCatching { it.recycle() } }
-        return open
+        return nodes.isNotEmpty()
     }
 
     /**
@@ -1395,9 +1399,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         for (marker in markers) {
             val nodes = runCatching { root.findAccessibilityNodeInfosByText(marker) }.getOrNull()
                 ?: continue
-            val found = nodes.isNotEmpty()
-            nodes.forEach { runCatching { it.recycle() } }
-            if (found) return true
+            if (nodes.isNotEmpty()) return true
         }
         return false
     }
@@ -1422,7 +1424,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
                     while (y < soft.height) {
                         var x = 0
                         while (x < soft.width) {
-                            val p = soft.getPixel(x, y)
+                            val p = soft[x, y]
                             val r = (p shr 16) and 0xFF
                             val g = (p shr 8) and 0xFF
                             val b = p and 0xFF
@@ -1463,6 +1465,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
             val switchNode = findSwitchNodeInRow(textNode)
             when {
                 switchNode != null -> {
+                    @Suppress("DEPRECATION")
                     if (switchNode.isChecked) {
                         true // 开关已经是开启状态，无需操作
                     } else {
@@ -1479,7 +1482,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 }
             }
         } finally {
-            nodes.forEach { runCatching { it.recycle() } }
+            // AccessibilityNodeInfo.recycle() is no longer needed since API 33
         }
         return result
     }
@@ -1541,7 +1544,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
                     while (y <= bottom) {
                         var x = left
                         while (x <= right) {
-                            val p = soft.getPixel(x, y)
+                            val p = soft[x, y]
                             val r = (p shr 16) and 0xFF
                             val g = (p shr 8) and 0xFF
                             val b = p and 0xFF
@@ -1755,6 +1758,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * @param skipLaunchOnce 是否跳过全部“仅首轮执行”动作（回放前已自动打开 App 时传 true）
      * @param onFinished 完整回放结束后的回调（被中断时不回调）
      * @param onActionStart 每个动作开始前的回调（用于显示点击圈圈/滑动痕迹）
+     * @param onRoundStart 每轮开始前的回调，参数为含本轮在内的剩余轮次（用于显示「剩余 N 次」）
      * @param onEnd 回放结束（无论完成还是被中断）后的清理回调
      * @return 是否存在可回放的录制记录
      */
@@ -1764,6 +1768,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         skipLaunchOnce: Boolean = false,
         onFinished: (() -> Unit)? = null,
         onActionStart: ((AutoSlideInput) -> Unit)? = null,
+        onRoundStart: ((Int) -> Unit)? = null,
         onEnd: (() -> Unit)? = null
     ): Boolean {
         if (licenseBlocked) {
@@ -1794,6 +1799,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
                         completed = false
                         break
                     }
+                    // 含本轮在内还剩几轮，供悬浮标签显示「剩余 N 次」
+                    onRoundStart?.invoke(rounds - round + 1)
                     var prevInput: AutoSlideInput? = null
                     /* 等待条件满足后，跳过下一个动作的固定延迟，让宏立即继续 */
                     var skipNextDelay = false
@@ -1812,18 +1819,29 @@ private const val SPEED_CURVE_FACTOR = 0.7
                             prevInput = input
                             continue
                         }
-                        // 等待条件：等屏幕出现/消失指定文字，满足后继续（或点击），超时中止回放
+                        // 等待条件：等屏幕出现/消失指定文字；超时后按本步设置决定跳过继续还是中止
                         if (input.action == AutoSlideInputAction.WAIT_FOR) {
                             LogX.i(TAG, "PlayMacro wait start: text=${input.waitText}, disappear=${input.waitDisappear}")
                             onActionStart?.invoke(input)
-                            val waitOk = waitForMacroCondition(input, currentGen)
-                            LogX.i(TAG, "PlayMacro wait result: ok=$waitOk")
-                            if (!waitOk) {
-                                completed = false
-                                roundOk = false
-                                break
+                            val waitResult = waitForMacroCondition(input, currentGen)
+                            LogX.i(TAG, "PlayMacro wait result: $waitResult")
+                            when (waitResult) {
+                                // 被中断：不再往下走，整段回放收场
+                                MacroWaitResult.INTERRUPTED -> {
+                                    completed = false
+                                    roundOk = false
+                                }
+                                // 超时：按本步的设置决定跳过继续，还是中止本轮
+                                MacroWaitResult.TIMEOUT -> if (!input.waitContinueOnTimeout) {
+                                    completed = false
+                                    roundOk = false
+                                }
+                                MacroWaitResult.SATISFIED -> Unit
                             }
-                            // 条件已满足：后续动作立即执行，不再等录制时的固定等待
+                            if (!roundOk) break
+                            // 满足或「超时后继续」都直接执行后续动作：
+                            // 条件已达成时无需再等；超时时已经白等了一整个超时时长，
+                            // 再补上录制时的固定间隔只会让流程更慢。
                             skipNextDelay = true
                             prevInput = input
                             continue
@@ -1969,43 +1987,56 @@ private const val SPEED_CURVE_FACTOR = 0.7
      *
      * @param input WAIT_FOR 动作
      * @param currentGen 当前运行代数（用于检测回放中断）
-     * @return true=条件满足；false=超时或回放被中断
+     * @return 见 [MacroWaitResult]：满足 / 超时 / 被中断三态。
+     *         超时与中断必须分开——超时可由 waitContinueOnTimeout 决定是否继续往下走，
+     *         被中断则任何情况下都必须立刻收场。
      */
-    private suspend fun waitForMacroCondition(input: AutoSlideInput, currentGen: Int): Boolean {
+    private suspend fun waitForMacroCondition(input: AutoSlideInput, currentGen: Int): MacroWaitResult {
         // 等待期间暂停自动点击，避免双方同时截图触发系统截图间隔限制
         macroWaitingForOcr = true
         try {
             val text = input.waitText.trim()
-            if (text.isEmpty()) return true
+            if (text.isEmpty()) return MacroWaitResult.SATISFIED
+            // 支持逗号分隔的多关键词：命中任意一个即视为「存在」。
+            // 等出现 = 任意一个出现；等消失 = 全部都不在（对同一个 exists 取反，语义天然互补）。
+            val keywords = parseKeywords(text)
+            if (keywords.isEmpty()) return MacroWaitResult.SATISFIED
             val timeoutAt = SystemClock.elapsedRealtime() + input.waitTimeoutMs.coerceIn(1_000L, 120_000L)
             var lastOcrAt = 0L
             while (SystemClock.elapsedRealtime() < timeoutAt) {
-                if (currentGen != runGeneration) return false
+                if (currentGen != runGeneration) return MacroWaitResult.INTERRUPTED
                 val root = rootInActiveWindow
-                val nodeExists = root != null && findTextNodeInTree(root, text) != null
-                // 节点树没有该文字时用 OCR 兜底（适配视频/自绘界面），并做节流避免频繁截图
+                val nodeExists = root != null && keywords.any { findTextNodeInTree(root, it) != null }
+                // 节点树没有这些文字时用 OCR 兜底（适配视频/自绘界面），并做节流避免频繁截图
                 var ocrExists = false
                 if (!nodeExists) {
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastOcrAt >= MACRO_WAIT_OCR_INTERVAL_MS) {
                         lastOcrAt = now
                         // 每次轮询重新截图识别并刷新快照，供后面的“点文字”直接复用
-                        ocrExists = takeOcrSnapshot()?.contains(text) == true
+                        // 只截一次图，再拿同一份快照逐个关键词比对
+                        val snapshot = takeOcrSnapshot()
+                        ocrExists = snapshot != null && keywords.any { snapshot.contains(it) }
                     }
                 }
                 val exists = nodeExists || ocrExists
                 if (input.waitDisappear) {
                     // 等消失：当前已经不存在即满足
-                    if (!exists) return true
+                    if (!exists) return MacroWaitResult.SATISFIED
                 } else {
                     // 等出现：找到即满足，不点击（后续宏动作负责点击）
-                    if (exists) return true
+                    if (exists) return MacroWaitResult.SATISFIED
                 }
                 delay(MACRO_WAIT_POLL_INTERVAL_MS)
             }
-            LogX.w(TAG, "Macro wait timeout: text=$text, disappear=${input.waitDisappear}")
-            Toast.makeText(this, getString(R.string.wait_for_timeout, text), Toast.LENGTH_LONG).show()
-            return false
+            val continueOnTimeout = input.waitContinueOnTimeout
+            LogX.w(
+                TAG,
+                "Macro wait timeout: text=$text, disappear=${input.waitDisappear}, continue=$continueOnTimeout"
+            )
+            val tip = if (continueOnTimeout) R.string.wait_for_timeout_skip else R.string.wait_for_timeout
+            Toast.makeText(this, getString(tip, text), Toast.LENGTH_LONG).show()
+            return MacroWaitResult.TIMEOUT
         } finally {
             macroWaitingForOcr = false
         }
@@ -2177,7 +2208,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
      *
      * @param text 识别出的屏幕文字
      */
-    private suspend fun handleKeywordCheckResult(
+    private fun handleKeywordCheckResult(
         text: String,
         currentGen: Int
     ) {
@@ -2883,7 +2914,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         var best: ResolveInfo? = null
         var bestScore = -1
         for (info in resolveInfos) {
-            val label = (info.loadLabel(packageManager)?.toString() ?: "").trim()
+            val label = info.loadLabel(packageManager).toString().trim()
             if (label.length < 2) continue
             val lower = label.lowercase()
             val score = when {

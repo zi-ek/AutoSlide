@@ -29,6 +29,11 @@ import android.text.SpannableStringBuilder
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.util.Log
+import android.view.LayoutInflater
+import android.view.View
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
@@ -42,7 +47,10 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -84,6 +92,10 @@ object UpdateChecker {
     private var updateDialog: AlertDialog? = null       // 当前正在显示的更新对话框
     private var currentDownloadId: Long = -1            // 当前下载任务的 ID
     private var downloadReceiver: BroadcastReceiver? = null // 下载完成广播接收器
+    private var downloadProgressJob: Job? = null        // 下载进度轮询协程
+    private var progressContainerView: View? = null     // 进度条容器
+    private var progressBarView: ProgressBar? = null    // 下载进度条
+    private var progressPercentView: TextView? = null   // 进度百分比文字
     private var checking = false                       // 是否有检查正在进行中
     private var lastSuccessCheckAt = 0L                // 上次检查成功的时刻（进程启动时为 0，必定检查一次）
     private var lastFailedCheckAt = 0L                 // 上次检查失败的时刻（用于失败重试节流）
@@ -242,11 +254,18 @@ object UpdateChecker {
                 lifecycleOwner?.lifecycle?.addObserver(lifecycleObserver)
                 dialog.setCanceledOnTouchOutside(false)
                 dialog.setOnShowListener {
+                    setupDownloadProgress(dialog, activity)
                     setupDialogButtons(dialog, shownAt, activity, updateInfo)
                 }
                 dialog.setOnDismissListener {
                     lifecycleOwner?.lifecycle?.removeObserver(lifecycleObserver)
                     updateDialog = null
+                    // 收起进度轮询与视图引用，避免对话框关闭后继续更新已失效的控件
+                    downloadProgressJob?.cancel()
+                    downloadProgressJob = null
+                    progressContainerView = null
+                    progressBarView = null
+                    progressPercentView = null
                     Log.d(TAG, "dialog dismissed, pending=${pendingUpdateInfo != null}")
                     if (pendingUpdateInfo != null && !activity.isFinishing && !activity.isDestroyed) {
                         tryShowPendingUpdateDialog(activity)
@@ -254,6 +273,26 @@ object UpdateChecker {
                 }
                 dialog.show()
             }
+    }
+
+    /**
+     * 把下载进度条插入到弹窗正文下方（日志与底部按钮之间）。
+     *
+     * 这里不借助 setView：Material 弹窗的 customPanel 自带 48dp 最小高度，
+     * 直接塞一个默认隐藏的进度条会让弹窗在未下载时就多出一段空白。
+     * 改成往 android.R.id.message 所在的内容区里追加一行，隐藏时不占任何高度。
+     *
+     * @param dialog 更新对话框
+     * @param activity 活动
+     */
+    private fun setupDownloadProgress(dialog: AlertDialog, activity: Activity) {
+        val messageView = dialog.findViewById<TextView>(android.R.id.message) ?: return
+        val messageParent = messageView.parent as? LinearLayout ?: return
+        val progressView = LayoutInflater.from(activity).inflate(R.layout.dialog_update, messageParent, false)
+        progressContainerView = progressView.findViewById(R.id.progress_container)
+        progressBarView = progressView.findViewById(R.id.update_progress)
+        progressPercentView = progressView.findViewById(R.id.progress_percent_text)
+        messageParent.addView(progressView, messageParent.indexOfChild(messageView) + 1)
     }
 
     /**
@@ -312,6 +351,8 @@ object UpdateChecker {
             positiveBtn.text = activity.getString(R.string.downloading_update)
             if (!downloadAndInstall(activity, updateInfo.downloadUrl, updateInfo.versionName)) {
                 resetUpdateButton(activity)
+            } else {
+                startProgressTracking(activity)
             }
         }
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
@@ -362,6 +403,81 @@ object UpdateChecker {
     }
 
     /**
+     * 发起下载后启动进度轮询，把 DownloadManager 的「已下载/总大小」实时画到弹窗进度条上。
+     *
+     * @param context 上下文
+     */
+    private fun startProgressTracking(context: Context) {
+        val downloadId = currentDownloadId
+        if (downloadId <= 0) return
+        // 先把进度条露出来并归零
+        updateProgressViews(context, 0)
+        downloadProgressJob?.cancel()
+        downloadProgressJob = scope.launch {
+            while (isActive) {
+                val progress = withContext(ioDispatcher) { queryDownloadProgress(context, downloadId) }
+                if (progress == null) break
+                val (downloaded, total, status) = progress
+                when (status) {
+                    DownloadManager.STATUS_SUCCESSFUL -> {
+                        updateProgressViews(context, 100)
+                        break
+                    }
+                    DownloadManager.STATUS_FAILED -> {
+                        hideProgressViews()
+                        break
+                    }
+                    else -> {
+                        val percent = if (total > 0) ((downloaded * 100L) / total).toInt() else 0
+                        updateProgressViews(context, percent.coerceIn(0, 100))
+                        delay(500)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 查询 DownloadManager 的当前下载进度。
+     *
+     * @param context 上下文
+     * @param downloadId 下载任务 ID
+     * @return 已下载字节 / 总字节 / 下载状态；找不到任务时返回 null
+     */
+    private fun queryDownloadProgress(context: Context, downloadId: Long): Triple<Long, Long, Int>? {
+        val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return null
+        val query = DownloadManager.Query().setFilterById(downloadId)
+        downloadManager.query(query).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            val downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+            val total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+            val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+            return Triple(downloaded, total, status)
+        }
+    }
+
+    /**
+     * 更新进度条与百分比文字
+     *
+     * @param context 上下文
+     * @param percent 进度百分比（0-100）
+     */
+    private fun updateProgressViews(context: Context, percent: Int) {
+        progressContainerView?.visibility = View.VISIBLE
+        progressBarView?.progress = percent
+        progressPercentView?.text = context.getString(R.string.download_percent, percent)
+    }
+
+    /**
+     * 隐藏进度条（下载失败等场景）
+     */
+    private fun hideProgressViews() {
+        progressBarView?.progress = 0
+        progressPercentView?.text = ""
+        progressContainerView?.visibility = View.GONE
+    }
+
+    /**
      * 使用DownloadManager下载APK并在完成后自动安装
      *
      * @param activity 活动
@@ -401,6 +517,15 @@ object UpdateChecker {
                 runCatching { appContext.unregisterReceiver(this) }
                 if (downloadReceiver == this) {
                     downloadReceiver = null
+                }
+                // 停止进度轮询，并按最终结果刷新进度条
+                downloadProgressJob?.cancel()
+                downloadProgressJob = null
+                val finalStatus = queryDownloadProgress(context, id)?.third
+                if (finalStatus == DownloadManager.STATUS_SUCCESSFUL) {
+                    updateProgressViews(context, 100)
+                } else {
+                    hideProgressViews()
                 }
                 installApk(context, downloadManager, id)
                 // 下载结束（含失败）：把弹窗按钮恢复成可点，让用户能重试

@@ -37,7 +37,9 @@ enum class AutoSlideInputAction {
  * @param points SWIPE 的完整路径点，x,y 交替且归一化到 0~1；点击/长按为空
  * @param waitText WAIT_FOR 要等待的文字
  * @param waitDisappear true=等文字消失，false=等文字出现
- * @param waitTimeoutMs 等待超时时间（毫秒），超时后回放中止
+ * @param waitTimeoutMs 等待超时时间（毫秒）
+ * @param waitContinueOnTimeout true=超时后跳过本步继续执行下一个动作；false=超时即中止回放。
+ *                              默认 true：广告类场景里遇到没有倒计时的变体不该让整个回放停摆。
  * @param targetId 录制时点击位置的控件 id（回放时优先按控件定位，找不到则退回坐标）
  * @param targetText 录制时点击位置的控件文字/OCR 识别文字（回放时按文字定位）
  * @param launchOnce 仅首轮执行：循环回放时第一轮执行，从第二轮起跳过
@@ -55,6 +57,7 @@ data class AutoSlideInput(
     val waitText: String = "",
     val waitDisappear: Boolean = false,
     val waitTimeoutMs: Long = 30_000L,
+    val waitContinueOnTimeout: Boolean = true,
     val targetId: String = "",
     val targetText: String = "",
     val launchOnce: Boolean = false
@@ -71,6 +74,7 @@ data class AutoSlideInput(
         put("waitText", waitText)
         put("waitDisappear", waitDisappear)
         put("waitTimeout", waitTimeoutMs)
+        put("waitContinueOnTimeout", waitContinueOnTimeout)
         put("targetId", targetId)
         put("targetText", targetText)
         put("launchOnce", launchOnce)
@@ -97,6 +101,8 @@ data class AutoSlideInput(
                     waitText = obj.optString("waitText", ""),
                     waitDisappear = obj.optBoolean("waitDisappear", false),
                     waitTimeoutMs = obj.optLong("waitTimeout", 30_000L).coerceIn(1_000L, 120_000L),
+                    // 老宏没有这个字段，默认 true，让它们也不再因一次等待超时而整段中止
+                    waitContinueOnTimeout = obj.optBoolean("waitContinueOnTimeout", true),
                     targetId = obj.optString("targetId", ""),
                     targetText = obj.optString("targetText", ""),
                     launchOnce = obj.optBoolean("launchOnce", false)

@@ -125,4 +125,3 @@ data/stats.json — 统计数据就存在这里（安装数、设备列表等）
 隧道凭据：/root/.cloudflared/
 系统服务：cloudflared（开机自启）和 autoslide-stats（统计服务，开机自启）
 
-重启后台命令：systemctl restart autoslide-stats

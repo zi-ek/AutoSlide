@@ -48,6 +48,7 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.net.toUri
@@ -820,17 +821,20 @@ class MainActivity : AppCompatActivity() {
         // 更新无障碍服务列表
         if (enable) {
             enabledServices.add(targetComponent)
-            Settings.Secure.putInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
         } else {
             enabledServices.remove(targetComponent)
-            if (enabledServices.isEmpty()) {
-                Settings.Secure.putInt(contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0)
-            }
         }
-        // 更新无障碍服务列表字符串
+        // 先写服务列表，再写总开关：顺序反过来的话，AMS 在总开关变化时列表里还没有本组件，
+        // 会认为无服务可绑而把 ACCESSIBILITY_ENABLED 重新置 0（MIUI 13 实测），
+        // 于是组件留在启用列表里、总开关却是 0，服务永远不会被绑定。
         val newSettingString = enabledServices.joinToString(":") { it.flattenToString() }
         Settings.Secure.putString(
             contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, newSettingString
+        )
+        Settings.Secure.putInt(
+            contentResolver,
+            Settings.Secure.ACCESSIBILITY_ENABLED,
+            if (enabledServices.isEmpty()) 0 else 1
         )
         val finalAccessibilityEnabled = isAccessibilityServicePermissionEnabled()
         // 更新无障碍服务权限开关状态并应用无动画过渡
@@ -1457,7 +1461,7 @@ class MainActivity : AppCompatActivity() {
             @Suppress("DEPRECATION")
             packageManager.getPackageInfo(packageName, 0)
         }
-        return pi.versionCode
+        return PackageInfoCompat.getLongVersionCode(pi).toInt()
     }
 
     /**

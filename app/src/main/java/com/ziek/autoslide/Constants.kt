@@ -80,10 +80,10 @@ const val DEFAULT_PAUSE_TIME = 15                    // 默认固定停顿 15 �
 const val DEFAULT_MIN_PAUSE_TIME = 5                // 默认随机停顿下限 5 秒
 const val DEFAULT_MAX_PAUSE_TIME = 30                // 默认随机停顿上限 30 秒
 // 默认关键词（用中文逗号分隔，供第一次打开应用时预填）
-const val DEFAULT_KEYWORDS = "上滑继续，查看详情，点击进入，限时，抢购，购物"
+const val DEFAULT_KEYWORDS = "上滑继续，查看详情，了解详情，点击进入，限时，抢购，购物"
 const val DEFAULT_KEYWORD_IGNORE_CASE = true        // 默认忽略大小写
-const val DEFAULT_KEYWORD_INTERVAL = 2           // 默认每 2 秒检测一次
-const val DEFAULT_KEYWORD_COOLDOWN = 3           // 默认触发后冷却 3 秒
+const val DEFAULT_KEYWORD_INTERVAL = 1           // 默认每 1 秒检测一次
+const val DEFAULT_KEYWORD_COOLDOWN = 1           // 默认触发后冷却 1 秒
 const val DEFAULT_KEYWORD_MAX_TRIGGERS = 3          // 默认同一画面最多触发 3 次
 // 默认自动点击「跳过」按钮的匹配关键词（用中文逗号分隔）
 const val DEFAULT_SKIP_KEYWORDS = "跳过"

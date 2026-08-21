@@ -29,6 +29,7 @@ import android.widget.TextView
 import androidx.core.graphics.toColorInt
 import com.ziek.autoslide.input.AutoSlideInput
 import com.ziek.autoslide.input.AutoSlideInputAction
+import com.ziek.autoslide.parseKeywords
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -238,21 +239,32 @@ class InputRecorderView(
      * 插入一条等待条件动作（由外层弹窗确认后调用）。
      * 该动作不会实时派发给下方应用，只在回放时生效。
      *
-     * @param text 要等待的文字
+     * @param text 要等待的文字（多个用逗号隔开）
      * @param disappear true=等文字消失，false=等文字出现
+     * @param continueOnTimeout true=超时后跳过本步继续执行，false=超时即中止回放
      */
-    fun addWaitForAction(text: String, disappear: Boolean) {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) return
+    fun addWaitForAction(text: String, disappear: Boolean, continueOnTimeout: Boolean) {
+        // 支持逗号分隔的多关键词：按既有的 parseKeywords 规则拆开去空后再用半角逗号拼回，
+        // 存库文案统一，回放端拆出来的结果与这里完全一致
+        val keywords = parseKeywords(text)
+        if (keywords.isEmpty()) return
+        val trimmed = keywords.joinToString(",")
         recordedInputs.add(
             AutoSlideInput(
                 action = AutoSlideInputAction.WAIT_FOR,
                 delayMs = 0L,
                 waitText = trimmed,
-                waitDisappear = disappear
+                waitDisappear = disappear,
+                waitTimeoutMs = WAIT_FOR_TIMEOUT_MS,
+                waitContinueOnTimeout = continueOnTimeout
             )
         )
-        val mark = if (disappear) "等待消失：$trimmed" else "等待出现：$trimmed"
+        val mark = when {
+            keywords.size > 1 && disappear -> "等待全部消失：$trimmed"
+            keywords.size > 1 -> "等待任一出现：$trimmed"
+            disappear -> "等待消失：$trimmed"
+            else -> "等待出现：$trimmed"
+        }
         recordedWaitMarks.add(mark)
         drawView.invalidate()
     }
@@ -577,6 +589,8 @@ class InputRecorderView(
     private fun dp(value: Int): Int = (value * density).toInt()
 
     companion object {
+        /* 等待条件的超时时长：够覆盖常见的 30 秒激励视频，又不会在异常广告上干等太久 */
+        private const val WAIT_FOR_TIMEOUT_MS = 35_000L
         private const val MIN_POINT_DISTANCE_PX = 5f
         /* 同一位置重复点击的最大间隔（毫秒），用于过滤一次触摸被录成两次的问题 */
         private const val DUPLICATE_TAP_MAX_GAP_MS = 200L

@@ -45,7 +45,7 @@ function termsHtml() {
     `<p class="legal-updated">最后更新：${UPDATED}</p>`,
     section('一、应用信息', [
       '本协议适用于「自动滑屏器」（AutoSlide）Android 应用。',
-      '本应用为开源软件，源码托管于 <a href="https://github.com/zi-ek/AutoSlide">github.com/zi-ek/AutoSlide</a>，以 Apache License 2.0 授权。',
+      '本应用为开源软件，源码托管于 <a href="https://github.com/zi-ek/AutoSlide">Github/zi-ek/AutoSlide</a>，以 Apache License 2.0 授权。',
       '如需联系开发者，可通过应用内「反馈」功能，或在上述仓库提交 Issue。',
     ]),
     section('二、许可与使用限制', [

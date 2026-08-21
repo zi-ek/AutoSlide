@@ -851,8 +851,8 @@ class FloatingWindowService : Service() {
     private fun showPlaybackCountdown(name: String, loopCount: Int) {
         val service = AutoSlideService.getInstance() ?: return
         val circle = TextView(this).apply {
-            text = "5"
-            textSize = 56f
+            text = "9"
+            textSize = 100f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
@@ -873,13 +873,13 @@ class FloatingWindowService : Service() {
         }
         runCatching { windowManager.addView(circle, countdownParams) }
         playbackCountdownView = circle
-        // 圆圈下方显示「共 N 次」
+        // 圆圈下方显示剩余循环次数；倒计时结束后不移除，整个回放过程中常驻并逐轮更新
         val label = TextView(this).apply {
-            text = getString(R.string.macro_loop_total, loopCount)
-            textSize = 20f
+            text = getString(R.string.macro_loop_remaining, loopCount)
+            textSize = 40f
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
+            setTextColor(Color.BLUE)
             setShadowLayer(5f, 0f, 0f, Color.BLACK)
         }
         val labelParams = WindowManager.LayoutParams(
@@ -890,7 +890,7 @@ class FloatingWindowService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.CENTER
-            y = dp(100)
+            y = dp(200)
         }
         runCatching { windowManager.addView(label, labelParams) }
         playbackCountdownLabel = label
@@ -900,14 +900,13 @@ class FloatingWindowService : Service() {
             val autoLaunchJob = launch {
                 autoLaunched = runCatching { service.autoFindAndOpenAppByName(name) }.getOrDefault(false)
             }
-            for (i in 10 downTo 0) {
+            for (i in 9 downTo 0) {
                 circle.text = i.toString()
                 delay(1000)
             }
             runCatching { windowManager.removeView(circle) }
             playbackCountdownView = null
-            playbackCountdownLabel?.let { runCatching { windowManager.removeView(it) } }
-            playbackCountdownLabel = null
+            // 标签留在屏幕上：回放期间继续显示剩余次数，由 exitPlaybackMode 统一移除
             // 倒计时结束但 App 还在翻页查找时，最多再等 30 秒（多页桌面翻页+OCR 较慢）
             withTimeoutOrNull(30_000) { autoLaunchJob.join(); autoLaunched }
             val started = service.playMacro(
@@ -916,6 +915,10 @@ class FloatingWindowService : Service() {
                 skipLaunchOnce = autoLaunched,
                 onFinished = { showPlaybackFinishedDialog() },
                 onActionStart = { input -> playbackFeedbackView?.showAction(input) },
+                onRoundStart = { remaining ->
+                    (playbackCountdownLabel as? TextView)?.text =
+                        getString(R.string.macro_loop_remaining, remaining)
+                },
                 onEnd = {
                     playbackFeedbackView?.clearAction()
                     exitPlaybackMode()
@@ -950,8 +953,11 @@ class FloatingWindowService : Service() {
         runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
     }
 
-    /* 退出回放模式：移除反馈层，恢复悬浮球/面板 */
+    /* 退出回放模式：移除反馈层与剩余次数标签，恢复悬浮球/面板 */
     private fun exitPlaybackMode() {
+        // 剩余次数标签在整个回放期间常驻，回放结束（完成/超时中止/未找到录制）后在这里统一移除
+        playbackCountdownLabel?.let { runCatching { windowManager.removeView(it) } }
+        playbackCountdownLabel = null
         playbackFeedbackView?.let { feedback ->
             runCatching { (rootView as? ViewGroup)?.removeView(feedback) }
         }
@@ -1192,21 +1198,28 @@ class FloatingWindowService : Service() {
             addView(appearRadio)
             addView(disappearRadio)
         }
+        // 默认勾选：遇到没有倒计时的广告变体时，跳过本步继续，而不是让整段回放停摆
+        val continueCheck = CheckBox(dialogContext).apply {
+            text = getString(R.string.wait_for_continue_on_timeout)
+            isChecked = true
+        }
         val container = LinearLayout(dialogContext).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(24), dp(12), dp(24), 0)
             addView(inputLayout)
             addView(radioGroup)
+            addView(continueCheck)
         }
         MaterialAlertDialogBuilder(dialogContext)
             .setTitle(R.string.wait_for_title)
             .setView(container)
             .setPositiveButton(R.string.confirm) { _, _ ->
                 val text = input.text.toString().trim()
-                if (text.isEmpty()) {
+                // 用与录制/回放同一套拆分规则判空，"，，" 这类只有分隔符的输入也会被挡下
+                if (parseKeywords(text).isEmpty()) {
                     Toast.makeText(this, R.string.wait_for_empty, Toast.LENGTH_SHORT).show()
                 } else {
-                    recordView.addWaitForAction(text, disappearRadio.isChecked)
+                    recordView.addWaitForAction(text, disappearRadio.isChecked, continueCheck.isChecked)
                 }
             }
             .setNegativeButton(R.string.cancel, null)

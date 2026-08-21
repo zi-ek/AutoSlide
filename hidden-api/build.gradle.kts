@@ -19,10 +19,10 @@ android {
         minSdk = 26
     }
 
-    // 必须与 app 模块保持一致（app/build.gradle.kts 用的是 Java 11）
+    // 必须与 app 模块保持一致（均统一使用 Java 17）
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 }
 
