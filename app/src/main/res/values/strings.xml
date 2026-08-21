@@ -4,6 +4,7 @@
     <string name="accessibility_service_description">自动滑动器需要无障碍服务权限来执行屏幕滑动操作</string>
     <string name="show_floating_window">显示悬浮窗</string>
     <string name="close_floating_window">关闭悬浮窗</string>
+    <string name="back_to_desktop">回到桌面</string>
     <string name="pause_time">停顿时间（秒）点击可修改 ：</string>
     <string name="custom_pause_time">自定义停顿时间（秒）</string>
     <string name="invalid_input_number">请输入有效数字</string>
@@ -55,6 +56,12 @@
     <string name="macro_saved">操作宏已保存</string>
     <string name="macro_clear">清除</string>
     <string name="macro_export">导出</string>
+    <string name="macro_share">分享</string>
+    <string name="macro_share_title">分享脚本</string>
+    <string name="macro_share_message">将「%1$s」上传到脚本中心。\n\n与更多人分享你的脚本动作。</string>
+    <string name="macro_sharing">正在分享…</string>
+    <string name="macro_share_success">分享成功</string>
+    <string name="macro_share_failed">分享失败，请检查网络</string>
     <string name="macro_export_title">导出 slide_settings.xml</string>
     <string name="macro_export_failed">导出失败</string>
     <string name="macro_export_not_found">没有找到配置文件</string>
@@ -97,7 +104,6 @@
     <string name="speed_label_slow">慢</string>
     <string name="speed_label_fast">快</string>
     <string name="check_update">检查更新</string>
-    <string name="chat_room">反馈</string>
     <string name="status_channel_name">常驻服务</string>
     <string name="status_channel_desc">显示应用的运行状态，并在被系统清理后自动恢复无障碍</string>
     <string name="status_a11y_running">无障碍正在运行</string>
@@ -159,8 +165,11 @@
     <string name="total_swipes_label">累计滑屏</string>
     <string name="keyword_matches_label">关键词命中</string>
     <string name="saved_distance_label">节省手滑行程</string>
-    <string name="donate_tip">若帮有助到你，就给点打赏点吧</string>
+    <string name="donate_tip">若有帮助到你，就给点打赏点吧🙏\n长按保存图片到相册</string>
     <string name="donate_qr_desc">微信打赏二维码</string>
+    <string name="donate_qr_saved">二维码已保存到相册</string>
+    <string name="donate_qr_save_failed">保存失败：%1$s</string>
+    <string name="donate_qr_need_storage">需要存储权限才能保存到相册</string>
     <string name="chat_title">聊天</string>
     <string name="chat_refresh">刷新</string>
     <string name="chat_create">新建频道</string>
@@ -198,4 +207,51 @@
     <string name="chat_delete_confirm">确定删除该频道吗？所有成员和消息都会被删除，且无法恢复。</string>
     <string name="chat_deleted">频道已删除</string>
     <string name="chat_delete_failed">删除失败：%1$s</string>
+    <!--底部导航栏-->
+    <string name="nav_home">首页</string>
+    <string name="nav_chat">交流</string>
+    <string name="nav_mine">我的</string>
+    <!--「我的」页签-->
+    <string name="mine_import_settings">导入配置</string>
+    <string name="mine_script_library">分享库</string>
+    <string name="script_lib_title">分享库</string>
+    <string name="script_lib_use">使用</string>
+    <string name="script_lib_loading">正在加载分享库…</string>
+    <string name="script_lib_empty">分享库还是空的\n在动作列表里点「分享」，分享的脚本就会出现在这里</string>
+    <string name="script_lib_load_failed">加载失败：%1$s</string>
+    <string name="script_lib_meta">%1$d 个动作 · %2$s</string>
+    <string name="script_lib_importing">正在导入…</string>
+    <string name="script_lib_imported">已导入「%1$s」，去动作列表里就能看到</string>
+    <string name="script_lib_import_failed">导入失败：%1$s</string>
+    <string name="mine_version_format">v%s</string>
+    <!-- 使用时长 / 分享得时长 -->
+    <string name="mine_license">分享得时长</string>
+    <string name="license_entry_trial">剩余 %1$d 天</string>
+    <string name="license_entry_expired">已到期</string>
+    <string name="license_entry_unknown">查看</string>
+    <string name="license_dialog_title">使用时长</string>
+    <string name="license_expired_title">试用已结束</string>
+    <string name="license_expired_message">试用期已经用完，自动滑动、关键词识别、自动点击与回放已全部停止。把 App 分享给好友，好友装好并填写你的邀请码后，时长立刻到账。</string>
+    <string name="license_remain_message">当前剩余 %1$d 天（%2$s 到期）。分享给好友可以继续延长使用时长。</string>
+    <string name="license_unknown_message">还没有和服务器同步过使用时长，联网后会自动更新。</string>
+    <string name="license_code_line">我的邀请码：%1$s</string>
+    <string name="license_invited_line">已成功邀请 %1$d 人，累计获得 %2$d 天</string>
+    <string name="license_rule">奖励规则：每邀请 1 人 +3 天；满 10 人共 30 天；满 20 人共 90 天。好友填写你的邀请码后，他自己也会得到 7 天。</string>
+    <string name="license_share">分享给好友</string>
+    <string name="license_refresh">刷新</string>
+    <string name="license_close">关闭</string>
+    <string name="license_bind">填写邀请码</string>
+    <string name="license_bind_title">填写好友的邀请码</string>
+    <string name="license_bind_message">填写后你和好友都会获得使用时长。每台设备只能填一次，且只能在安装后 7 天内填写。</string>
+    <string name="license_bind_hint">6 位邀请码</string>
+    <string name="license_bind_confirm">确定</string>
+    <string name="license_bind_empty">请先输入邀请码</string>
+    <string name="license_bind_success">邀请码已生效，时长已到账</string>
+    <string name="license_share_text">我在用「自动滑屏器」自动刷视频，很好用。\n我的邀请码：%1$s\n下载地址：%2$s</string>
+    <string name="license_share_failed">没有可用的分享应用</string>
+    <string name="license_no_code">还没拿到邀请码，正在重新获取</string>
+    <string name="license_refreshed">时长已到账</string>
+    <string name="license_still_expired">还没有新的时长到账</string>
+    <string name="license_network_error">网络异常，请稍后再试</string>
+    <string name="license_blocked_toast">试用已结束，请在 App 内分享获取使用时长</string>
 </resources>

@@ -39,6 +39,8 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // 读一次本地缓存的使用时长，进程刚起来时服务层就能拿到判定结果
+        License.init(this)
         // 注册无障碍启用列表监听并同步当前状态
         A11yState.init(this)
         // 进程刚起来：修无障碍

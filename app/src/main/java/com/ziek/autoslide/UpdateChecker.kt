@@ -3,8 +3,11 @@ package com.ziek.autoslide
 /**
  * 应用更新检查
  *
- * 从 GitHub 上的 update.json 拉取最新版本信息，发现新版本时弹出更新对话框，
+ * 从自建服务器的 /api/update 拉取最新版本信息，发现新版本时弹出更新对话框，
  * 用户确认后使用系统 DownloadManager 下载 APK 并调起安装。
+ *
+ * 早先版本走 raw.githubusercontent.com + GitHub Releases，国内不稳，
+ * 还得挂一串加速代理前缀逐个试；改成自建源之后这套轮询就没有存在意义了。
  */
 
 import android.app.Activity
@@ -30,7 +33,6 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import androidx.core.content.edit
 import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
@@ -68,30 +70,23 @@ object UpdateChecker {
         val downloadUrl: String
     )
 
-    // 远端版本信息 JSON 的地址（本仓库地址，可能被代理加速）
-    private const val UPDATE_INFO_URL =
-        "https://raw.githubusercontent.com/zi-ek/AutoSlide/master/update.json"
+    // 远端版本信息 JSON 的地址，跟随 [SERVER_BASE_URL]（来自 gradle.properties）
+    private val UPDATE_INFO_URL = "$SERVER_BASE_URL/api/update"
 
-    // 固定网盘下载地址
+    // 固定网盘下载地址（服务器不可用时的人工兜底，仍保留）
     private const val LANZOU_DOWNLOAD_URL = "https://q-sj.lanzoum.com/b0pnt04li"
-
-    // 用于加速下载的 GitHub 代理前缀（按顺序尝试，哪个能用用哪个；最后直连）
-    private val GITHUB_PROXY_PREFIXES = listOf(
-        "https://gh-proxy.org/",
-        "https://v4.gh-proxy.org/",
-        "https://v6.gh-proxy.org/",
-        "https://cdn.gh-proxy.org/",
-        "https://ghproxy.net/"
-    )
     private const val TAG = "UpdateChecker" // 日志标签
-    private const val KEY_LAST_AUTO_CHECK = "lastAutoCheckTime" // 上次自动检查更新的时间戳
-    private const val AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000L // 自动检查间隔：24 小时
+    private const val RETRY_INTERVAL_MS = 60 * 1000L // 检查失败（如断网）后的最短重试间隔
+    private const val RECHECK_INTERVAL_MS = 30 * 60 * 1000L // 检查成功后回到前台再次检查的最短间隔
     var ioDispatcher: CoroutineDispatcher = Dispatchers.IO // 网络请求使用的 IO 线程池
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 主线程协程作用域
     private var pendingUpdateInfo: UpdateInfo? = null   // 待展示的更新信息（页面不可见时先暂存）
     private var updateDialog: AlertDialog? = null       // 当前正在显示的更新对话框
     private var currentDownloadId: Long = -1            // 当前下载任务的 ID
     private var downloadReceiver: BroadcastReceiver? = null // 下载完成广播接收器
+    private var checking = false                       // 是否有检查正在进行中
+    private var lastSuccessCheckAt = 0L                // 上次检查成功的时刻（进程启动时为 0，必定检查一次）
+    private var lastFailedCheckAt = 0L                 // 上次检查失败的时刻（用于失败重试节流）
 
     /**
      * 开始检查更新
@@ -106,31 +101,42 @@ object UpdateChecker {
         val activityRef = WeakReference(activity)
         val appContext = activity.applicationContext
         val lifecycleScope = (activity as? LifecycleOwner)?.lifecycleScope ?: scope
+        checking = true
         lifecycleScope.launch {
             fetchUpdateInfo(appContext).onSuccess { updateInfo ->
+                checking = false
+                lastSuccessCheckAt = SystemClock.elapsedRealtime()
+                lastFailedCheckAt = 0L
                 handleUpdateResult(activityRef, updateInfo, showToastOnLatest)
             }.onFailure {
+                checking = false
+                lastFailedCheckAt = SystemClock.elapsedRealtime()
                 handleUpdateFailure(activityRef, it, showToastOnLatest)
             }
         }
     }
 
     /**
-     * 主动检查更新：打开 App 时自动调用，每天最多检查一次
-     * 有新版本时自动弹出更新对话框，没有新版本时不打扰用户
+     * 主动检查更新：每次打开 App（进程启动后首次进入界面）都检查一次。
+     * 检查到新版本就弹出无法取消的强制更新弹窗；没有新版本或联系不上服务器时不打扰用户。
+     * 检查失败（断网、服务器不通）只按间隔重试，不影响正常使用。
      *
      * @param activity 活动
-     * @param force 是否强制检查（忽略每日间隔）
+     * @param force 是否强制检查（忽略本次启动已检查过的限制）
      */
     fun checkUpdateIfNeeded(activity: Activity, force: Boolean = false) {
+        // 已经拿到新版本信息：直接把强制更新弹窗顶上来，不用再请求一次
+        if (pendingUpdateInfo != null) {
+            tryShowPendingUpdateDialog(activity)
+            return
+        }
         if (!force) {
-            val prefs = activity.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val lastCheckTime = prefs.getLong(KEY_LAST_AUTO_CHECK, 0L)
-            val now = System.currentTimeMillis()
-            if (now - lastCheckTime < AUTO_CHECK_INTERVAL_MS) {
-                return
-            }
-            prefs.edit { putLong(KEY_LAST_AUTO_CHECK, now) }
+            if (checking) return
+            val now = SystemClock.elapsedRealtime()
+            // 本次进程启动已经查过：隔一段时间回到前台再查一次就够了
+            if (lastSuccessCheckAt != 0L && now - lastSuccessCheckAt < RECHECK_INTERVAL_MS) return
+            // 上次检查失败（多半是没网）：等一会儿再试，期间 App 正常使用
+            if (lastFailedCheckAt != 0L && now - lastFailedCheckAt < RETRY_INTERVAL_MS) return
         }
         checkUpdate(activity, showToastOnLatest = false)
     }
@@ -167,27 +173,9 @@ object UpdateChecker {
      * @return 更新信息
      */
     private suspend fun fetchUpdateInfo(context: Context): Result<UpdateInfo?> = withContext(ioDispatcher) {
-        runCatching {
-            // 依次尝试各个加速代理，全部失败再试直连
-            val candidates = GITHUB_PROXY_PREFIXES.map { it to (it + UPDATE_INFO_URL) } + ("" to UPDATE_INFO_URL)
-            var lastError: Exception? = null
-            for ((prefix, candidateUrl) in candidates) {
-                try {
-                    val info = fetchUpdateInfoFromUrl(candidateUrl, context)
-                    if (info != null) {
-                        // 下载地址也使用同一个可用的加速前缀
-                        return@withContext Result.success(
-                            info.copy(downloadUrl = prefix + info.downloadUrl)
-                        )
-                    }
-                    return@withContext Result.success(null)
-                } catch (e: Exception) {
-                    lastError = e
-                    Log.w(TAG, "更新源不可用: $candidateUrl", e)
-                }
-            }
-            throw lastError ?: IllegalStateException("所有更新源均不可用")
-        }
+        // 单一自建源，服务端已把 downloadUrl 补成绝对地址，客户端不再拼前缀
+        runCatching { fetchUpdateInfoFromUrl(UPDATE_INFO_URL, context) }
+            .onFailure { Log.w(TAG, "更新源不可用: $UPDATE_INFO_URL", it) }
     }
 
     /* 从指定 URL 读取更新信息（单个源） */
@@ -246,7 +234,7 @@ object UpdateChecker {
             .setMessage(message)
             .setPositiveButton(R.string.update_now, null)
             .setNeutralButton("网盘下载", null)
-            .setNegativeButton(R.string.cancel, null)
+            // 强制更新：没有取消按钮，返回键与点击外部都关不掉
             .setCancelable(false)
             .create().also { dialog ->
                 val shownAt = SystemClock.elapsedRealtime()
@@ -315,12 +303,16 @@ object UpdateChecker {
      * @param updateInfo 更新信息
      */
     private fun setupDialogButtons(dialog: AlertDialog, shownAt: Long, activity: Activity, updateInfo: UpdateInfo) {
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+        val positiveBtn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        positiveBtn.setOnClickListener {
             val shownDuration = SystemClock.elapsedRealtime() - shownAt
             Log.d(TAG, "positive clicked after ${shownDuration}ms")
-            pendingUpdateInfo = null
-            dialog.dismiss()
-            downloadAndInstall(activity, updateInfo.downloadUrl, updateInfo.versionName)
+            // 强制更新：弹窗一直留着，装完新版本前不放行；下载中先把按钮置灰
+            positiveBtn.isEnabled = false
+            positiveBtn.text = activity.getString(R.string.downloading_update)
+            if (!downloadAndInstall(activity, updateInfo.downloadUrl, updateInfo.versionName)) {
+                resetUpdateButton(activity)
+            }
         }
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
             // 复制固定网盘地址
@@ -356,16 +348,17 @@ object UpdateChecker {
             neutralBtn.isEnabled = false
             neutralBtn.text = "地址已复制"
         }
-        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
-            val shownDuration = SystemClock.elapsedRealtime() - shownAt
-            if (shownDuration < 500L) {
-                Log.d(TAG, "ignore early negative click after ${shownDuration}ms")
-                return@setOnClickListener
-            }
-            Log.d(TAG, "negative clicked after ${shownDuration}ms")
-            pendingUpdateInfo = null
-            dialog.dismiss()
-        }
+    }
+
+    /**
+     * 把⌈立即更新⌋按钮恢复成可点状态（下载结束或没能发起下载时调用）
+     *
+     * @param context 上下文
+     */
+    private fun resetUpdateButton(context: Context) {
+        val button = updateDialog?.getButton(AlertDialog.BUTTON_POSITIVE) ?: return
+        button.isEnabled = true
+        button.text = context.getString(R.string.update_now)
     }
 
     /**
@@ -374,8 +367,9 @@ object UpdateChecker {
      * @param activity 活动
      * @param downloadUrl 下载URL
      * @param versionName 版本名称
+     * @return 是否成功发起下载
      */
-    private fun downloadAndInstall(activity: Activity, downloadUrl: String, versionName: String) {
+    private fun downloadAndInstall(activity: Activity, downloadUrl: String, versionName: String): Boolean {
         // 检查是否有安装未知应用的权限
         if (!activity.packageManager.canRequestPackageInstalls()) {
             Toast.makeText(activity, R.string.install_permission_required, Toast.LENGTH_SHORT).show()
@@ -383,7 +377,7 @@ object UpdateChecker {
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, "package:${activity.packageName}".toUri()
             )
             activity.startActivity(intent)
-            return
+            return false
         }
         val fileName = "AutoSlide-v$versionName.apk"
         val request = DownloadManager.Request(downloadUrl.toUri()).setTitle(activity.getString(R.string.app_name))
@@ -409,6 +403,8 @@ object UpdateChecker {
                     downloadReceiver = null
                 }
                 installApk(context, downloadManager, id)
+                // 下载结束（含失败）：把弹窗按钮恢复成可点，让用户能重试
+                resetUpdateButton(appContext)
             }
         }
         downloadReceiver = receiver
@@ -418,6 +414,7 @@ object UpdateChecker {
             IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
             ContextCompat.RECEIVER_EXPORTED
         )
+        return true
     }
 
     /**

@@ -6,6 +6,11 @@
     <!--允许安装APK-->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"
         tools:ignore="RequestInstallPackagesPolicy" />
+    <!-- 保存打赏二维码到相册。Android 10 起走 MediaStore 不需要任何权限，
+         所以用 maxSdkVersion 把它限制在 9 及以下，新系统上不会出现在权限列表里 -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
     <!--添加悬浮窗权限-->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- 常驻状态前台服务 + 通知（GKD 同款：靠 START_STICKY 重启带回进程，进而自愈无障碍） -->
@@ -50,9 +55,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity
-            android:name=".chat.ChatListActivity"
-            android:exported="false" />
         <activity
             android:name=".chat.ChatActivity"
             android:exported="false"

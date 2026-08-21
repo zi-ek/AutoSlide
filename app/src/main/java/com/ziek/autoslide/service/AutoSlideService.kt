@@ -79,6 +79,7 @@ import com.ziek.autoslide.KEY_PAUSE_MODE
 import com.ziek.autoslide.KEY_PAUSE_TIME
 import com.ziek.autoslide.KEY_SKIP_KEYWORDS
 import com.ziek.autoslide.KEY_SPEED
+import com.ziek.autoslide.License
 import com.ziek.autoslide.KEY_STATS_KEYWORD_MATCHES
 import com.ziek.autoslide.KEY_STATS_SAVED_DISTANCE
 import com.ziek.autoslide.KEY_STATS_TOTAL_SWIPES
@@ -188,6 +189,12 @@ open class AutoSlideService : AccessibilityService() {
     /* 暂停前是否正在滑动：恢复时据此决定要不要把滑动循环重新拉起来 */
     @Volatile
     private var wasSlidingBeforePause = false
+    /* 使用时长已到期：与总暂停共用同一套拦截点，到期后拒绝一切自动化动作 */
+    @Volatile
+    private var licenseBlocked = false
+    /* 这次暂停是不是到期导致的：时长到账后据此自动恢复，不用用户再点一次 */
+    @Volatile
+    private var pausedByLicense = false
     /* 1x1 无障碍保活窗口（GKD: aliveView） */
     private var aliveOverlayView: View? = null
 
@@ -322,9 +329,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
         private const val KUAISHOU_LITE_PACKAGE = "com.kuaishou.nebula"
         private const val KUAISHOU_AUTOPLAY_TEXT = "自动上滑"
         private const val DOUYIN_AUTOPLAY_COOLDOWN_MS = 5_000L
-        /* 推送通知弹窗：识别到标题后自动点「忽略」 */
-        private const val PUSH_NOTIFICATION_DIALOG_TEXT = "打开推送通知"
-        private const val PUSH_IGNORE_TEXT = "忽略"
+        /* 推送通知弹窗：命中任一标题后自动点「忽略」类按钮。
+           findAccessibilityNodeInfosByText 是整串包含匹配、不认正则，
+           多关键词只能拆成列表逐个找，不能写成「A|B」。 */
+        private val PUSH_NOTIFICATION_DIALOG_TEXTS = listOf("打开推送通知", "开启推送提醒")
+        private val PUSH_IGNORE_TEXTS = listOf("忽略", "取消")
         private const val PUSH_DIALOG_DISMISS_COOLDOWN_MS = 5_000L
         /* 快手自定义开关的状态：1=开 0=关 -1=未知（无法判断时禁止点击） */
         private const val KUAISHOU_STATE_ON = 1
@@ -493,6 +502,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * @return 固定返回START_STICKY
      */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (licenseBlocked) {
+            LogX.i(TAG, "License expired, ignore start command")
+            toastLicenseBlocked()
+            return START_STICKY
+        }
         intent?.run {
             updateConfigFromIntent(this)
             startAutoSlide()
@@ -512,6 +526,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
     fun startSlideWithConfig(
         speedVal: Int, pauseModeVal: Int, pauseTimeVal: Int, minPauseVal: Int, maxPauseVal: Int
     ) {
+        if (licenseBlocked) {
+            LogX.i(TAG, "License expired, refuse slide")
+            toastLicenseBlocked()
+            return
+        }
         // 用户主动点击方向键开始滑动，视为恢复自动化。
         resumeForExplicitStart()
         speed = speedVal.coerceIn(1, 100)
@@ -539,6 +558,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // 服务可能晚于授权判定才连上，这里主动对齐一次当前的到期状态
+        applyLicenseBlocked(License.blocked)
         registerScreenOffReceiver()
         reloadConfig()
         douyinAutoPlayCompleted = false
@@ -663,6 +684,12 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * 暂停前本来就没在滑（只开着自动点击/连播）时，恢复只是重新放行，不会凭空开始滑动。
      */
     fun setAutomationPaused(paused: Boolean) {
+        // 试用到期期间只许暂停、不许恢复，否则悬浮球上的恢复键就能绕过限制
+        if (licenseBlocked && !paused) {
+            LogX.i(TAG, "License expired, refuse resume")
+            toastLicenseBlocked()
+            return
+        }
         if (automationPaused == paused) return
         automationPaused = paused
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
@@ -694,6 +721,40 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * 用户主动点方向键或回放键时的解除暂停：只放行，不还原暂停前的滑动，
      * 因为调用方紧接着就会用自己的配置启动，避免先用旧配置多启一次。
      */
+    /**
+     * 应用使用时长的判定结果。
+     *
+     * 到期时走一遍与「总暂停」完全相同的停止流程（滑动、关键词、自动点击、回放全停），
+     * 并记住这次暂停是到期造成的；分享得到时长后自动恢复，不需要用户再点一次暂停键。
+     *
+     * @param blocked 是否已到期
+     */
+    fun applyLicenseBlocked(blocked: Boolean) {
+        if (licenseBlocked == blocked) return
+        licenseBlocked = blocked
+        LogX.i(TAG, "License blocked=$blocked")
+        if (blocked) {
+            pausedByLicense = !automationPaused
+            setAutomationPaused(true)
+            return
+        }
+        // 时长到账：只把当初因到期而加的那道暂停撤掉，用户自己按的暂停保持不变
+        if (pausedByLicense) {
+            pausedByLicense = false
+            setAutomationPaused(false)
+        }
+    }
+
+    /** 当前是否因使用时长到期而被限制 */
+    fun isLicenseBlocked(): Boolean = licenseBlocked
+
+    /* 到期后用户还去点方向键/回放时的提示 */
+    private fun toastLicenseBlocked() {
+        handler.post {
+            Toast.makeText(this, R.string.license_blocked_toast, Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun resumeForExplicitStart() {
         if (!automationPaused) return
         wasSlidingBeforePause = false
@@ -1223,7 +1284,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         }
     }
 
-    /* 检测「打开推送通知」弹窗，存在时自动点击「忽略」按钮（带冷却，避免重复点击） */
+    /* 检测推送通知类弹窗，存在时自动点击「忽略/取消」按钮（带冷却，避免重复点击） */
     private fun maybeDismissPushNotificationDialog() {
         if (automationPaused) return
         val now = SystemClock.elapsedRealtime()
@@ -1231,26 +1292,32 @@ private const val SPEED_CURVE_FACTOR = 0.7
             return
         }
         val root = rootInActiveWindow ?: return
-        val titleNodes = root.findAccessibilityNodeInfosByText(PUSH_NOTIFICATION_DIALOG_TEXT)
-        if (titleNodes.isEmpty()) {
+        val hasDialog = PUSH_NOTIFICATION_DIALOG_TEXTS.any { keyword ->
+            val nodes = root.findAccessibilityNodeInfosByText(keyword)
+            val hit = nodes.isNotEmpty()
+            nodes.forEach { runCatching { it.recycle() } }
+            hit
+        }
+        if (!hasDialog) {
             return
         }
-        titleNodes.forEach { runCatching { it.recycle() } }
-        // 弹窗存在：优先找「忽略」按钮点击
-        val ignoreNodes = root.findAccessibilityNodeInfosByText(PUSH_IGNORE_TEXT)
+        // 弹窗存在：按「忽略」->「取消」的顺序找按钮点击
         var clicked = false
-        try {
-            for (node in ignoreNodes) {
-                if (node.text?.toString()?.trim() != PUSH_IGNORE_TEXT) continue
-                val target = if (node.isClickable) node else node.parent
-                clicked = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
-                if (clicked) {
-                    LogX.i(TAG, "已自动点击「忽略」关闭推送通知弹窗")
-                    break
+        outer@ for (keyword in PUSH_IGNORE_TEXTS) {
+            val ignoreNodes = root.findAccessibilityNodeInfosByText(keyword)
+            try {
+                for (node in ignoreNodes) {
+                    if (node.text?.toString()?.trim() != keyword) continue
+                    val target = if (node.isClickable) node else node.parent
+                    if (target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) {
+                        clicked = true
+                        LogX.i(TAG, "已自动点击「$keyword」关闭推送通知弹窗")
+                        break@outer
+                    }
                 }
+            } finally {
+                ignoreNodes.forEach { runCatching { it.recycle() } }
             }
-        } finally {
-            ignoreNodes.forEach { runCatching { it.recycle() } }
         }
         // 没有「忽略」按钮时（另一种弹窗格式），找关闭按钮（关闭/取消）
         if (!clicked && tryClickCloseButton(root)) {
@@ -1699,6 +1766,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
         onActionStart: ((AutoSlideInput) -> Unit)? = null,
         onEnd: (() -> Unit)? = null
     ): Boolean {
+        if (licenseBlocked) {
+            LogX.i(TAG, "License expired, refuse macro playback")
+            toastLicenseBlocked()
+            return false
+        }
         // 用户主动发起回放，视为恢复自动化。
         resumeForExplicitStart()
         val macro = getMacro(name) ?: return false

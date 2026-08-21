@@ -5,7 +5,7 @@ import java.util.Properties
 import java.io.InputStreamReader
 
 // 版本名称（APK 输出文件名也使用它）
-val appVersionName = "3.3.0"
+val appVersionName = "3.4.0"
 
 // 后端服务地址：来自 gradle.properties 的 autoslide.serverBaseUrl，
 // 经 buildConfigField 注入 BuildConfig，代码里只认 Constants.SERVER_BASE_URL 这一个来源
@@ -41,7 +41,7 @@ android {
         // 目标设备的SDK版本
         targetSdk = 37
         // 版本号
-        versionCode = 34
+        versionCode = 35
         // 版本名称
         versionName = appVersionName
         // 后端服务地址（统计 / 脚本备份 / 聊天室共用）
