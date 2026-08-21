@@ -20,6 +20,7 @@ const { JsonStore } = require('./store');
 const { DATA_DIR } = require('./config');
 const { esc } = require('./util');
 const { readJson, sendJson, sendHtml, clientIp } = require('./http');
+const { pageShell } = require('./views/pages');
 
 const LICENSE_FILE = path.join(DATA_DIR, 'license.json');
 
@@ -232,6 +233,7 @@ function handleInviteBoard(req, res) {
 
 /* ==================== 页面 ==================== */
 
+/* 分享落地页的样式：好友多半在手机上打开，单独一套窄卡片，不走后台那套外壳 */
 const PAGE_STYLE = [
   'body{margin:0;padding:24px;background:#f5f6f8;color:#1c1c1e;',
   'font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}',
@@ -241,8 +243,6 @@ const PAGE_STYLE = [
   'padding:16px;background:#f0f6ff;border-radius:12px;margin:16px 0}',
   'ol{padding-left:20px;line-height:1.9}a{color:#0a84ff}',
   '.tip{color:#8e8e93;font-size:13px;margin-top:16px}',
-  'table{width:100%;border-collapse:collapse;background:#fff;font-size:14px}',
-  'th,td{padding:8px 10px;border-bottom:1px solid #eee;text-align:left}th{background:#fafafa}',
 ].join('');
 
 function invitePageHtml(code, valid) {
@@ -271,18 +271,31 @@ function inviteBoardHtml(data) {
     .sort((a, b) => b.invitedCount - a.invitedCount || b.expireAt - a.expireAt)
     .slice(0, 500)
     .map((r) =>
-      '<tr><td>' + esc(r.deviceId) + '</td><td>' + esc(r.code) + '</td><td>' + r.invitedCount +
-      '</td><td>' + r.bonusDays + '</td><td>' +
+      '<tr><td class="strong">' + esc(r.deviceId) + '</td><td>' + esc(r.code) + '</td><td>' +
+      r.invitedCount + '</td><td>' + r.bonusDays + '</td><td>' +
       new Date(r.expireAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) + '</td><td>' +
       (r.expired ? '已到期' : r.remainDays + ' 天') + '</td><td>' + esc(r.invitedBy) + '</td></tr>'
     )
     .join('');
-  return '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">' +
-    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-    '<title>邀请与时长</title><style>' + PAGE_STYLE + '</style></head><body>' +
-    '<h1>邀请与时长（共 ' + Object.keys(devices).length + ' 台设备）</h1>' +
-    '<table><tr><th>设备ID</th><th>邀请码</th><th>邀请人数</th><th>奖励天数</th>' +
-    '<th>到期时间</th><th>剩余</th><th>被谁邀请</th></tr>' + rows + '</table></body></html>';
+
+  const body = `
+    <p class="section-label">邀请与时长 · Invites</p>
+    <div class="panel table-wrap">
+      <table>
+        <thead><tr><th>设备 ID</th><th>邀请码</th><th>邀请人数</th><th>奖励天数</th>
+        <th>到期时间</th><th>剩余</th><th>被谁邀请</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="7" class="empty">还没有设备记录</td></tr>'}</tbody>
+      </table>
+    </div>`;
+
+  return pageShell({
+    title: '邀请与时长',
+    eyebrow: 'AutoSlide · Fleet Monitor',
+    heading: '邀请与时长',
+    breadcrumb: '<a href="/">← 返回数据端</a>',
+    headerRight: `<div class="live"><span class="dot"></span>共 ${Object.keys(devices).length} 台设备</div>`,
+    body,
+  });
 }
 
 function register(router) {

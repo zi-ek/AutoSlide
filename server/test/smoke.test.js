@@ -389,7 +389,8 @@ test('GET / 返回统计看板', async () => {
   const r = await req('GET', '/');
   assert.equal(r.status, 200);
   assert.match(r.headers.get('content-type'), /text\/html/);
-  assert.match(r.text, /统计台/);
+  assert.match(r.text, /AutoSlide 数据端/);
+  assert.match(r.text, /品牌数/);
   assert.match(r.text, /Pixel 8/);
 });
 
