@@ -215,6 +215,7 @@
     <string name="nav_chat">交流</string>
     <string name="nav_mine">我的</string>
     <!--「我的」页签-->
+    <string name="mine_tutorial">使用教程</string>
     <string name="mine_import_settings">导入配置</string>
     <string name="mine_script_library">分享库</string>
     <string name="script_lib_title">分享库</string>

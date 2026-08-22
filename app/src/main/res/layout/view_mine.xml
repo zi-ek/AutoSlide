@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 「我的」页签内容：数据统计 + 必要权限（无障碍/悬浮窗/常驻通知）+
-     功能入口（检查更新 / 导入配置 / 脚本库）+ 打赏。
+     功能入口（使用教程 / 导入配置 / 分享库 / 分享得时长）+ 打赏。
      统计和权限都是「看一眼 / 配一次」的东西，放这里让首页只剩滑动设置和开始按钮。
-     版本号挪到「检查更新」这一行的右侧，不再单独占一张卡片。 -->
+     版本号放在打赏二维码下方居中显示，点一下即检查更新。 -->
 <androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
@@ -288,21 +288,16 @@
                 android:paddingVertical="4dp">
 
                 <LinearLayout
-                    android:id="@+id/mineCheckUpdateRow"
+                    android:id="@+id/mineTutorialRow"
                     style="@style/Widget.AutoSlide.MineRow">
 
                     <TextView
                         style="@style/Widget.AutoSlide.MineRow.Title"
-                        android:text="@string/check_update" />
-
-                    <TextView
-                        android:id="@+id/mineVersionText"
-                        style="@style/Widget.AutoSlide.MineRow.Value"
-                        tools:text="v3.4.0" />
+                        android:text="@string/mine_tutorial" />
 
                     <ImageView
                         style="@style/Widget.AutoSlide.MineRow.Arrow"
-                        android:contentDescription="@string/check_update" />
+                        android:contentDescription="@string/mine_tutorial" />
                 </LinearLayout>
 
                 <View style="@style/Widget.AutoSlide.MineRow.Divider" />
@@ -380,5 +375,21 @@
             android:maxWidth="220dp"
             android:maxHeight="220dp"
             android:src="@mipmap/wx" />
+
+        <!--版本号：点一下检查更新（原来在功能列表里的「检查更新」行移到了这里）-->
+        <TextView
+            android:id="@+id/mineVersionText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/margin_medium"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="8dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp"
+            tools:text="v3.4.1" />
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>
