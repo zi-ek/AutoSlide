@@ -384,7 +384,7 @@ class ChatListPanel(
             } else {
                 java.text.SimpleDateFormat("M/d HH:mm", java.util.Locale.CHINA).format(date)
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             ""
         }
     }

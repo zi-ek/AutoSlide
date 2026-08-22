@@ -272,7 +272,7 @@ private data class OcrSnapshot(
     /* 息屏时强制停止滑动（抖音连播检测已改为事件驱动，无需在这里额外处理） */
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action != Intent.ACTION_SCREEN_OFF || !isRunning) {
+            if ((intent?.action != Intent.ACTION_SCREEN_OFF) || !isRunning) {
                 return
             }
             forceStop()
@@ -944,9 +944,9 @@ private const val SPEED_CURVE_FACTOR = 0.7
 
             AutoSlideInputAction.BACK -> {
                 // 执行系统返回，并留一点时间等页面切换动画完成
-                val ok = performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                val ok = performGlobalAction(GLOBAL_ACTION_BACK)
                 if (ok) {
-                    delay(400L)
+                    delay(400.milliseconds)
                 }
                 ok
             }
@@ -980,26 +980,24 @@ private const val SPEED_CURVE_FACTOR = 0.7
         }
         if (input.action == AutoSlideInputAction.TAP || input.action == AutoSlideInputAction.LONG_PRESS) {
             // 1) 节点树控件定位（id 优先，其次文字）
-            val target = findNodeByTarget(input.targetId, input.targetText)
-            if (target != null) {
+            findNodeByTarget(input.targetId, input.targetText)?.let { target ->
                 return dispatchTapOnNode(input, target, width, height)
             }
             // 1.5) 按钮/广告内容加载慢时，节点树延迟重试一次再决定是否退回坐标
             if (input.targetText.isNotEmpty()) {
-                delay(NODE_TREE_RETRY_DELAY_MS)
-                val retry = findNodeByTarget(input.targetId, input.targetText)
-                if (retry != null) {
+                delay(NODE_TREE_RETRY_DELAY_MS.milliseconds)
+                findNodeByTarget(input.targetId, input.targetText)?.let { retry ->
                     return dispatchTapOnNode(input, retry, width, height)
                 }
                 // 2) OCR 画面文字定位（节点树没有的画面文字，如视频上的「继续观看」）
                 var pos = findOcrTextPosition(input.targetText)
                 if (pos == null) {
                     // 截图可能被系统频率限制拒绝（MIUI 等），稍等重试一次
-                    delay(OCR_RETRY_DELAY_MS)
+                    delay(OCR_RETRY_DELAY_MS.milliseconds)
                     pos = findOcrTextPosition(input.targetText)
                 }
-                if (pos != null) {
-                    return dispatchOneInput(input.copy(x = pos.first, y = pos.second), width, height)
+                pos?.let {
+                    return dispatchOneInput(input.copy(x = it.first, y = it.second), width, height)
                 }
             }
         }
@@ -1334,11 +1332,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
         if (!clicked) {
             runCatching { performGlobalAction(GLOBAL_ACTION_BACK) }
             LogX.i(TAG, "未找到忽略/关闭按钮，使用返回键关闭推送通知弹窗")
-            clicked = true
         }
-        if (clicked) {
-            lastPushDialogDismissAt = now
-        }
+        lastPushDialogDismissAt = now
     }
 
     /* 在节点树中查找 content-desc 为「关闭/取消」的可点击按钮并点击 */
@@ -2073,8 +2068,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
                             )
                         }
                     }
-                } catch (e: Exception) {
-                    LogX.w(TAG, "OCR snapshot failed", e)
+                } catch (_: Exception) {
+                    LogX.w(TAG, "OCR snapshot failed")
                     emptyList()
                 }
             }
@@ -2194,7 +2189,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 bitmap?.recycle()
                 return@launch
             }
-            val ocrResult = if (bitmap != null) recognizeSkipHits(bitmap) else ("" to emptyList())
+            val ocrResult = bitmap?.let { recognizeSkipHits(it) } ?: ("" to emptyList())
             bitmap?.recycle()
             if (automationPaused || currentGen != runGeneration || !isRunning) {
                 return@launch
@@ -2508,24 +2503,29 @@ private const val SPEED_CURVE_FACTOR = 0.7
     /* OCR 识别屏幕坐标点所在文字行（录制时采集画面文字名片） */
     private suspend fun recognizeTextAt(bitmap: Bitmap, xPx: Int, yPx: Int): String? =
         withContext(Dispatchers.IO) {
-            try {
+            val text = try {
                 val recognizer = textRecognizer ?: TextRecognition.getClient(
                     ChineseTextRecognizerOptions.Builder().build()
                 ).also { textRecognizer = it }
                 val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap, 0)))
-                for (block in result.textBlocks) {
+                var foundText: String? = null
+                outer@ for (block in result.textBlocks) {
                     for (line in block.lines) {
                         val box = line.boundingBox
                         if (box != null && box.contains(xPx, yPx)) {
-                            val text = line.text.trim()
-                            if (text.isNotEmpty()) return@withContext text
+                            val lineText = line.text.trim()
+                            if (lineText.isNotEmpty()) {
+                                foundText = lineText
+                                break@outer
+                            }
                         }
                     }
                 }
-                null
-            } catch (e: Exception) {
+                foundText
+            } catch (_: Exception) {
                 null
             }
+            text
         }
 
     /* 回放定位：按 id（精确）或文字（包含，不区分大小写）在节点树中查找最合适的可见控件 */
@@ -2654,7 +2654,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
             if (now - lastOcrAt < SKIP_OCR_FALLBACK_INTERVAL_MS) return false
             lastOcrAt = now
             val bitmap = captureScreenBitmap()
-            val ocr = if (bitmap != null) recognizeSkipHits(bitmap) else ("" to emptyList())
+            val ocr = bitmap?.let { recognizeSkipHits(it) } ?: ("" to emptyList())
             bitmap?.recycle()
             return performAutoTap(ocr.second)
         } finally {

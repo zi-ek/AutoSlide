@@ -208,7 +208,7 @@ object ChatImageLoader {
             conn.disconnect()
             if (bmp != null) cache[url] = bmp
             bmp
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }

@@ -16,7 +16,6 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.os.Handler
@@ -50,6 +49,9 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.content.edit
+import androidx.core.graphics.drawable.toDrawable
+import androidx.core.graphics.toColorInt
+import androidx.core.view.isVisible
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
@@ -95,6 +97,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * 悬浮窗服务
@@ -343,7 +346,7 @@ class FloatingWindowService : Service() {
      * 吸附时把这段间距“让出去”，让可见图标真正贴住屏幕边缘
      */
     private fun currentRightInset(): Int {
-        val marginRight = if (expandButton.visibility == View.VISIBLE) {
+        val marginRight = if (expandButton.isVisible) {
             (expandButton.layoutParams as? ViewGroup.MarginLayoutParams)?.rightMargin ?: 0
         } else {
             0
@@ -355,7 +358,7 @@ class FloatingWindowService : Service() {
      * 当前可见内容距窗口左边缘的内部间距（根布局内边距 + 小球的左边距）
      */
     private fun currentLeftInset(): Int {
-        val marginLeft = if (expandButton.visibility == View.VISIBLE) {
+        val marginLeft = if (expandButton.isVisible) {
             (expandButton.layoutParams as? ViewGroup.MarginLayoutParams)?.leftMargin ?: 0
         } else {
             0
@@ -518,9 +521,9 @@ class FloatingWindowService : Service() {
 
     /* 创建带显示上下文且套用应用主题的对话框上下文（服务上下文无法直接获取 Display） */
     private fun createDialogContext(): Context {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             runCatching {
-                val display = (getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
+                val display = (getSystemService(DISPLAY_SERVICE) as? DisplayManager)
                     ?.getDisplay(Display.DEFAULT_DISPLAY)
                     ?: return@runCatching
                 val windowContext = createWindowContext(
@@ -547,7 +550,7 @@ class FloatingWindowService : Service() {
             return
         }
         val listView = ListView(dialogContext).apply {
-            divider = ColorDrawable(ContextCompat.getColor(this@FloatingWindowService, R.color.dialog_divider))
+            divider = ContextCompat.getColor(this@FloatingWindowService, R.color.dialog_divider).toDrawable()
             dividerHeight = 1
             // 行内有导出/清除按钮：必须允许子项获得焦点（itemsCanFocus=true），
             // 否则默认 itemsCanFocus=false 会让 ListView 把整行当作单个可聚焦项，
@@ -598,7 +601,7 @@ class FloatingWindowService : Service() {
                     textSize = 14f
                     isAllCaps = false
                     // 无背景，仅红色文字
-                    setTextColor(Color.parseColor("#E53935"))
+                    setTextColor("#E53935".toColorInt())
                     setBackgroundColor(Color.TRANSPARENT)
                     // minWidth/minHeight 只管 TextView 自己那一层；View 层的
                     // minimumWidth 来自主题 buttonStyle 的 88dp，不一并清掉的话
@@ -760,7 +763,7 @@ class FloatingWindowService : Service() {
     /* 导出 slide_settings.xml（宏 + 全部设置）到系统分享面板，方便拷贝到其它设备 */
     private fun exportSlideSettings() {
         try {
-            val src = File(getFilesDir().parentFile, "shared_prefs/slide_settings.xml")
+            val src = File(filesDir.parentFile, "shared_prefs/slide_settings.xml")
             if (!src.exists()) {
                 Toast.makeText(this, R.string.macro_export_not_found, Toast.LENGTH_SHORT).show()
                 return
@@ -902,13 +905,13 @@ class FloatingWindowService : Service() {
             }
             for (i in 9 downTo 0) {
                 circle.text = i.toString()
-                delay(1000)
+                delay(1000.milliseconds)
             }
             runCatching { windowManager.removeView(circle) }
             playbackCountdownView = null
             // 标签留在屏幕上：回放期间继续显示剩余次数，由 exitPlaybackMode 统一移除
             // 倒计时结束但 App 还在翻页查找时，最多再等 30 秒（多页桌面翻页+OCR 较慢）
-            withTimeoutOrNull(30_000) { autoLaunchJob.join(); autoLaunched }
+            withTimeoutOrNull(30_000.milliseconds) { autoLaunchJob.join(); autoLaunched }
             val started = service.playMacro(
                 name,
                 loopCount,
@@ -1538,6 +1541,7 @@ class FloatingWindowService : Service() {
         private var isServiceRunning = false
         // 当前服务实例（供导入中转页完成后恢复悬浮窗）
         @Volatile
+        @SuppressLint("StaticFieldLeak")
         var instance: FloatingWindowService? = null
             private set
 

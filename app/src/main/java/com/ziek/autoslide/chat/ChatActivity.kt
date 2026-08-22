@@ -107,7 +107,7 @@ class ChatActivity : AppCompatActivity() {
                         adapter.notifyDataSetChanged()
                         binding.messageListView.setSelection(messages.size - 1)
                     }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     // 网络抖动时静默重试
                 }
                 delay(POLL_INTERVAL_MS)
@@ -194,7 +194,7 @@ class ChatActivity : AppCompatActivity() {
             if (rotated !== src) rotated.recycle()
             src.recycle()
             "data:image/jpeg;base64," + android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -204,7 +204,7 @@ class ChatActivity : AppCompatActivity() {
             contentResolver.openInputStream(uri)?.use {
                 ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
             } ?: ExifInterface.ORIENTATION_NORMAL
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             ExifInterface.ORIENTATION_NORMAL
         }
         val matrix = Matrix()
