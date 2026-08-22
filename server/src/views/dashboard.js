@@ -465,17 +465,11 @@ const dashboardScript = `
           row('应用版本', (dev.appVersion || d.appVersion || '') +
             ((dev.appBuildNumber || d.appVersionCode) ? ' (' + (dev.appBuildNumber || d.appVersionCode) + ')' : ''))
         ]),
-        card('系统', [
+        card('硬件 · 系统', [
           row('系统名称', sys.osName || 'Android'),
           row('系统版本', sys.osVersion || d.android),
           row('内核', sys.kernelVersion),
-          row('运行时间', fmtUptime(sys.uptime))
-        ]),
-        card('网络', [
-          row('本机 IPv4', (net.ipv4 || []).join('、')),
-          row('本机 IPv6', (net.ipv6 || []).join('、'))
-        ]),
-        card('硬件', [
+          row('运行时间', fmtUptime(sys.uptime)),
           row('CPU 架构', hw.cpuArch || d.cpu),
           row('总内存', fmtBytes(hw.totalMemory)),
           row('总存储', fmtBytes(hw.totalStorage)),
@@ -491,6 +485,10 @@ const dashboardScript = `
           row('温度', bat.temperature ? bat.temperature + ' ℃' : ''),
           row('电压', bat.voltage ? bat.voltage + ' mV' : ''),
           row('容量', bat.capacity ? bat.capacity + ' mAh' : '')
+        ]),
+        card('本机 IP', [
+          row('本机 IPv4', (net.ipv4 || []).join('、')),
+          row('本机 IPv6', (net.ipv6 || []).join('、'))
         ]),
         card('平台信息', [
           row('Android 版本', (sys.osVersion || d.android || '') + (pf.sdkVersion ? ' (SDK ' + pf.sdkVersion + ')' : '')),
