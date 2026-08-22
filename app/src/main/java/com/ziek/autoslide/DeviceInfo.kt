@@ -25,7 +25,11 @@ import android.os.Environment
 import android.os.StatFs
 import android.os.SystemClock
 import android.provider.Settings
+import org.json.JSONArray
 import org.json.JSONObject
+import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.NetworkInterface
 import java.util.Locale
 
 object DeviceInfo {
@@ -44,6 +48,7 @@ object DeviceInfo {
         put("hardware", hardwareSection(context))
         put("platform", platformSection(context))
         put("battery", batterySection(context))
+        put("network", networkSection())
     }
 
     /* 设备：名称、平台、厂商、型号、语言、应用版本 */
@@ -121,6 +126,33 @@ object DeviceInfo {
         }
         json.put("capacity", batteryCapacity(context))
         return json
+    }
+
+    /* 网络：本机局域网 IP 地址（IPv4 / IPv6）。
+     * 移植自 Easycontrol 的 PublicTools.getLocalIp：
+     * 枚举所有网卡取非环回、非链路本地地址。仅在统计上报时随 deviceInfo 交给后台，
+     * 供排查设备所在网段，App 端不展示。 */
+    private fun networkSection(): JSONObject {
+        val ipv4 = mutableListOf<String>()
+        val ipv6 = mutableListOf<String>()
+        runCatching {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val nif = interfaces.nextElement()
+                if (!nif.isUp) continue
+                val addrs = nif.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val addr = addrs.nextElement()
+                    if (addr.isLoopbackAddress) continue
+                    when (addr) {
+                        is Inet4Address -> ipv4.add(addr.hostAddress)
+                        is Inet6Address ->
+                            if (!addr.isLinkLocalAddress) ipv6.add("[${addr.hostAddress}]")
+                    }
+                }
+            }
+        }
+        return JSONObject().put("ipv4", JSONArray(ipv4)).put("ipv6", JSONArray(ipv6))
     }
 
     /**

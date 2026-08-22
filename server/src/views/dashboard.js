@@ -453,7 +453,7 @@ const dashboardScript = `
     function renderInfo(d, tr) {
       var di = d.deviceInfo || {};
       var dev = di.device || {}, sys = di.system || {}, hw = di.hardware || {},
-          pf = di.platform || {}, bat = di.battery || {};
+          pf = di.platform || {}, bat = di.battery || {}, net = di.network || {};
       var html = [
         card('设备', [
           row('设备名称', dev.name || d.model),
@@ -470,6 +470,10 @@ const dashboardScript = `
           row('系统版本', sys.osVersion || d.android),
           row('内核', sys.kernelVersion),
           row('运行时间', fmtUptime(sys.uptime))
+        ]),
+        card('网络', [
+          row('本机 IPv4', (net.ipv4 || []).join('、')),
+          row('本机 IPv6', (net.ipv6 || []).join('、'))
         ]),
         card('硬件', [
           row('CPU 架构', hw.cpuArch || d.cpu),
