@@ -14,6 +14,7 @@
 // 否则两个老用户互填对方的码就能凭空刷出时长。
 
 const crypto = require('crypto');
+const fs = require('fs');
 const path = require('path');
 
 const { JsonStore } = require('./store');
@@ -48,8 +49,7 @@ const BIND_LOG_LIMIT = 2000;
 const CODE_ALPHABET = 'ACDEFGHJKLMNPQRTUVWXY34679';
 const CODE_LENGTH = 6;
 
-/* 分享落地页里给新用户的下载入口 */
-const DOWNLOAD_PAGE = 'https://github.com/zi-ek/AutoSlide/releases/latest';
+/* 分享落地页里给新用户的下载入口：优先用 App 自建服务器的当前版本下载地址 */
 const LANZOU_PAGE = 'https://q-sj.lanzoum.com/b0pnt04li';
 const LANZOU_PASSWORD = 'lanr';
 
@@ -153,6 +153,24 @@ function baseUrlOf(req) {
   return proto + '://' + host;
 }
 
+/* 从发布信息 update.json 读出当前版本的下载地址，按请求域名拼成绝对地址。
+ * 与客户端 /api/update 同源，始终指向自建服务器最新发布的 APK；
+ * 没有发布记录时退回更新信息接口。 */
+function serverDownloadUrl(req) {
+  const updateFile = path.join(DATA_DIR, 'releases', 'update.json');
+  let info;
+  try {
+    info = JSON.parse(fs.readFileSync(updateFile, 'utf8'));
+  } catch (_) {
+    return baseUrlOf(req) + '/api/update';
+  }
+  const downloadUrl = info && info.downloadUrl;
+  if (!downloadUrl) return baseUrlOf(req) + '/api/update';
+  if (/^https?:\/\//i.test(downloadUrl)) return downloadUrl;
+  const base = baseUrlOf(req);
+  return base + (downloadUrl.startsWith('/') ? '' : '/') + downloadUrl;
+}
+
 /* ==================== 接口 ==================== */
 
 /* GET /api/license?deviceId=..  查询授权状态（首次访问即建档，试用从这一刻起算） */
@@ -223,7 +241,7 @@ function handleInvitePage(req, res, url) {
   const code = String(url.searchParams.get('code') || '').trim().toUpperCase().slice(0, 16);
   const data = licenseStore.read();
   const valid = Boolean(code && data.codes && data.codes[code]);
-  sendHtml(res, invitePageHtml(code, valid));
+  sendHtml(res, invitePageHtml(code, valid, serverDownloadUrl(req)));
 }
 
 /* GET /invites  邀请榜：自己排查刷量用，与统计看板一样不做鉴权 */
@@ -245,9 +263,9 @@ const PAGE_STYLE = [
   '.tip{color:#8e8e93;font-size:13px;margin-top:16px}',
 ].join('');
 
-function invitePageHtml(code, valid) {
+function invitePageHtml(code, valid, serverUrl) {
   const download =
-    '<a href="' + DOWNLOAD_PAGE + '">GitHub 下载</a> ｜ ' +
+    '<a href="' + serverUrl + '">服务器下载</a> ｜ ' +
     '<a href="' + LANZOU_PAGE + '">网盘下载</a>（密码 ' + LANZOU_PASSWORD + '）';
   const body = valid
     ? '<p>你的好友邀请你使用 <b>自动滑屏器</b>，装好后填下面这个邀请码，你们双方都能得到使用时长：</p>' +
