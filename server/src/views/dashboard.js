@@ -430,6 +430,10 @@ const dashboardScript = `
       if (!body) return '';
       return '<div class="info-card' + (wide ? ' wide' : '') + '"><h4>' + esc(title) + '</h4>' + body + '</div>';
     }
+    // 每个 IP 单独一行
+    function ipRows(label, list) {
+      return (list || []).map(function (v) { return row(label, v); });
+    }
     function fmtBytes(n) {
       n = Number(n) || 0;
       if (!n) return '';
@@ -486,10 +490,7 @@ const dashboardScript = `
           row('电压', bat.voltage ? bat.voltage + ' mV' : ''),
           row('容量', bat.capacity ? bat.capacity + ' mAh' : '')
         ]),
-        card('本机 IP', [
-          row('本机 IPv4', (net.ipv4 || []).join('、')),
-          row('本机 IPv6', (net.ipv6 || []).join('、'))
-        ]),
+        card('本机 IP', ipRows('IPv4', net.ipv4).concat(ipRows('IPv6', net.ipv6))),
         card('平台信息', [
           row('Android 版本', (sys.osVersion || d.android || '') + (pf.sdkVersion ? ' (SDK ' + pf.sdkVersion + ')' : '')),
           row('安全补丁', pf.securityPatch),
