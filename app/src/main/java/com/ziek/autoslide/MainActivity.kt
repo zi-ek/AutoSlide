@@ -1082,8 +1082,12 @@ class MainActivity : AppCompatActivity() {
     private fun setupMinePage() {
         val mine = binding.minePanel
         mine.mineVersionText.text = getString(R.string.mine_version_format, getAppVersionName())
-        mine.mineCheckUpdateRow.setOnClickListener {
+        // 版本号挪到了二维码下方，点它检查更新
+        mine.mineVersionText.setOnClickListener {
             UpdateChecker.checkUpdate(this, showToastOnLatest = true)
+        }
+        mine.mineTutorialRow.setOnClickListener {
+            startActivity(Intent(this, TutorialActivity::class.java))
         }
         mine.mineImportRow.setOnClickListener {
             startActivity(Intent(this, ImportSettingsActivity::class.java))
