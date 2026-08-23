@@ -50,6 +50,7 @@ const val KEY_LIC_INVITE_URL = "licInviteUrl"         // 分享链接（落地�
 const val KEY_LIC_INVITED_COUNT = "licInvitedCount"   // 已成功邀请的人数
 const val KEY_LIC_BONUS_DAYS = "licBonusDays"         // 已获得的奖励天数
 const val KEY_LIC_CAN_BIND = "licCanBind"             // 本机是否还能填写别人的邀请码
+const val KEY_LIC_PERMANENT = "licPermanent"          // 是否已获得永久授权（邀请满 10 人）
 
 // ==================== 统计数据 ====================
 const val KEY_STATS_TOTAL_SWIPES = "stats_total_swipes"

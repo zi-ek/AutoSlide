@@ -575,11 +575,11 @@ test('POST /api/license/bind 新设备填码：双方各自到账', async () => 
   assert.equal(r.json.ok, true);
   // 被邀请人拿到 7 天
   assert.equal(r.json.bonusDays, 7);
-  // 邀请人拿到 3 天
+  // 邀请人只有 1 人，不足 3 人档，暂时没有奖励
   const after = await req('GET', `/api/license?deviceId=${LIC_A}`);
   assert.equal(after.json.invitedCount, 1);
-  assert.equal(after.json.bonusDays, 3);
-  assert.equal(after.json.expireAt - a.json.expireAt, 3 * 24 * 60 * 60 * 1000);
+  assert.equal(after.json.bonusDays, 0);
+  assert.equal(after.json.expireAt, a.json.expireAt);
 });
 
 test('POST /api/license/bind 同一设备不能填第二次', async () => {
@@ -643,7 +643,41 @@ test('并发填码不丢邀请计数', async () => {
   assert.deepEqual(results.map((r) => r.status), [200, 200, 200]);
   const after = await req('GET', '/api/license?deviceId=lic-host');
   assert.equal(after.json.invitedCount, 3);
-  assert.equal(after.json.bonusDays, 9);
+  // 满 3 人档 = 7 天
+  assert.equal(after.json.bonusDays, 7);
+  assert.equal(after.json.permanent, false);
+});
+
+test('奖励档位：3 人 7 天 / 5 人 30 天 / 10 人永久', () => {
+  const { bonusDaysFor, isPermanent, PERMANENT_INVITES } = require('../src/license');
+  assert.equal(bonusDaysFor(0), 0);
+  assert.equal(bonusDaysFor(2), 0);
+  assert.equal(bonusDaysFor(3), 7);
+  assert.equal(bonusDaysFor(4), 7);
+  assert.equal(bonusDaysFor(5), 30);
+  assert.equal(bonusDaysFor(9), 30);
+  assert.equal(PERMANENT_INVITES, 10);
+  assert.equal(isPermanent(9), false);
+  assert.equal(isPermanent(10), true);
+  assert.equal(isPermanent(50), true);
+});
+
+test('满 10 人得永久：expireAt 顶到永久时间戳且不会过期', async () => {
+  const { PERMANENT_EXPIRE_AT } = require('../src/license');
+  const host = await req('GET', '/api/license?deviceId=lic-perm-host');
+  const code = host.json.code;
+  for (let i = 1; i <= 10; i++) {
+    const r = await req('POST', '/api/license/bind', {
+      body: { deviceId: 'lic-perm-fan-' + i, code },
+      headers: { 'x-forwarded-for': '10.9.9.' + i },
+    });
+    assert.equal(r.status, 200);
+  }
+  const after = await req('GET', '/api/license?deviceId=lic-perm-host');
+  assert.equal(after.json.invitedCount, 10);
+  assert.equal(after.json.permanent, true);
+  assert.equal(after.json.expireAt, PERMANENT_EXPIRE_AT);
+  assert.equal(after.json.expired, false);
 });
 
 test('同一 IP 绑定次数超限被拒绝', async () => {

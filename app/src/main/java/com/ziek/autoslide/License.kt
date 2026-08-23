@@ -59,9 +59,10 @@ object License {
         val bonusDays: Int = 0,
         val expireAt: Long = 0L,
         val canBind: Boolean = false,
+        val permanent: Boolean = false,
         val known: Boolean = false
     ) {
-        /** 剩余天数（向上取整），未知或已到期时为 0 */
+        /** 剩余天数（向上取整），未知或已到期时为 0。永久授权不该用这个值展示 */
         fun remainDays(now: Long): Int =
             if (!known || expireAt <= now) 0 else ((expireAt - now + DAY_MS - 1) / DAY_MS).toInt()
     }
@@ -162,6 +163,7 @@ object License {
             bonusDays = prefs.getInt(KEY_LIC_BONUS_DAYS, 0),
             expireAt = expireAt,
             canBind = prefs.getBoolean(KEY_LIC_CAN_BIND, false),
+            permanent = prefs.getBoolean(KEY_LIC_PERMANENT, false),
             known = expireAt > 0L
         )
     }
@@ -176,6 +178,7 @@ object License {
             putInt(KEY_LIC_INVITED_COUNT, status.invitedCount)
             putInt(KEY_LIC_BONUS_DAYS, status.bonusDays)
             putBoolean(KEY_LIC_CAN_BIND, status.canBind)
+            putBoolean(KEY_LIC_PERMANENT, status.permanent)
             // 服务端时间只许往前走，防止拿一个旧响应把基准冲回去
             if (serverTime > lastServerTime) putLong(KEY_LIC_SERVER_TIME, serverTime)
         }
@@ -310,6 +313,7 @@ object License {
             bonusDays = json.optInt("bonusDays"),
             expireAt = json.optLong("expireAt"),
             canBind = json.optBoolean("canBind"),
+            permanent = json.optBoolean("permanent"),
             known = json.optLong("expireAt") > 0L
         )
         return status to json.optLong("serverTime")

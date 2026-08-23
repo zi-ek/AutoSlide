@@ -5,10 +5,11 @@
 //   试用起点 = max(本模块上线时间, 该设备第一次访问本接口的时间)
 //             —— 取 max 是为了让功能上线前就装了 App 的老用户也有完整 30 天，不会升级即锁死。
 //
-// 奖励曲线（1 人 3 天、10 人 30 天、20 人 90 天，中间线性插值，不留零奖励死区）：
-//   n < 10   → 3n
-//   10≤n<20  → 30 + 6(n-10)
-//   n ≥ 20   → 90 + 3(n-20)
+// 奖励档位（阶梯，非曲线）：
+//   n < 3    → 0 天
+//   3 ≤ n<5  → 7 天
+//   5 ≤ n<10 → 30 天
+//   n ≥ 10   → 永久（expireAt 直接给 PERMANENT_EXPIRE_AT）
 //
 // 邀请码只能由「新设备」填写，且一台设备一辈子只能填一次：这是防刷的主闸门，
 // 否则两个老用户互填对方的码就能凭空刷出时长。
@@ -32,6 +33,13 @@ const TRIAL_DAYS = 30;
 
 /* 填写别人的邀请码后，被邀请人自己也得到的天数（没有这个奖励就没人愿意填码） */
 const INVITEE_BONUS_DAYS = 7;
+
+/* 邀请满这么多人即为永久授权 */
+const PERMANENT_INVITES = 10;
+
+/* 永久授权的到期时间戳：2100-01-01，足够远且仍是合法的毫秒时间戳，
+   客户端那套「缓存 expireAt 再比大小」的逻辑不用改就能正确放行。 */
+const PERMANENT_EXPIRE_AT = Date.UTC(2100, 0, 1);
 
 /* 只有「第一次访问本接口」在这个窗口内的设备才允许填邀请码 */
 const BIND_WINDOW_DAYS = 7;
@@ -63,15 +71,22 @@ const licenseStore = new JsonStore(LICENSE_FILE, () => ({
 /* ==================== 规则计算 ==================== */
 
 /**
- * 邀请 n 个人对应的奖励天数。
- * 三个关键点与对外承诺一致：1 人 3 天、10 人 30 天（一月）、20 人 90 天（三月）。
+ * 邀请 n 个人对应的奖励天数（不含永久档，永久单独由 [isPermanent] 判定）。
+ *
+ * 阶梯档位，与对外承诺一致：满 3 人 7 天、满 5 人 30 天、满 10 人永久。
+ * 注意这是阶梯不是曲线：不足 3 人没有奖励，4 人与 3 人同档，6~9 人与 5 人同档。
  */
 function bonusDaysFor(n) {
   const count = Number(n) || 0;
-  if (count <= 0) return 0;
-  if (count < 10) return 3 * count;
-  if (count < 20) return 30 + 6 * (count - 10);
-  return 90 + 3 * (count - 20);
+  if (count >= PERMANENT_INVITES) return 0; // 永久档不再按天算，交给 isPermanent
+  if (count >= 5) return 30;
+  if (count >= 3) return 7;
+  return 0;
+}
+
+/* 邀请人数达到该值即为永久授权 */
+function isPermanent(n) {
+  return (Number(n) || 0) >= PERMANENT_INVITES;
 }
 
 /* 生成一个未被占用的邀请码 */
@@ -123,8 +138,11 @@ function ensureDevice(data, deviceId) {
 function toLicenseView(data, deviceId, device, baseUrl) {
   const trialStartAt = Math.max(data.launchedAt || 0, device.firstSeenAt || 0);
   const invitedCount = (device.invitees || []).length;
+  const permanent = isPermanent(invitedCount);
   const bonusDays = bonusDaysFor(invitedCount) + (device.invitedBy ? INVITEE_BONUS_DAYS : 0);
-  const expireAt = trialStartAt + (TRIAL_DAYS + bonusDays) * DAY_MS;
+  const expireAt = permanent
+    ? PERMANENT_EXPIRE_AT
+    : trialStartAt + (TRIAL_DAYS + bonusDays) * DAY_MS;
   const now = Date.now();
   const canBind = !device.invitedBy && now - (device.firstSeenAt || 0) <= BIND_WINDOW_DAYS * DAY_MS;
   return {
@@ -136,9 +154,11 @@ function toLicenseView(data, deviceId, device, baseUrl) {
     invitedCount,
     bonusDays,
     inviteeBonusDays: INVITEE_BONUS_DAYS,
+    permanent,
+    permanentInvites: PERMANENT_INVITES,
     expireAt,
-    expired: now >= expireAt,
-    remainDays: Math.max(0, Math.ceil((expireAt - now) / DAY_MS)),
+    expired: !permanent && now >= expireAt,
+    remainDays: permanent ? 0 : Math.max(0, Math.ceil((expireAt - now) / DAY_MS)),
     canBind,
     invitedBy: device.invitedBy || '',
     inviteUrl: baseUrl ? baseUrl + '/invite?code=' + device.code : '',
@@ -323,4 +343,7 @@ function register(router) {
   router.on('GET', '/invites', handleInviteBoard);
 }
 
-module.exports = { register, bonusDaysFor, TRIAL_DAYS, INVITEE_BONUS_DAYS, BIND_WINDOW_DAYS };
+module.exports = {
+  register, bonusDaysFor, isPermanent,
+  TRIAL_DAYS, INVITEE_BONUS_DAYS, BIND_WINDOW_DAYS, PERMANENT_INVITES, PERMANENT_EXPIRE_AT,
+};

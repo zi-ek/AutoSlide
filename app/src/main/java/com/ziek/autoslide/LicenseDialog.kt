@@ -235,6 +235,8 @@ object LicenseDialog {
         val status = License.statusFlow.value
         val header = if (expired) {
             activity.getString(R.string.license_expired_message)
+        } else if (status.permanent) {
+            activity.getString(R.string.license_permanent_message, status.invitedCount)
         } else if (status.known) {
             val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(status.expireAt))
             activity.getString(R.string.license_remain_message, License.remainDays(activity), date)
@@ -244,7 +246,11 @@ object LicenseDialog {
         val code = status.code.ifEmpty { "——" }
         return header + "\n\n" +
             activity.getString(R.string.license_code_line, code) + "\n" +
-            activity.getString(R.string.license_invited_line, status.invitedCount, status.bonusDays) + "\n\n" +
+            (if (status.permanent) {
+                activity.getString(R.string.license_invited_permanent, status.invitedCount)
+            } else {
+                activity.getString(R.string.license_invited_line, status.invitedCount, status.bonusDays)
+            }) + "\n\n" +
             activity.getString(R.string.license_rule)
     }
 

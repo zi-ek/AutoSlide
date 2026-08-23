@@ -1102,6 +1102,7 @@ class MainActivity : AppCompatActivity() {
             status.known -> getString(R.string.license_entry_trial, License.remainDays(this))
             else -> getString(R.string.license_entry_unknown)
         }
+            status.permanent -> getString(R.string.license_entry_permanent)
     }
 
     /* 绑定⌈我的⌋页签：版本号（显示在检查更新一行右侧）+ 检查更新 / 导入配置入口 */
