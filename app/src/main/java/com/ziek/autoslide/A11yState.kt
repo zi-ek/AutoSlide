@@ -160,14 +160,10 @@ object A11yState {
     /**
      * 自愈无障碍（GKD: fixRestartAutomatorService）。
      * 只有用户意图为「要开」时才动手。
-     *
-     * @param force 服务实例还活着时也强制重启。用于「进程崩溃后系统把服务标记为 crashed，
-     *   实例重启了但连接是坏的」这种情况——此时 [a11yRunningFlow] 为 true，
-     *   常规自愈会在第一道检查就返回，永远修不好。
      */
-    fun fixRestartA11yService(force: Boolean = false) = modifyA11yRun {
+    fun fixRestartA11yService() = modifyA11yRun {
         if (isServiceDesired()) {
-            fixA11yService(force)
+            fixA11yService()
         }
     }
 
@@ -189,10 +185,9 @@ object A11yState {
      * 组件已在启用列表里说明无障碍出故障了，必须先摘除再加回才能让系统重新绑定；
      * 组件不在列表里（被 ROM 移出）则直接加回即可。
      */
-    private suspend fun fixA11yService(force: Boolean = false) {
+    private suspend fun fixA11yService() {
         val app = appContext ?: return
-        // force 时跳过这道检查：服务实例活着不代表连接可用（crashed 状态）
-        if (!force && a11yRunningFlow.value) return
+        if (a11yRunningFlow.value) return
         if (!app.hasWriteSecureSettingsPermission()) {
             LogX.w(TAG, "no WRITE_SECURE_SETTINGS, cannot auto fix a11y service")
             return

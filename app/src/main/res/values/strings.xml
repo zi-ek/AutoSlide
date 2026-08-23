@@ -127,9 +127,6 @@
     <string name="status_service_title">常驻通知</string>
     <string name="status_service_switch">常驻通知开关</string>
     <string name="status_service_need_notification">需要通知权限才能显示常驻通知</string>
-    <!--开关已开、但前台服务没能真正跑起来时的标签（权限被撤销、被系统后台限制拒绝等）-->
-    <string name="status_service_title_pending">常驻通知·未生效</string>
-    <string name="status_service_start_failed">常驻通知启动失败，已关闭开关</string>
     <!--磁贴复活引导：被 force-stop 后系统不会自动拉起，磁贴绑定是唯一的复活入口-->
     <string name="add_tile">添加快捷磁贴</string>
     <string name="add_tile_unsupported">请在通知栏下拉两次，点右上角“编辑”图标（铅笔），把“自动滑动”磁贴拖入快捷开关区域。添加后，被系统清理时下拉通知栏即可快速复活。</string>

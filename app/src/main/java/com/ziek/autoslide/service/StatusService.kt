@@ -237,17 +237,13 @@ class StatusService : Service() {
          * @return 是否成功发起启动
          */
         @JvmStatic
-        fun start(context: Context): Boolean {
-            if (!hasNotificationPermission(context) || !hasSpecialUsePermission(context)) {
-                LogX.w(TAG, "start skipped: permission missing")
-                return false
-            }
-            return runCatching {
+        fun start(context: Context) {
+            if (!hasNotificationPermission(context) || !hasSpecialUsePermission(context)) return
+            runCatching {
                 ContextCompat.startForegroundService(
                     context, Intent(context, StatusService::class.java)
                 )
-                true
-            }.onFailure { LogX.w(TAG, "start status service failed", it) }.getOrDefault(false)
+            }.onFailure { LogX.w(TAG, "start status service failed", it) }
         }
 
         /**

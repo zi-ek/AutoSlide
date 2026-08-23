@@ -246,7 +246,6 @@
 
                         <!--标签兼作状态提示：开关已开但服务没真正跑起来时显示「常驻通知·未生效」-->
                         <TextView
-                            android:id="@+id/statusServiceTitle"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/status_service_title"

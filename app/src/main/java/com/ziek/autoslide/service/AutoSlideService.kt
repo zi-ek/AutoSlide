@@ -165,10 +165,6 @@ open class AutoSlideService : AccessibilityService() {
     /* 定时滑动循环 */
     private val slideRunnable = Runnable { runSlide() }
     private var lastSkipTapAt = 0L // 上次点击跳过按钮的时间（冷却用）
-    /* 连续取不到活动窗口的次数：用于识别「服务活着但无障碍连接已损坏」 */
-    private var consecutiveNullWindowCount = 0
-    /* 上次强制重启无障碍服务的时间（冷却用，避免反复重启） */
-    private var lastA11yRepairAt = 0L
     private var lastOcrAt = 0L // 上次 OCR 兜底识别的时间（节流用）
     private var lastOcrSnapshot: OcrSnapshot? = null // 最近一次整屏 OCR 快照（等待/点文字共用）
     /* 自动点击事件驱动的去抖：连续界面事件合并成一次检查，界面静止时完全不唤醒 */
@@ -315,13 +311,6 @@ private const val AUTO_TAP_DEBOUNCE_MS = 150L
 private const val SKIP_OCR_FALLBACK_INTERVAL_MS = 2000L
 /* 节点树重试延迟：广告按钮刚出现时节点树往往还没填充文字，等 0.5 秒再查一次 */
 private const val NODE_TREE_RETRY_DELAY_MS = 500L
-/* 连续多少次取不到活动窗口就打一条警告（提示无障碍连接可能坏了） */
-private const val NULL_WINDOW_WARN_THRESHOLD = 3
-/* 连续多少次取不到活动窗口就判定连接损坏并强制重启无障碍服务 */
-private const val NULL_WINDOW_BROKEN_THRESHOLD = 10
-/* 两次强制重启之间的最小间隔，避免重启失败时反复折腾 */
-private const val A11Y_REPAIR_COOLDOWN_MS = 60_000L
-
 /* 节点树扫描上限：防止超大节点树导致卡顿（扫到上限还没命中就交给 OCR 兜底） */
 private const val SKIP_NODE_SCAN_LIMIT = 2000
 /* 跳过文字最大长度：防止把正文长句当成按钮（GKD 同款） */
@@ -2805,35 +2794,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
     /* 当前前台窗口是否属于 AutoSlide 自己（主界面/聊天室/录制回放悬浮窗等），是则跳过广告检测 */
     private fun isAutoSlideWindow(): Boolean {
         val pkg = rootInActiveWindow?.packageName?.toString()
-        if (pkg == null) {
-            // 拿不到活动窗口，仍然保守跳过（避免误点），但这不是正常状态：
-            // 持续为 null 基本等于无障碍连接已损坏，必须报出来并尝试自愈，
-            // 否则表现成「日志一切正常、就是什么都不做」，极难排查。
-            noteActiveWindowUnavailable()
-            return true
-        }
-        consecutiveNullWindowCount = 0
-        return pkg == packageName
-    }
-
-    /**
-     * 记录一次「取不到活动窗口」，连续多次即判定无障碍连接损坏并触发强制重启。
-     *
-     * 触发场景：进程崩溃后系统把无障碍服务记入 crashed 列表，服务实例会重启，
-     * 但 rootInActiveWindow 恒为 null、takeScreenshot 恒失败。此时 a11yRunningFlow
-     * 为 true，常规自愈不会动手，只能由这里强制重启。
-     */
-    private fun noteActiveWindowUnavailable() {
-        consecutiveNullWindowCount++
-        if (consecutiveNullWindowCount == NULL_WINDOW_WARN_THRESHOLD) {
-            LogX.w(TAG, "rootInActiveWindow 连续 $NULL_WINDOW_WARN_THRESHOLD 次为 null，无障碍连接可能已损坏")
-        }
-        if (consecutiveNullWindowCount < NULL_WINDOW_BROKEN_THRESHOLD) return
-        if (SystemClock.elapsedRealtime() - lastA11yRepairAt < A11Y_REPAIR_COOLDOWN_MS) return
-        lastA11yRepairAt = SystemClock.elapsedRealtime()
-        consecutiveNullWindowCount = 0
-        LogX.w(TAG, "判定无障碍连接已损坏，强制重启无障碍服务")
-        A11yState.fixRestartA11yService(force = true)
+        // 无法确定当前窗口时也跳过，避免误点
+        return pkg == null || pkg == packageName
     }
 
     /**
