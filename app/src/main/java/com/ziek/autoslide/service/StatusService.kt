@@ -229,16 +229,25 @@ class StatusService : Service() {
         /**
          * 启动常驻服务
          *
+         * 返回值表示「有没有成功把启动请求发出去」，不代表通知已经显示——
+         * 服务能否真正进入前台要看 [isForeground]。调用方拿它回滚用户意图，
+         * 避免出现「存储里开着、通知却永远不出现」的状态。
+         *
          * @param context 上下文
+         * @return 是否成功发起启动
          */
         @JvmStatic
-        fun start(context: Context) {
-            if (!hasNotificationPermission(context) || !hasSpecialUsePermission(context)) return
-            runCatching {
+        fun start(context: Context): Boolean {
+            if (!hasNotificationPermission(context) || !hasSpecialUsePermission(context)) {
+                LogX.w(TAG, "start skipped: permission missing")
+                return false
+            }
+            return runCatching {
                 ContextCompat.startForegroundService(
                     context, Intent(context, StatusService::class.java)
                 )
-            }.onFailure { LogX.w(TAG, "start status service failed", it) }
+                true
+            }.onFailure { LogX.w(TAG, "start status service failed", it) }.getOrDefault(false)
         }
 
         /**

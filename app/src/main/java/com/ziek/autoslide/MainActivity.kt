@@ -162,6 +162,8 @@ class MainActivity : AppCompatActivity() {
         } else {
             StatusService.stop(this)
         }
+        // setEnabled 不是 Flow，改完必须自己刷一次，否则界面停在旧状态
+        updateStatusServiceUi()
     }
 
 
@@ -201,12 +203,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 更新常驻通知开关状态
+     * 刷新常驻通知开关与其下方标签。
      *
-     * @param checked 开关状态
+     * 开关的 checked **只表达「用户是否想开」**（即存储值），这样无论服务当前
+     * 有没有真正跑起来，用户都能把它关掉——早先把 checked 定义成
+     * 「服务在前台 && 用户想开」，服务被系统停掉后开关会显示成关，
+     * 用户再点只会发出 isChecked=true，永远进不了关闭分支。
+     *
+     * 服务是否真的在前台，改用下方标签区分（「常驻通知」/「常驻通知·未生效」），
+     * 两种含义不再挤在同一个 checked 里。
      */
-    private fun updateStatusServiceSwitchState(checked: Boolean) {
-        updateSwitchState(binding.minePanel.statusServiceSwitch, checked, statusServiceSwitchListener)
+    private fun updateStatusServiceUi() {
+        val enabled = StatusService.isEnabled(this)
+        updateSwitchState(binding.minePanel.statusServiceSwitch, enabled, statusServiceSwitchListener)
+        binding.minePanel.statusServiceTitle.setText(
+            if (enabled && !StatusService.isForeground.value) {
+                R.string.status_service_title_pending
+            } else {
+                R.string.status_service_title
+            }
+        )
     }
 
     /**
@@ -230,11 +246,9 @@ class MainActivity : AppCompatActivity() {
         binding.minePanel.accessibilityServicePermissionSwitch.setOnCheckedChangeListener(accessibilitySwitchListener)
         binding.minePanel.overlayPermissionSwitch.setOnCheckedChangeListener(overlaySwitchListener)
         binding.minePanel.statusServiceSwitch.setOnCheckedChangeListener(statusServiceSwitchListener)
-        // 常驻通知开关跟随服务实际运行状态（GKD: checked = manageRunning && store.enableStatusService）
+        // 服务前台状态变化时刷新标签（开关本身跟随存储值，不受这里影响）
         lifecycleScope.launch {
-            StatusService.isForeground.collect { foreground ->
-                updateStatusServiceSwitchState(foreground && StatusService.isEnabled(this@MainActivity))
-            }
+            StatusService.isForeground.collect { updateStatusServiceUi() }
         }
         binding.douyinAutoPlaySwitch.setOnCheckedChangeListener { _, isChecked ->
             preferences.edit { putBoolean(KEY_DOUYIN_AUTOPLAY, isChecked) }
@@ -1040,7 +1054,19 @@ class MainActivity : AppCompatActivity() {
             )
             return
         }
-        StatusService.start(this)
+        startStatusServiceOrRollback()
+    }
+
+    /**
+     * 启动常驻服务；连启动请求都发不出去时把用户意图一起回滚。
+     *
+     * 不回滚的话存储会停在「开」，而通知永远不出现，开关和实际状态从此对不上。
+     */
+    private fun startStatusServiceOrRollback() {
+        if (StatusService.start(this)) return
+        StatusService.setEnabled(this, false)
+        updateStatusServiceUi()
+        Toast.makeText(this, R.string.status_service_start_failed, Toast.LENGTH_SHORT).show()
     }
 
     override fun onRequestPermissionsResult(
@@ -1059,11 +1085,11 @@ class MainActivity : AppCompatActivity() {
         }
         if (requestCode != REQUEST_NOTIFICATION_PERMISSION) return
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            StatusService.start(this)
+            startStatusServiceOrRollback()
         } else {
             // 没给通知权限就起不了前台服务，把开关退回关闭状态，避免显示成开着但没通知
             StatusService.setEnabled(this, false)
-            updateStatusServiceSwitchState(false)
+            updateStatusServiceUi()
             Toast.makeText(this, R.string.status_service_need_notification, Toast.LENGTH_SHORT).show()
         }
     }
