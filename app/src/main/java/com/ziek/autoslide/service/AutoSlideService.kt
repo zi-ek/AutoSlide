@@ -165,6 +165,10 @@ open class AutoSlideService : AccessibilityService() {
     /* 定时滑动循环 */
     private val slideRunnable = Runnable { runSlide() }
     private var lastSkipTapAt = 0L // 上次点击跳过按钮的时间（冷却用）
+    /* 当前前台 Activity 类名（仅采信经 PackageManager 确认过的） */
+    private var currentActivityName: String? = null
+    /* 「包名/类名 -> 是否 Activity」的查询缓存，避免每个窗口事件都问一次 PackageManager */
+    private val activityClassCache = mutableMapOf<String, Boolean>()
     private var lastOcrAt = 0L // 上次 OCR 兜底识别的时间（节流用）
     private var lastOcrSnapshot: OcrSnapshot? = null // 最近一次整屏 OCR 快照（等待/点文字共用）
     /* 自动点击事件驱动的去抖：连续界面事件合并成一次检查，界面静止时完全不唤醒 */
@@ -344,6 +348,14 @@ private const val SPEED_CURVE_FACTOR = 0.7
         private val PUSH_NOTIFICATION_DIALOG_TEXTS = listOf("打开推送通知", "开启推送提醒")
         private val PUSH_IGNORE_TEXTS = listOf("忽略", "取消")
         private const val PUSH_DIALOG_DISMISS_COOLDOWN_MS = 5_000L
+        /* 各应用的主界面 Activity：只有停在这里才执行自动连播。
+           抖音的推荐流一直停在 SplashActivity（它不只是启动闪屏），快手是 HomeActivity；
+           短剧播放页、直播间、评论页等子页面的长按菜单里没有连播开关，在那里长按只会误触。 */
+        private val AUTOPLAY_MAIN_ACTIVITIES = mapOf(
+            DOUYIN_PACKAGE to "com.ss.android.ugc.aweme.splash.SplashActivity",
+            KUAISHOU_PACKAGE to "com.yxcorp.gifshow.HomeActivity",
+            KUAISHOU_LITE_PACKAGE to "com.yxcorp.gifshow.HomeActivity",
+        )
         /* 快手自定义开关的状态：1=开 0=关 -1=未知（无法判断时禁止点击） */
         private const val KUAISHOU_STATE_ON = 1
         private const val KUAISHOU_STATE_OFF = 0
@@ -779,6 +791,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (automationPaused) return
         val packageName = event?.packageName?.toString() ?: return
+        // 先记住当前 Activity，再判断连播——顺序不能反，否则用的是上一个页面的名字
+        trackCurrentActivity(event, packageName)
         if (packageName != DOUYIN_PACKAGE && packageName != KUAISHOU_PACKAGE &&
             packageName != KUAISHOU_LITE_PACKAGE
         ) {
@@ -1696,6 +1710,12 @@ private const val SPEED_CURVE_FACTOR = 0.7
         if (!isRunning || !enabled || douyinAutoPlayCompleted || douyinSessionDone || douyinAutoPlayInProgress) {
             return
         }
+        // 只在主界面执行：短剧播放页、直播间、评论页等子页面的长按菜单里没有连播开关，
+        // 在那里长按只会误触（点赞、弹出无关菜单）。不置任何标记就返回，
+        // 用户切回主界面时下一个事件会重新触发。
+        if (!isOnAutoPlayMainActivity(packageName)) {
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         if (now - lastDouyinAutoPlayAt < DOUYIN_AUTOPLAY_COOLDOWN_MS) {
             return
@@ -1706,11 +1726,53 @@ private const val SPEED_CURVE_FACTOR = 0.7
             try {
                 // 等 App 完全启动到界面后再执行，避免页面还没加载完成导致操作失败
                 delay(5000)
+                // 这 5 秒里用户很可能已经点进了子页面，执行前必须再确认一次
+                if (!isOnAutoPlayMainActivity(packageName)) {
+                    LogX.d(TAG, "autoplay skipped: 已离开主界面（当前 $currentActivityName）")
+                    // 没真正执行过，放开会话标记，回到主界面时可以重来
+                    douyinSessionDone = false
+                    return@launch
+                }
                 handleDouyinAutoPlay(packageName)
             } finally {
                 douyinAutoPlayInProgress = false
             }
         }
+    }
+
+    /**
+     * 当前是否停在该应用的主界面。
+     *
+     * 抖音的推荐流一直停在 SplashActivity（它不只是启动闪屏），快手是 HomeActivity。
+     * 只有这两个页面的长按菜单里才有「自动连播 / 自动上滑」开关。
+     *
+     * @param packageName 目标应用包名
+     * @return 当前 Activity 是否为该应用的主界面
+     */
+    private fun isOnAutoPlayMainActivity(packageName: String): Boolean {
+        val expected = AUTOPLAY_MAIN_ACTIVITIES[packageName] ?: return false
+        return currentActivityName == expected
+    }
+
+    /**
+     * 跟踪当前 Activity 名。
+     *
+     * TYPE_WINDOW_STATE_CHANGED 的 className 可能是 Activity，也可能是弹窗、
+     * 输入法、Toast 等控件类名，必须经 PackageManager 确认它真的是 Activity 才采信，
+     * 否则弹个 Dialog 就会把记录冲掉。查询结果缓存，避免每个事件都去问一次。
+     */
+    private fun trackCurrentActivity(event: AccessibilityEvent, packageName: String) {
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        val className = event.className?.toString()
+        if (className.isNullOrEmpty()) return
+        val key = "$packageName/$className"
+        val isActivity = activityClassCache.getOrPut(key) {
+            runCatching {
+                packageManager.getActivityInfo(ComponentName(packageName, className), 0)
+                true
+            }.getOrDefault(false)
+        }
+        if (isActivity) currentActivityName = className
     }
 
     /**
