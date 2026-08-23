@@ -247,7 +247,7 @@ class FloatingWindowService : Service() {
                     } else {
                         screenWidth - rootView.width + currentRightInset()
                     }
-                    windowManager.updateViewLayout(rootView, layoutParams)
+                    safeUpdateViewLayout()
                 }
             }
             // 记录最新的屏幕宽度，供下次旋转判断使用
@@ -311,7 +311,7 @@ class FloatingWindowService : Service() {
                 layoutParams.x = targetX.coerceIn(0, (screenWidth - viewWidth).coerceAtLeast(0))
                 layoutParams.y = targetY.coerceIn(0, (screenHeight - viewHeight).coerceAtLeast(0))
                 // 更新悬浮窗位置
-                windowManager.updateViewLayout(rootView, layoutParams)
+                safeUpdateViewLayout()
             }
 
             override fun onDragEnd(rawX: Float, rawY: Float) {
@@ -1392,7 +1392,7 @@ class FloatingWindowService : Service() {
         rootView.setPadding(0, 0, 0, 0)
         (expandButton.layoutParams as? ViewGroup.MarginLayoutParams)?.setMargins(0, 0, 0, 0)
         rootView.requestLayout()
-        windowManager.updateViewLayout(rootView, layoutParams)
+        safeUpdateViewLayout()
         snapToRightAfterLayout()
     }
 
@@ -1416,7 +1416,31 @@ class FloatingWindowService : Service() {
      *
      * @param stopSlide 是否停止当前自动滑动
      */
+    /**
+     * 安全更新悬浮窗布局。
+     *
+     * 回放结束一类的异步回调可能在悬浮窗已被移除之后才送达，此时 [rootView] 已经脱离
+     * WindowManager，直接 updateViewLayout 会抛 IllegalArgumentException 把整个进程带崩；
+     * 而进程一崩，系统就把无障碍服务记进 crashed 列表——服务实例还会重启，
+     * 但 rootInActiveWindow 恒为 null、takeScreenshot 恒失败，应用从此静默空转。
+     * 所有更新布局的地方都要走这里。
+     *
+     * @return 是否真的更新成功
+     */
+    private fun safeUpdateViewLayout(): Boolean {
+        if (!::rootView.isInitialized || !::layoutParams.isInitialized) return false
+        if (!rootView.isAttachedToWindow) return false
+        return runCatching { windowManager.updateViewLayout(rootView, layoutParams) }
+            .onFailure { LogX.w("FloatingWindowService", "updateViewLayout failed", it) }
+            .isSuccess
+    }
+
     private fun expand(stopSlide: Boolean = true) {
+        // 悬浮窗已经不在了就没什么可展开的，但该停的滑动还是要停
+        if (!::rootView.isInitialized || !rootView.isAttachedToWindow) {
+            if (stopSlide) AutoSlideService.getInstance()?.stopSlide()
+            return
+        }
         controlPanel.visibility = View.VISIBLE
         pauseButton.visibility = View.GONE
         expandButton.visibility = View.GONE
@@ -1432,7 +1456,7 @@ class FloatingWindowService : Service() {
         val margin = (3 * density).toInt()
         (expandButton.layoutParams as? ViewGroup.MarginLayoutParams)?.setMargins(margin, margin, margin, margin)
         rootView.requestLayout()
-        windowManager.updateViewLayout(rootView, layoutParams)
+        safeUpdateViewLayout()
         // 展开后把面板重新拉回屏幕内（贴到最近的左/右边缘），
         // 避免从收起态（贴右边缘的小球）展开后面板跑到屏幕外
         rootView.post {
@@ -1522,11 +1546,7 @@ class FloatingWindowService : Service() {
         rootView.requestLayout()
         
         // 更新窗口布局以适应新大小
-        try {
-            windowManager.updateViewLayout(rootView, layoutParams)
-        } catch (e: Exception) {
-            LogX.e("FloatingWindowService", "Update view layout failed", e)
-        }
+        safeUpdateViewLayout()
         
         // 布局完成后重新执行贴边吸附，确保放大后不悬在半空
         rootView.post {
