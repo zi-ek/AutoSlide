@@ -23,6 +23,9 @@ const { DATA_DIR } = require('./config');
 const { esc } = require('./util');
 const { readJson, sendJson, sendHtml, clientIp } = require('./http');
 const { pageShell } = require('./views/pages');
+const { updateStats, touchDevice } = require('./stats');
+const { nowCN } = require('./util');
+const { lookupIpLocation } = require('./ip');
 
 const LICENSE_FILE = path.join(DATA_DIR, 'license.json');
 
@@ -202,7 +205,27 @@ async function handleQuery(req, res, url) {
     const device = ensureDevice(data, deviceId);
     return toLicenseView(data, deviceId, device, baseUrlOf(req));
   });
+
+  // 顺带把「最近活跃」写回统计库：客户端每次打开都会查授权（自带 30 分钟节流），
+  // 这是唯一能反映日常使用的信号。统计库原本的 lastSeen 只在首装/升版本/分享脚本时
+  // 才更新，等于「最后一次装或升级的时间」，看板据此判活跃永远是 0。
+  // 失败不影响授权查询本身——授权是功能开关，不能被统计拖累。
+  await touchLastSeen(req, deviceId);
+
   sendJson(res, 200, view);
+}
+
+/* 刷新统计库里该设备的最近活跃时间与出口 IP；设备不在统计库里（没上报过）时静默跳过 */
+async function touchLastSeen(req, deviceId) {
+  try {
+    const ip = clientIp(req);
+    const ipLoc = await lookupIpLocation(ip);
+    await updateStats((stats) => {
+      touchDevice(stats, deviceId, { ip, ipLoc, lastSeen: nowCN() });
+    });
+  } catch (e) {
+    console.warn('[license] 刷新 lastSeen 失败：' + e.message);
+  }
 }
 
 /* 统计某个 IP 在窗口期内的绑定次数 */
