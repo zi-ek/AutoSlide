@@ -130,15 +130,25 @@ function donutChart(title, pairs, total) {
   }
 
   const RAMP = [
-    '#7f3f2c',
-    '#9c4f37',
-    '#b85f42',
-    '#d17150',
-    '#d98764',
-    '#e09d80',
-    '#e8b39c',
-    '#f0c9b8'
-  ];
+  '#7f3f2c',
+  '#8a4430',
+  '#954a34',
+  '#a15039',
+  '#ab563d',
+  '#b85f42',
+  '#c26749',
+  '#ca6e4f',
+  '#d17150',
+  '#d5795a',
+  '#d98764',
+  '#dd9272',
+  '#e09d80',
+  '#e4a88e',
+  '#e8b39c',
+  '#ecc0aa',
+  '#f0c9b8',
+  '#f4d3c6'
+ ];
 
   const rankOf = new Map();
 
@@ -371,14 +381,6 @@ ${baseStyles()}
     border-bottom:1px solid var(--border);
   }
   .header-left { display:flex; align-items:center; gap:14px; }
-  .brand-mark {
-    width:44px; height:44px; flex:none;
-    display:flex; align-items:center; justify-content:center;
-    border-radius:12px;
-    background:linear-gradient(135deg, var(--clay), #c25f3f);
-    box-shadow:0 6px 18px rgba(217,119,87,.28);
-  }
-  .brand-mark-core { color:#fff; font-size:20px; line-height:1; }
   .dashboard-title {
     font-family:var(--serif); font-size:26px; font-weight:600;
     color:var(--text); letter-spacing:-.01em; line-height:1.2;
@@ -411,19 +413,10 @@ ${baseStyles()}
     gap:12px; margin-bottom:22px;
   }
   .stat-card {
-    display:flex; align-items:center; gap:14px;
     padding:16px 18px;
     background:var(--panel); border:1px solid var(--border);
     border-radius:12px; border-top:2px solid var(--clay);
   }
-  .stat-icon {
-    width:38px; height:38px; flex:none;
-    display:flex; align-items:center; justify-content:center;
-    border-radius:10px; font-size:16px;
-    background:rgba(217,119,87,.10); color:var(--clay);
-  }
-  .stat-icon-online  { background:rgba(91,146,121,.12); color:var(--green); }
-  .stat-icon-offline { background:rgba(156,154,144,.14); color:var(--text-faint); }
   .stat-content { min-width:0; }
   .stat-label {
     font-family:var(--mono); font-size:10px; letter-spacing:.12em;
@@ -468,13 +461,13 @@ ${baseStyles()}
     background:var(--panel); border:1px solid var(--border);
     border-radius:12px; overflow:auto;
   }
-  .device-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .device-table { width:100%; border-collapse:collapse; font-size:12.5px; }
   .device-table thead th {
     position:sticky; top:0; z-index:1;
     padding:11px 14px; text-align:left; white-space:nowrap;
-    background:var(--panel-alt); color:var(--text-dim);
-    font-family:var(--mono); font-size:11px; font-weight:500;
-    letter-spacing:.06em; text-transform:uppercase;
+    background:var(--panel-alt); color:var(--text-faint);
+    font-family:var(--mono); font-size:10.5px; font-weight:500;
+    letter-spacing:.09em; text-transform:uppercase;
     border-bottom:1px solid var(--border);
     cursor:pointer; user-select:none;
   }
@@ -482,34 +475,27 @@ ${baseStyles()}
   .sort-icon { color:var(--text-faint); font-size:9px; margin-left:3px; }
   .device-table tbody td {
     padding:11px 14px; vertical-align:middle;
+    color:var(--text-dim);
     border-bottom:1px solid var(--border-soft);
   }
   .device-table tbody tr:last-child td { border-bottom:none; }
-  .device-row:hover { background:var(--panel-alt); }
+  .device-row { cursor:pointer; }
+  .device-row:hover td { background:var(--panel-alt); color:var(--text); }
 
-  .device-cell { display:flex; align-items:center; gap:10px; }
-  .device-avatar {
-    width:34px; height:34px; flex:none;
-    display:flex; align-items:center; justify-content:center;
-    border-radius:9px;
-    background:rgba(217,119,87,.10); color:var(--clay);
-    font-family:var(--mono); font-size:14px; font-weight:600;
-  }
-  .device-main { min-width:0; }
-  .device-name {
-    font-weight:600; color:var(--text);
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:210px;
+  /* 对齐原版的 td.strong：只把颜色提亮，不加粗；等宽字体由 baseStyles 的 td 规则继承 */
+  .device-brand {
+    color:var(--text); white-space:nowrap;
   }
   .device-id {
     font-family:var(--mono); font-size:10.5px; color:var(--text-faint);
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:210px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:240px;
   }
   .device-model { display:flex; flex-direction:column; gap:1px; }
-  .device-model strong { font-weight:600; color:var(--text); }
+  .device-model strong { font-weight:500; color:var(--text); }
   .device-model span { font-size:11px; color:var(--text-faint); }
   .android-badge {
     display:inline-block; padding:2px 8px; border-radius:20px;
-    background:rgba(107,132,163,.12); color:var(--slate);
+    background:rgba(108,255,0,.7); color:var(--slate);
     font-family:var(--mono); font-size:11px; white-space:nowrap;
   }
   .app-version { display:flex; flex-direction:column; gap:1px; }
@@ -525,18 +511,6 @@ ${baseStyles()}
   .device-status.offline { background:rgba(156,154,144,.14); color:var(--text-faint); }
   .device-status-dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
 
-  .device-detail-btn {
-    display:inline-flex; align-items:center; gap:6px;
-    padding:5px 11px; white-space:nowrap;
-    border:1px solid var(--border); border-radius:8px;
-    background:var(--panel-alt); color:var(--text-dim);
-    font-size:12px; font-family:var(--sans); cursor:pointer;
-  }
-  .device-detail-btn:hover {
-    border-color:var(--clay); color:var(--clay);
-    background:rgba(217,119,87,.06);
-  }
-  .device-detail-arrow { font-family:var(--mono); }
 
   /* ---------- 空态 / 错误 ---------- */
   .device-empty {
@@ -1046,7 +1020,7 @@ ${baseStyles()}
     border:1px solid var(--border);
     border-radius:16px;
 
-    width:min(980px,100%);
+    width:min(800px,100%);
     min-width:min(560px,100%);
     max-width:100%;
     max-height:90vh;
@@ -1105,10 +1079,22 @@ ${baseStyles()}
     overflow:auto;
   }
 
+  /* 脚本操作区：放在弹窗头部左上角，占原来型号标题的位置 */
   .modal-actions {
     display:flex;
+    align-items:center;
     gap:10px;
-    padding:14px 20px;
+    flex-wrap:wrap;
+  }
+
+  .modal-noscript {
+    font-size:12px;
+    color:var(--text-faint);
+  }
+
+  #script-output {
+    margin-top:16px;
+    padding-top:14px;
     border-top:1px solid var(--border);
   }
 
@@ -1289,8 +1275,9 @@ ${baseStyles()}
 
   .device-metrics {
     display:grid;
+    /* auto-fill 而不是 auto-fit：只有电量一项时也保持一格宽度，不会被拉满整行 */
     grid-template-columns:
-      repeat(4,minmax(0,1fr));
+      repeat(auto-fill,minmax(190px,1fr));
 
     gap:10px;
     margin-bottom:16px;
@@ -1355,8 +1342,14 @@ ${baseStyles()}
   .info-grid {
     display:grid;
 
+    /* 上报字段很稀疏（CPU 常常只有 2 行、内存/存储各 1 行），
+       用 auto-fit 让宽屏排三列，align-items:start 让短卡片保持自身高度、
+       不被同行的长卡片拉高留出大片空白，dense 再把短卡回填到空位。 */
     grid-template-columns:
-      repeat(2,minmax(0,1fr));
+      repeat(auto-fit,minmax(300px,1fr));
+
+    grid-auto-flow:dense;
+    align-items:start;
 
     gap:12px;
   }
@@ -1403,7 +1396,7 @@ ${baseStyles()}
     display:grid;
 
     grid-template-columns:
-      minmax(75px,auto)
+      minmax(72px,max-content)
       minmax(0,1fr);
 
     gap:10px;
@@ -2720,7 +2713,7 @@ function renderInfo(d, tr) {
       <div class="device-overview-main">
 
         <div class="device-overview-label">
-          DEVICE OVERVIEW
+          设备概览
         </div>
 
         <div class="device-overview-name">
@@ -2760,7 +2753,7 @@ function renderInfo(d, tr) {
           }
 
           <span class="device-chip device-chip-live">
-            CONNECTED
+            在线
           </span>
 
         </div>
@@ -2790,7 +2783,7 @@ function renderInfo(d, tr) {
               </div>
 
               <div class="device-score-label">
-                DEVICE STATUS
+                状态评分
               </div>
 
             </div>
@@ -2815,7 +2808,7 @@ function renderInfo(d, tr) {
 
               <div class="device-metric-head">
                 <span class="device-metric-name">
-                  CPU
+                  处理器
                 </span>
 
                 <span class="device-metric-value">
@@ -2842,7 +2835,7 @@ function renderInfo(d, tr) {
 
               <div class="device-metric-head">
                 <span class="device-metric-name">
-                  RAM
+                  内存
                 </span>
 
                 <span class="device-metric-value">
@@ -2869,7 +2862,7 @@ function renderInfo(d, tr) {
 
               <div class="device-metric-head">
                 <span class="device-metric-name">
-                  STORAGE
+                  存储
                 </span>
 
                 <span class="device-metric-value">
@@ -2896,7 +2889,7 @@ function renderInfo(d, tr) {
 
               <div class="device-metric-head">
                 <span class="device-metric-name">
-                  BATTERY
+                  电量
                 </span>
 
                 <span class="device-metric-value">
@@ -2923,163 +2916,21 @@ function renderInfo(d, tr) {
    * CPU
    * ======================================================= */
 
-  const cpuCard = card(
-    'CPU / SoC',
-    [
-      row('处理器', cpu.name),
-      row('架构', cpu.arch),
-      row('核心数', cpu.cores),
-      row(
-        '当前频率',
-        cpu.currentFreq !== ''
-          ? fmtHz(cpu.currentFreq)
-          : ''
-      ),
-      row(
-        '最大频率',
-        cpu.maxFreq !== ''
-          ? fmtHz(cpu.maxFreq)
-          : ''
-      ),
-      row(
-        '使用率',
-        cpuUsage !== null
-          ? fmtPercent(cpuUsage)
-          : ''
-      ),
-      row(
-        '温度',
-        cpu.temperature !== ''
-          ? `${cpu.temperature} ℃`
-          : ''
-      ),
-      row('Load 1m', cpu.load1),
-      row('Load 5m', cpu.load5),
-      row('Load 15m', cpu.load15)
-    ]
-  );
 
   /* =======================================================
    * GPU
    * ======================================================= */
 
-  const gpuCard = card(
-    'GPU / Graphics',
-    [
-      row('GPU', gpu.name),
-      row('厂商', gpu.vendor),
-      row('驱动', gpu.driver),
-      row(
-        '使用率',
-        gpu.usage !== ''
-          ? fmtPercent(gpu.usage)
-          : ''
-      ),
-      row(
-        '频率',
-        gpu.frequency !== ''
-          ? fmtHz(gpu.frequency)
-          : ''
-      ),
-      row(
-        '温度',
-        gpu.temperature !== ''
-          ? `${gpu.temperature} ℃`
-          : ''
-      ),
-      row(
-        '显存',
-        gpu.vram !== ''
-          ? fmtBytes(gpu.vram)
-          : ''
-      ),
-      row(
-        'OpenGL ES',
-        pf.glEsVersion
-      ),
-      row(
-        'Vulkan',
-        firstDefined(
-          pf.vulkanVersion,
-          hw.vulkanVersion
-        )
-      )
-    ]
-  );
 
   /* =======================================================
    * Memory
    * ======================================================= */
 
-  const memoryCard = card(
-    'Memory',
-    [
-      row(
-        '总内存',
-        memory.total !== ''
-          ? fmtBytes(memory.total)
-          : ''
-      ),
-
-      row(
-        '已使用',
-        memory.used !== ''
-          ? fmtBytes(memory.used)
-          : ''
-      ),
-
-      row(
-        '可用',
-        memory.available !== ''
-          ? fmtBytes(memory.available)
-          : ''
-      ),
-
-      row(
-        '使用率',
-        memoryUsage !== null
-          ? fmtPercent(memoryUsage)
-          : ''
-      )
-    ]
-  );
 
   /* =======================================================
    * Storage
    * ======================================================= */
 
-  const storageCard = card(
-    'Storage',
-    [
-      row(
-        '总容量',
-        storage.total !== ''
-          ? fmtBytes(storage.total)
-          : ''
-      ),
-
-      row(
-        '已使用',
-        storage.used !== ''
-          ? fmtBytes(storage.used)
-          : ''
-      ),
-
-      row(
-        '可用',
-        storage.available !== ''
-          ? fmtBytes(storage.available)
-          : ''
-      ),
-
-      row(
-        '使用率',
-        storageUsage !== null
-          ? fmtPercent(storageUsage)
-          : ''
-      )
-    ]
-  );
 
   /* =======================================================
    * Display
@@ -3091,58 +2942,6 @@ function renderInfo(d, tr) {
       ? `${display.width} × ${display.height}`
       : '';
 
-  const displayCard = card(
-    'Display',
-    [
-      row(
-        '分辨率',
-        resolution
-      ),
-
-      row(
-        'Density',
-        display.density
-      ),
-
-      row(
-        'DPI',
-        display.dpi
-      ),
-
-      row(
-        '刷新率',
-        display.refreshRate !== ''
-          ? `${display.refreshRate} Hz`
-          : ''
-      ),
-
-      row(
-        '方向',
-        display.orientation
-      ),
-
-      row(
-        '亮度',
-        display.brightness !== ''
-          ? `${display.brightness}`
-          : ''
-      ),
-
-      row(
-        'HDR',
-        boolStatus(display.hdr)
-          ? '支持'
-          : display.hdr !== ''
-            ? '不支持'
-            : ''
-      ),
-
-      row(
-        '尺寸',
-        display.size
-      )
-    ]
-  );
 
   /* =======================================================
    * Battery
@@ -3154,7 +2953,7 @@ function renderInfo(d, tr) {
       : '';
 
   const batteryCard = card(
-    'Battery',
+    '电池',
     [
       row(
         '健康',
@@ -3300,9 +3099,8 @@ function renderInfo(d, tr) {
   ];
 
   const networkCard = card(
-    'Network',
-    networkRows,
-    true
+    '网络',
+    networkRows
   );
 
   /* =======================================================
@@ -3310,7 +3108,7 @@ function renderInfo(d, tr) {
    * ======================================================= */
 
   const androidCard = card(
-    'Android / Platform',
+    '系统平台',
     [
       row(
         '系统',
@@ -3361,13 +3159,8 @@ function renderInfo(d, tr) {
       ),
 
       row(
-        'Baseband',
+        '基带版本',
         pf.radioVersion
-      ),
-
-      row(
-        'Hardware',
-        pf.hardware
       ),
 
       row(
@@ -3381,22 +3174,17 @@ function renderInfo(d, tr) {
       ),
 
       row(
-        'Brand',
+        '品牌',
         pf.buildBrand
       ),
 
       row(
-        'Fingerprint',
+        '构建指纹',
         pf.fingerprint
       ),
 
       row(
-        '语言',
-        dev.language
-      ),
-
-      row(
-        'Timezone',
+        '时区',
         firstDefined(
           pf.timezone,
           sys.timezone
@@ -3404,7 +3192,7 @@ function renderInfo(d, tr) {
       ),
 
       row(
-        'Build Time',
+        '构建时间',
         pf.buildTime
           ? new Date(
               Number(pf.buildTime)
@@ -3413,7 +3201,8 @@ function renderInfo(d, tr) {
             )
           : ''
       )
-    ]
+    ],
+    true
   );
 
   /* =======================================================
@@ -3421,7 +3210,7 @@ function renderInfo(d, tr) {
    * ======================================================= */
 
   const runtimeCard = card(
-    'Runtime',
+    '运行时',
     [
       row(
         'Java VM',
@@ -3474,7 +3263,7 @@ function renderInfo(d, tr) {
    * ======================================================= */
 
   const basicCard = card(
-    'Device',
+    '设备',
     [
       row(
         '设备名称',
@@ -3482,7 +3271,7 @@ function renderInfo(d, tr) {
       ),
 
       row(
-        'Platform',
+        '平台',
         platform
       ),
 
@@ -3497,12 +3286,12 @@ function renderInfo(d, tr) {
       ),
 
       row(
-        'Language',
+        '语言',
         dev.language
       ),
 
       row(
-        'Device ID',
+        '设备 ID',
         d.deviceId
       ),
 
@@ -3515,6 +3304,185 @@ function renderInfo(d, tr) {
                 : ''
             }`
           : ''
+      )
+    ]
+  );
+
+  const hardwareCard = card(
+    '硬件',
+    [
+      row('处理器', cpu.name),
+      row('架构', cpu.arch),
+      row('核心数', cpu.cores),
+      row(
+        '当前频率',
+        cpu.currentFreq !== ''
+          ? fmtHz(cpu.currentFreq)
+          : ''
+      ),
+      row(
+        '最大频率',
+        cpu.maxFreq !== ''
+          ? fmtHz(cpu.maxFreq)
+          : ''
+      ),
+      row(
+        '使用率',
+        cpuUsage !== null
+          ? fmtPercent(cpuUsage)
+          : ''
+      ),
+      row(
+        '温度',
+        cpu.temperature !== ''
+          ? `${cpu.temperature} ℃`
+          : ''
+      ),
+      row('Load 1m', cpu.load1),
+      row('Load 5m', cpu.load5),
+      row('Load 15m', cpu.load15),
+
+      row('GPU', gpu.name),
+      row('厂商', gpu.vendor),
+      row('驱动', gpu.driver),
+      row(
+        '使用率',
+        gpu.usage !== ''
+          ? fmtPercent(gpu.usage)
+          : ''
+      ),
+      row(
+        '频率',
+        gpu.frequency !== ''
+          ? fmtHz(gpu.frequency)
+          : ''
+      ),
+      row(
+        '温度',
+        gpu.temperature !== ''
+          ? `${gpu.temperature} ℃`
+          : ''
+      ),
+      row(
+        '显存',
+        gpu.vram !== ''
+          ? fmtBytes(gpu.vram)
+          : ''
+      ),
+      row(
+        'OpenGL ES',
+        pf.glEsVersion
+      ),
+      row(
+        'Vulkan',
+        firstDefined(
+          pf.vulkanVersion,
+          hw.vulkanVersion
+        )
+      ),
+
+      row(
+        '总内存',
+        memory.total !== ''
+          ? fmtBytes(memory.total)
+          : ''
+      ),
+
+      row(
+        '已使用',
+        memory.used !== ''
+          ? fmtBytes(memory.used)
+          : ''
+      ),
+
+      row(
+        '可用',
+        memory.available !== ''
+          ? fmtBytes(memory.available)
+          : ''
+      ),
+
+      row(
+        '使用率',
+        memoryUsage !== null
+          ? fmtPercent(memoryUsage)
+          : ''
+      ),
+
+      row(
+        '总容量',
+        storage.total !== ''
+          ? fmtBytes(storage.total)
+          : ''
+      ),
+
+      row(
+        '已使用',
+        storage.used !== ''
+          ? fmtBytes(storage.used)
+          : ''
+      ),
+
+      row(
+        '可用',
+        storage.available !== ''
+          ? fmtBytes(storage.available)
+          : ''
+      ),
+
+      row(
+        '使用率',
+        storageUsage !== null
+          ? fmtPercent(storageUsage)
+          : ''
+      ),
+
+      row(
+        '分辨率',
+        resolution
+      ),
+
+      row(
+        'Density',
+        display.density
+      ),
+
+      row(
+        'DPI',
+        display.dpi
+      ),
+
+      row(
+        '刷新率',
+        display.refreshRate !== ''
+          ? `${display.refreshRate} Hz`
+          : ''
+      ),
+
+      row(
+        '方向',
+        display.orientation
+      ),
+
+      row(
+        '亮度',
+        display.brightness !== ''
+          ? `${display.brightness}`
+          : ''
+      ),
+
+      row(
+        'HDR',
+        boolStatus(display.hdr)
+          ? '支持'
+          : display.hdr !== ''
+            ? '不支持'
+            : ''
+      ),
+
+      row(
+        '尺寸',
+        display.size
       )
     ]
   );
@@ -3568,7 +3536,7 @@ function renderInfo(d, tr) {
     hasCapabilityData
       ? `
         <section class="info-card">
-          <h4>Capabilities</h4>
+          <h4>功能支持</h4>
 
           <div class="capability-grid">
             ${capabilityNames
@@ -3617,23 +3585,13 @@ function renderInfo(d, tr) {
 
       ${basicCard}
 
-      ${cpuCard}
-
-      ${gpuCard}
-
-      ${memoryCard}
-
-      ${storageCard}
-
-      ${displayCard}
+      ${hardwareCard}
 
       ${batteryCard}
 
-      ${runtimeCard}
-
       ${networkCard}
 
-      ${androidCard}
+      ${runtimeCard}
 
       ${capabilitiesCard}
 
@@ -3641,68 +3599,14 @@ function renderInfo(d, tr) {
 
       ${cameras}
 
-    </div>
-  `;
-}
-
-/* =========================================================
- * Device detail modal
- * ========================================================= */
-
-function deviceModal(d) {
-
-  const name =
-    displayName(d);
-
-  return `
-    <div
-      id="device-modal"
-      class="modal-mask"
-      role="dialog"
-      aria-modal="true">
-
-      <div class="modal">
-
-        <div class="modal-head">
-
-          <div>
-            <div class="modal-title">
-              ${esc(name)}
-            </div>
-
-            <div class="modal-sub">
-              ${esc(
-                String(
-                  d.deviceId || ''
-                )
-              )}
-            </div>
-          </div>
-
-          <button
-            type="button"
-            class="modal-close"
-            onclick="closeDeviceModal()">
-            ×
-          </button>
-
-        </div>
-
-        <div
-          id="device-modal-body"
-          class="modal-body">
-
-          <div class="modal-empty">
-            加载设备信息…
-          </div>
-
-        </div>
-
-      </div>
+      <!-- 系统平台跨整行，放最后：Fingerprint / Baseband 这类超长值需要整行宽度，
+           且放中间会把普通卡的网格截断，留出成片空位 -->
+      ${androidCard}
 
     </div>
   `;
 }
+
 
 /* =========================================================
  * 前端脚本
@@ -4156,24 +4060,32 @@ function displayBrand(d) {
 
 
 /**
- * 获取设备在线状态
+ * 设备活跃度
+ *
+ * 刻意不叫「在线」：lastSeen 由客户端打开 App 查授权时触发更新，客户端自带
+ * 30 分钟节流，服务端也没有心跳，所以它只能表达「最近使用过」，
+ * 表达不了「此刻正挂着」。叫在线会让人误以为是实时连接状态。
  */
-const ONLINE_WINDOW_MS = 10 * 60 * 1000;
+const ACTIVE_DAY_MS = 24 * 60 * 60 * 1000;
+const ACTIVE_WEEK_MS = 7 * ACTIVE_DAY_MS;
 
-function isDeviceOnline(d) {
-  /* 统计数据里没有 online/connected，只有 lastSeen 文本时间。
-     沿用现用版口径：最近上报在窗口期内即视为在线。 */
-  if (d.online === true || d.connected === true || d.status === 'online') {
-    return true;
-  }
-
+/* 最近一次活跃距今多久（毫秒）；时间无法解析时返回 Infinity */
+function activeAge(d) {
   const seen = Date.parse(String(d.lastSeen || '').replace(/-/g, '/'));
+  return Number.isNaN(seen) ? Infinity : Date.now() - seen;
+}
 
-  if (Number.isNaN(seen)) {
-    return false;
-  }
+function isActiveToday(d) {
+  return activeAge(d) <= ACTIVE_DAY_MS;
+}
 
-  return Date.now() - seen <= ONLINE_WINDOW_MS;
+function isActiveThisWeek(d) {
+  return activeAge(d) <= ACTIVE_WEEK_MS;
+}
+
+/* 设备行的状态徽章用一天窗口 */
+function isDeviceOnline(d) {
+  return isActiveToday(d);
 }
 
 
@@ -4191,7 +4103,7 @@ function deviceStatusBadge(d) {
       <span class="device-status-dot"></span>
 
       <span>
-        ${online ? 'ONLINE' : 'OFFLINE'}
+        ${online ? '今日活跃' : '沉寂'}
       </span>
 
     </span>
@@ -4199,38 +4111,6 @@ function deviceStatusBadge(d) {
 }
 
 
-/**
- * 设备头像
- */
-function deviceAvatar(d) {
-
-  const brand =
-    displayBrand(d);
-
-  const model =
-    displayModel(d);
-
-  const text =
-    firstDefined(
-      brand,
-      model,
-      'A'
-    );
-
-  return `
-    <div class="device-avatar">
-
-      <span>
-        ${esc(
-          String(text)
-            .substring(0, 1)
-            .toUpperCase()
-        )}
-      </span>
-
-    </div>
-  `;
-}
 
 
 /**
@@ -4393,33 +4273,13 @@ function renderDeviceRow(
       data-search="${esc(searchText)}"
       data-device-index="${index}"
       data-info-id="${infoId}"
+      data-device-id="${esc(d.deviceId || '')}"
+      data-script-file="${esc(d.scriptFile || 'scripts.json')}"
+      data-script-count="${esc(String(d.scriptCount || 0))}"
       tabindex="0">
 
-      <td>
-
-        <div class="device-cell">
-
-          ${deviceAvatar(d)}
-
-          <div class="device-main">
-
-            <div class="device-name">
-              ${esc(name)}
-            </div>
-
-            <div class="device-id">
-
-              ${esc(
-                d.deviceId ||
-                'NO DEVICE ID'
-              )}
-
-            </div>
-
-          </div>
-
-        </div>
-
+      <td class="device-brand">
+        ${esc(brand)}
       </td>
 
 
@@ -4428,19 +4288,15 @@ function renderDeviceRow(
         <div class="device-model">
 
           <strong>
-            ${esc(model)}
+            ${esc(name)}
           </strong>
 
-          ${
-            brand &&
-            brand !== model
-              ? `
-                <span>
-                  ${esc(brand)}
-                </span>
-              `
-              : ''
-          }
+          <span class="device-id">
+            ${esc(
+              d.deviceId ||
+              'NO DEVICE ID'
+            )}
+          </span>
 
         </div>
 
@@ -4525,25 +4381,6 @@ function renderDeviceRow(
       </td>
 
 
-      <td>
-
-        <button
-          type="button"
-          class="device-detail-btn"
-          data-open-device="${infoId}">
-
-          <span>
-            查看详情
-          </span>
-
-          <span class="device-detail-arrow">
-            →
-          </span>
-
-        </button>
-
-      </td>
-
     </tr>
 
 
@@ -4617,7 +4454,7 @@ function renderDeviceTable(
             <th
               onclick="sortDeviceTable(0,'text')">
 
-              设备
+              品牌
 
               <span class="sort-icon">
                 ↕
@@ -4697,12 +4534,6 @@ function renderDeviceTable(
             </th>
 
 
-            <th>
-
-              操作
-
-            </th>
-
           </tr>
 
         </thead>
@@ -4744,25 +4575,24 @@ function renderDashboardStats(
   const online =
     devices.filter(
       d =>
-        isDeviceOnline(d)
+        isActiveToday(d)
     ).length;
 
-  const offline =
-    total - online;
+  const week =
+    devices.filter(
+      d =>
+        isActiveThisWeek(d)
+    ).length;
 
   return `
     <div class="dashboard-stats">
 
       <div class="stat-card">
 
-        <div class="stat-icon">
-          ◈
-        </div>
-
         <div class="stat-content">
 
           <div class="stat-label">
-            DEVICES
+            总设备数
           </div>
 
           <div class="stat-value">
@@ -4776,14 +4606,10 @@ function renderDashboardStats(
 
       <div class="stat-card">
 
-        <div class="stat-icon stat-icon-online">
-          ●
-        </div>
-
         <div class="stat-content">
 
           <div class="stat-label">
-            ONLINE
+            今日活跃
           </div>
 
           <div class="stat-value">
@@ -4797,18 +4623,14 @@ function renderDashboardStats(
 
       <div class="stat-card">
 
-        <div class="stat-icon stat-icon-offline">
-          ○
-        </div>
-
         <div class="stat-content">
 
           <div class="stat-label">
-            OFFLINE
+            近 7 天活跃
           </div>
 
           <div class="stat-value">
-            ${offline}
+            ${week}
           </div>
 
         </div>
@@ -4818,14 +4640,10 @@ function renderDashboardStats(
 
       <div class="stat-card">
 
-        <div class="stat-icon">
-          ◈
-        </div>
-
         <div class="stat-content">
 
           <div class="stat-label">
-            BRANDS · 品牌数
+            手机品牌数
           </div>
 
           <div class="stat-value">
@@ -4839,14 +4657,10 @@ function renderDashboardStats(
 
       <div class="stat-card">
 
-        <div class="stat-icon">
-          ⤓
-        </div>
-
         <div class="stat-content">
 
           <div class="stat-label">
-            INSTALLS
+            安装次数
           </div>
 
           <div class="stat-value">
@@ -4860,14 +4674,10 @@ function renderDashboardStats(
 
       <div class="stat-card">
 
-        <div class="stat-icon">
-          ⟳
-        </div>
-
         <div class="stat-content">
 
           <div class="stat-label">
-            UPDATES
+            更新次数
           </div>
 
           <div class="stat-value">
@@ -4957,6 +4767,14 @@ function dashboardHtml(stats, announcement) {
     ${esc(title)}
   </title>
 
+  <!-- 与 pageShell 同一套字体：本页自己写了完整 <html> 绕过了 pageShell，
+       这两行必须自带，否则 --mono 里的 IBM Plex Mono 下载不到，
+       所有数字会回退到 Consolas，和站内其它页面对不上 -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap"
+    rel="stylesheet">
 
   ${dashboardStyles}
 
@@ -4974,15 +4792,6 @@ function dashboardHtml(stats, announcement) {
     <header class="dashboard-header">
 
       <div class="header-left">
-
-        <div class="brand-mark">
-
-          <span class="brand-mark-core">
-            ◈
-          </span>
-
-        </div>
-
 
         <div>
 
@@ -5043,7 +4852,7 @@ function dashboardHtml(stats, announcement) {
       <div class="toolbar-left">
 
         <div class="toolbar-title">
-          CONNECTED DEVICES
+          设备日志 · Device Log
         </div>
 
         <div
@@ -5069,7 +4878,7 @@ function dashboardHtml(stats, announcement) {
             id="device-search"
             type="search"
             autocomplete="off"
-            placeholder="搜索设备 / 型号 / Device ID…">
+            placeholder="搜索设备 / 型号 / 设备 ID…">
 
           <kbd>
             /
@@ -5108,21 +4917,26 @@ function dashboardHtml(stats, announcement) {
 
         <div class="modal-head">
 
-          <div>
+          <!-- 左上角放脚本操作：设备名在下方「设备概览」里已经很醒目，标题是重复的 -->
+          <div class="modal-actions" id="modal-actions">
 
-            <div
-              id="modal-device-title"
-              class="modal-title">
+            <button
+              type="button"
+              class="btn btn-primary"
+              id="btnView">
+              查看内容
+            </button>
 
-              Device Information
+            <a
+              class="btn"
+              id="btnDownload"
+              download>
+              下载
+            </a>
 
-            </div>
-
-            <div
-              id="modal-device-sub"
-              class="modal-sub">
-
-            </div>
+            <span class="modal-noscript" id="modal-noscript">
+              该设备暂无脚本
+            </span>
 
           </div>
 
@@ -5211,15 +5025,14 @@ function dashboardHtml(stats, announcement) {
           'device-modal-body'
         );
 
-      const title =
-        document.getElementById(
-          'modal-device-title'
-        );
+      const btnView =
+        document.getElementById('btnView');
 
-      const subtitle =
-        document.getElementById(
-          'modal-device-sub'
-        );
+      const btnDl =
+        document.getElementById('btnDownload');
+
+      const noScript =
+        document.getElementById('modal-noscript');
 
 
       if (
@@ -5247,34 +5060,41 @@ function dashboardHtml(stats, announcement) {
 
       if (row) {
 
-        const name =
-          row.querySelector(
-            '.device-name'
-          );
+        /* 标题用「品牌 型号」拼，两列分别在 .device-brand 和 .device-model strong 里 */
+        /* 没有脚本就只显示提示，不给出点了会 404 的按钮 */
+        const count =
+          parseInt(
+            row.getAttribute('data-script-count'),
+            10
+          ) || 0;
 
-        const deviceId =
-          row.querySelector(
-            '.device-id'
-          );
+        const devId =
+          row.getAttribute('data-device-id') || '';
 
+        const file =
+          row.getAttribute('data-script-file') ||
+          'scripts.json';
 
-        if (title) {
+        const url =
+          '/api/download?deviceId=' +
+          encodeURIComponent(devId) +
+          '&filename=' +
+          encodeURIComponent(file);
 
-          title.textContent =
-            name
-              ? name.textContent.trim()
-              : 'Device Information';
+        window.__scriptUrl = count ? url : null;
 
+        if (btnView) {
+          btnView.style.display = count ? '' : 'none';
         }
 
+        if (btnDl) {
+          btnDl.style.display = count ? '' : 'none';
+          btnDl.href = url;
+          btnDl.setAttribute('download', file);
+        }
 
-        if (subtitle) {
-
-          subtitle.textContent =
-            deviceId
-              ? deviceId.textContent.trim()
-              : '';
-
+        if (noScript) {
+          noScript.style.display = count ? 'none' : '';
         }
 
       }
@@ -5312,51 +5132,141 @@ function dashboardHtml(stats, announcement) {
 
 
     /*
-     * 绑定详情按钮
+     * 「查看内容」：拉取该设备分享的脚本，追加渲染到设备详情下方
      */
+
+    function escapeText(t) {
+      return String(t).replace(
+        /[&<>]/g,
+        function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c];
+        }
+      );
+    }
+
+
+    function scriptHolder() {
+      const body =
+        document.getElementById('device-modal-body');
+
+      if (!body) {
+        return null;
+      }
+
+      let holder =
+        document.getElementById('script-output');
+
+      if (!holder) {
+        holder = document.createElement('div');
+        holder.id = 'script-output';
+        body.appendChild(holder);
+      }
+
+      return holder;
+    }
+
+
+    function renderScripts(data) {
+
+      const holder = scriptHolder();
+
+      if (!holder) {
+        return;
+      }
+
+      const list = (data && data.scripts) || [];
+
+      if (!list.length) {
+        holder.innerHTML =
+          '<p class="modal-empty">该设备没有脚本内容</p>';
+        return;
+      }
+
+      holder.innerHTML =
+        '<p class="modal-sec-title">录制脚本</p>' +
+        list.map(function (sc, i) {
+
+          const n =
+            Array.isArray(sc.actions)
+              ? sc.actions.length
+              : (sc.actionCount || '-');
+
+          const raw =
+            JSON.stringify(sc.actions, null, 2);
+
+          return '<div class="script-item">' +
+            '<div class="script-name">' +
+            escapeText(sc.name || ('脚本 ' + (i + 1))) +
+            '</div>' +
+            '<div class="script-meta">' + n + ' 个动作</div>' +
+            '<div class="script-toggle" data-raw="raw' + i + '">展开原始内容 ▾</div>' +
+            '<pre class="script-raw" id="raw' + i + '">' +
+            escapeText(raw) +
+            '</pre>' +
+            '</div>';
+        }).join('');
+
+      holder.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
 
     document.addEventListener(
       'click',
       function (event) {
 
-        const button =
-          event.target.closest(
-            '[data-open-device]'
-          );
+        /* 展开/收起原始 JSON */
+        const toggle =
+          event.target.closest('.script-toggle');
 
+        if (toggle) {
+          const pre =
+            document.getElementById(
+              toggle.getAttribute('data-raw')
+            );
 
-        if (!button) {
+          if (pre) {
+            const open = pre.classList.toggle('open');
+            toggle.textContent =
+              open ? '收起原始内容 ▴' : '展开原始内容 ▾';
+          }
           return;
         }
 
+        if (!event.target.closest('#btnView')) {
+          return;
+        }
 
-        const templateId =
-          button.getAttribute(
-            'data-open-device'
-          );
+        if (!window.__scriptUrl) {
+          return;
+        }
 
+        const holder = scriptHolder();
 
-        const row =
-          button.closest(
-            'tr.device-row'
-          );
+        if (holder) {
+          holder.innerHTML =
+            '<p class="modal-empty">加载中…</p>';
+        }
 
-
-        openTemplate(
-          templateId,
-          row
-        );
+        fetch(window.__scriptUrl)
+          .then(function (r) { return r.json(); })
+          .then(renderScripts)
+          .catch(function () {
+            if (holder) {
+              holder.innerHTML =
+                '<p class="modal-empty">加载失败</p>';
+            }
+          });
 
       }
     );
 
 
     /*
-     * 点击整行也可以打开
+     * 点击整行打开设备详情
      */
 
     document.addEventListener(
-      'dblclick',
+      'click',
       function (event) {
 
         const row =
@@ -5370,17 +5280,49 @@ function dashboardHtml(stats, announcement) {
         }
 
 
-        const button =
-          row.querySelector(
-            '[data-open-device]'
-          );
+        /* 选中文字（比如想复制 Device ID）时不当成点击 */
+        const sel = window.getSelection();
 
-
-        if (button) {
-
-          button.click();
-
+        if (sel && String(sel).length > 0) {
+          return;
         }
+
+
+        openTemplate(
+          row.getAttribute('data-info-id'),
+          row
+        );
+
+      }
+    );
+
+
+    /*
+     * 键盘可达：行上按回车/空格同样打开
+     */
+
+    document.addEventListener(
+      'keydown',
+      function (event) {
+
+        if (event.key !== 'Enter' && event.key !== ' ') {
+          return;
+        }
+
+        const row =
+          event.target.closest &&
+          event.target.closest('tr.device-row');
+
+        if (!row) {
+          return;
+        }
+
+        event.preventDefault();
+
+        openTemplate(
+          row.getAttribute('data-info-id'),
+          row
+        );
 
       }
     );
