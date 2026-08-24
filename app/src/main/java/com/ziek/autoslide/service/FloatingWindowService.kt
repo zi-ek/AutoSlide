@@ -1412,11 +1412,6 @@ class FloatingWindowService : Service() {
     }
 
     /**
-     * 展开悬浮窗并停止当前自动滑动
-     *
-     * @param stopSlide 是否停止当前自动滑动
-     */
-    /**
      * 安全更新悬浮窗布局。
      *
      * 回放结束一类的异步回调可能在悬浮窗已被移除之后才送达，此时 [rootView] 已经脱离
@@ -1435,6 +1430,11 @@ class FloatingWindowService : Service() {
             .isSuccess
     }
 
+    /**
+     * 展开悬浮窗并停止当前自动滑动
+     *
+     * @param stopSlide 是否停止当前自动滑动
+     */
     private fun expand(stopSlide: Boolean = true) {
         // 悬浮窗已经不在了就没什么可展开的，但该停的滑动还是要停
         if (!::rootView.isInitialized || !rootView.isAttachedToWindow) {

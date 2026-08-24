@@ -349,12 +349,17 @@ private const val SPEED_CURVE_FACTOR = 0.7
         private val PUSH_IGNORE_TEXTS = listOf("忽略", "取消")
         private const val PUSH_DIALOG_DISMISS_COOLDOWN_MS = 5_000L
         /* 各应用的主界面 Activity：只有停在这里才执行自动连播。
-           抖音的推荐流一直停在 SplashActivity（它不只是启动闪屏），快手是 HomeActivity；
            短剧播放页、直播间、评论页等子页面的长按菜单里没有连播开关，在那里长按只会误触。 */
+        /* 各应用的主界面 Activity，只有停在这里才执行自动连播。
+           类名以无障碍事件里的 event.className 为准，实测得来——
+           注意不能用 dumpsys window 的 mCurrentFocus：抖音那里显示的是
+           splash.SplashActivity（任务根窗口的名字），而承载推荐流的
+           Activity 其实是 main.MainActivity，两者不是一回事。
+           用 Set 是为了将来某个版本换类名时能并列多个候选，不必改结构。 */
         private val AUTOPLAY_MAIN_ACTIVITIES = mapOf(
-            DOUYIN_PACKAGE to "com.ss.android.ugc.aweme.splash.SplashActivity",
-            KUAISHOU_PACKAGE to "com.yxcorp.gifshow.HomeActivity",
-            KUAISHOU_LITE_PACKAGE to "com.yxcorp.gifshow.HomeActivity",
+            DOUYIN_PACKAGE to setOf("com.ss.android.ugc.aweme.main.MainActivity"),
+            KUAISHOU_PACKAGE to setOf("com.yxcorp.gifshow.HomeActivity"),
+            KUAISHOU_LITE_PACKAGE to setOf("com.yxcorp.gifshow.HomeActivity"),
         )
         /* 快手自定义开关的状态：1=开 0=关 -1=未知（无法判断时禁止点击） */
         private const val KUAISHOU_STATE_ON = 1
@@ -1105,7 +1110,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * @return 是否成功完成
      */
     private suspend fun dispatchGestureBlocking(gesture: GestureDescription): Boolean =
-        withTimeoutOrNull(GESTURE_CALLBACK_TIMEOUT_MS) {
+        withTimeoutOrNull(GESTURE_CALLBACK_TIMEOUT_MS.milliseconds) {
             suspendCancellableCoroutine { continuation ->
                 val success = dispatchGesture(gesture, object : GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
@@ -1714,6 +1719,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
         // 在那里长按只会误触（点赞、弹出无关菜单）。不置任何标记就返回，
         // 用户切回主界面时下一个事件会重新触发。
         if (!isOnAutoPlayMainActivity(packageName)) {
+            // 保留这条日志：之前这里是静默 return，类名一写错就完全查不出原因
+            LogX.d(TAG, "autoplay skipped: 不在主界面（当前 $currentActivityName）")
             return
         }
         val now = SystemClock.elapsedRealtime()
@@ -1743,7 +1750,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
     /**
      * 当前是否停在该应用的主界面。
      *
-     * 抖音的推荐流一直停在 SplashActivity（它不只是启动闪屏），快手是 HomeActivity。
+     * 抖音推荐流是 main.MainActivity，快手是 HomeActivity（均由无障碍事件实测）。
      * 只有这两个页面的长按菜单里才有「自动连播 / 自动上滑」开关。
      *
      * @param packageName 目标应用包名
@@ -1751,7 +1758,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
      */
     private fun isOnAutoPlayMainActivity(packageName: String): Boolean {
         val expected = AUTOPLAY_MAIN_ACTIVITIES[packageName] ?: return false
-        return currentActivityName == expected
+        return currentActivityName in expected
     }
 
     /**
