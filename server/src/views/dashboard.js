@@ -131,24 +131,24 @@ function donutChart(title, pairs, total) {
 
   const RAMP = [
   '#7f3f2c',
-  '#8a4430',
-  '#954a34',
-  '#a15039',
-  '#ab563d',
-  '#b85f42',
-  '#c26749',
-  '#ca6e4f',
-  '#d17150',
-  '#d5795a',
-  '#d98764',
-  '#dd9272',
-  '#e09d80',
-  '#e4a88e',
-  '#e8b39c',
-  '#ecc0aa',
-  '#f0c9b8',
-  '#f4d3c6'
- ];
+  '#8b4631',
+  '#974c35',
+  '#a3533a',
+  '#ae593e',
+  '#b96043',
+  '#c46749',
+  '#ce6f4e',
+  '#d37756',
+  '#d7815e',
+  '#da8a67',
+  '#dd9373',
+  '#e09c7e',
+  '#e3a58a',
+  '#e6ae95',
+  '#e9b7a1',
+  '#edc0ac',
+  '#f0c9b8'
+  ];
 
   const rankOf = new Map();
 
@@ -1020,7 +1020,7 @@ ${baseStyles()}
     border:1px solid var(--border);
     border-radius:16px;
 
-    width:min(800px,100%);
+    width:min(920px,100%);
     min-width:min(560px,100%);
     max-width:100%;
     max-height:90vh;
@@ -1434,8 +1434,6 @@ ${baseStyles()}
     grid-template-columns:
       minmax(72px,max-content)
       minmax(0,1fr);
-
-    gap:10px;
 
     align-items:baseline;
 
@@ -2788,16 +2786,6 @@ function renderInfo(d, tr) {
         </div>
 
         <div class="device-overview-sub">
-
-          ${
-            manufacturer
-              ? `
-                <span class="device-chip">
-                  ${esc(manufacturer)}
-                </span>
-              `
-              : ''
-          }
 
           ${
             model
