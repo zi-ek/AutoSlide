@@ -158,6 +158,9 @@ open class AutoSlideService : AccessibilityService() {
     /* 抖音自动连播状态 */
     private var douyinAutoPlayInProgress = false // 是否正在执行抖音连播开启流程（防止重复触发）
     private var lastDouyinAutoPlayAt = 0L // 上次执行抖音连播流程的时间（用于冷却）
+    /* 连续失败次数：达到上限后长时间退避，避免开关判断不出来时无限长按重试 */
+    private var autoPlayFailCount = 0
+    private var autoPlayBackoffUntil = 0L
     private var douyinSessionDone = false // 本次进入抖音是否已执行过连播流程（离开抖音后重置）
     private var douyinAutoPlayCompleted = false // 已成功打开连播后不再工作，直到下次启动 App 才重置
     private var lastPushDialogDismissAt = 0L // 上次自动点「忽略」的时间（冷却，避免重复点击）
@@ -343,10 +346,13 @@ private const val SPEED_CURVE_FACTOR = 0.7
         private const val KUAISHOU_LITE_PACKAGE = "com.kuaishou.nebula"
         private const val KUAISHOU_AUTOPLAY_TEXT = "自动上滑"
         private const val DOUYIN_AUTOPLAY_COOLDOWN_MS = 5_000L
+        /* 快手开关：滑块中心相对轨道中心的偏移超过轨道宽度的这个比例，才判定开/关。
+           落在中间视为未知——多半是正在播放开关动画，或控件结构变了，此时不动手。 */
+        private const val KUAISHOU_THUMB_OFFSET_RATIO = 0.08f
         /* 推送通知弹窗：命中任一标题后自动点「忽略」类按钮。
            findAccessibilityNodeInfosByText 是整串包含匹配、不认正则，
            多关键词只能拆成列表逐个找，不能写成「A|B」。 */
-        private val PUSH_NOTIFICATION_DIALOG_TEXTS = listOf("打开推送通知", "开启推送提醒")
+        private val PUSH_NOTIFICATION_DIALOG_TEXTS = listOf("推送通知", "推送提醒")
         private val PUSH_IGNORE_TEXTS = listOf("忽略", "取消")
         private const val PUSH_DIALOG_DISMISS_COOLDOWN_MS = 5_000L
         /* 各应用的主界面 Activity：只有停在这里才执行自动连播。
@@ -591,6 +597,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
         reloadConfig()
         douyinAutoPlayCompleted = false
         douyinSessionDone = false
+        autoPlayFailCount = 0
+        autoPlayBackoffUntil = 0L
         // 1x1 无障碍保活窗口（GKD: useAliveOverlayView，onA11yConnected 添加）
         addAliveOverlayView()
         // 服务刚连上时先查一次当前界面，不必等下一个界面变化事件
@@ -808,7 +816,9 @@ private const val SPEED_CURVE_FACTOR = 0.7
         if (packageName != DOUYIN_PACKAGE && packageName != KUAISHOU_PACKAGE &&
             packageName != KUAISHOU_LITE_PACKAGE
         ) {
-            douyinSessionDone = false
+            // 自己的悬浮窗/主界面也会发事件，那不代表用户离开了目标 App。
+            // 不排除的话会不停地把会话标记清掉，让连播流程每过一次冷却就重来一遍。
+            if (packageName != this.packageName) douyinSessionDone = false
         } else {
             tryStartDouyinAutoPlay(packageName)
         }
@@ -1496,7 +1506,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
                 else -> {
                     // 无标准开关节点：仅快手使用截屏看颜色；抖音保持安全不点击
                     if (targetText == KUAISHOU_AUTOPLAY_TEXT) {
-                        toggleKuaishouVisualSwitch(textNode)
+                        toggleKuaishouSwitch(textNode)
                     } else {
                         false
                     }
@@ -1509,87 +1519,133 @@ private const val SPEED_CURVE_FACTOR = 0.7
     }
 
     /**
-     * 快手的「自动上滑」是无障碍树里没有状态的自定义开关：
-     * 截屏看开关区域颜色（开=蓝色，关=灰色），确认是关才点击，避免误关
+     * 快手的「自动上滑」开关：无障碍树里没有 checkable/checked，只能自己判断状态。
+     *
+     * 改用**节点几何**而不是截屏数像素——实测快手把开关做成两层嵌套 ViewGroup：
+     * 外层是轨道、内层是滑块，滑块在轨道内的左右位置就是开关状态。
+     * 原先的像素方案要先截屏，而截屏经常被系统限流（logcat 里的
+     * "Accessibility screenshot failed, code=3"），一旦拿不到图就返回 UNKNOWN，
+     * 是这个功能反复空跑的直接原因。几何方案只读节点树，不受限流影响。
+     *
+     * 方向（滑块靠左=关、靠右=开）是通用交互约定，且与实测的关闭态数据一致；
+     * 但为防万一判反，点击后会重新读一次，没变成预期状态就点回去还原。
      */
-    private suspend fun toggleKuaishouVisualSwitch(textNode: AccessibilityNodeInfo): Boolean {
-        val row = textNode.parent ?: return false
-        val rowRect = Rect()
-        row.getBoundsInScreen(rowRect)
-        if (rowRect.width() <= 0 || rowRect.height() <= 0) return false
-        when (kuaishouToggleState(rowRect)) {
+    private suspend fun toggleKuaishouSwitch(textNode: AccessibilityNodeInfo): Boolean {
+        val track = findKuaishouToggleTrack(textNode)
+        if (track == null) {
+            LogX.w(TAG, "Kuaishou: 没找到开关控件，放弃（不盲点）")
+            return false
+        }
+        val rect = Rect()
+        track.getBoundsInScreen(rect)
+
+        when (kuaishouToggleState(track)) {
             KUAISHOU_STATE_ON -> {
-                LogX.i(TAG, "Kuaishou toggle already ON")
+                LogX.i(TAG, "Kuaishou: 自动上滑已是开启状态")
                 return true
             }
             KUAISHOU_STATE_OFF -> {
-                val toggleX = rowRect.right - rowRect.width() * 0.14f
-                val toggleY = rowRect.exactCenterY()
-                LogX.i(TAG, "Kuaishou toggle OFF, tap at ($toggleX, $toggleY)")
-                dispatchTap(toggleX, toggleY)
-                delay(800)
-                val on = kuaishouToggleState(rowRect) == KUAISHOU_STATE_ON
-                LogX.i(TAG, "Kuaishou toggle after tap: $on")
-                return on
+                LogX.i(TAG, "Kuaishou: 自动上滑为关，点击开启")
+                if (!track.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    dispatchTap(rect.exactCenterX(), rect.exactCenterY())
+                }
+                delay(700.milliseconds)
+                // 重新取节点：点击后布局会重建，旧引用的 bounds 不会更新
+                val after = findAutoplayTextNode(KUAISHOU_AUTOPLAY_TEXT)
+                    ?.let { findKuaishouToggleTrack(it) }
+                val state = after?.let { kuaishouToggleState(it) } ?: KUAISHOU_STATE_UNKNOWN
+                if (state == KUAISHOU_STATE_ON) {
+                    LogX.i(TAG, "Kuaishou: 已开启")
+                    return true
+                }
+                // 没变成开启：可能方向判反了，把它点回去，避免把用户原本开着的连播关掉
+                LogX.w(TAG, "Kuaishou: 点击后状态为 $state，还原以免误关")
+                after?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                return false
             }
             else -> {
-                LogX.w(TAG, "Kuaishou toggle state unknown, skip to avoid misclick")
+                LogX.w(TAG, "Kuaishou: 开关状态无法判断，跳过（不盲点）")
                 return false
             }
         }
     }
 
     /**
+     * 找到「自动上滑」这一行右侧那个可点击的开关控件。
+     *
+     * 结构是：行容器 → [图标, 文字, 开关]。开关是行内最靠右的可点击子节点，
+     * 且宽高比接近 2:1（轨道形状），据此与图标、整行容器区分开。
+     */
+    private fun findKuaishouToggleTrack(textNode: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val row = textNode.parent ?: return null
+        val rowRect = Rect()
+        row.getBoundsInScreen(rowRect)
+        if (rowRect.width() <= 0) return null
+
+        var best: AccessibilityNodeInfo? = null
+        var bestLeft = -1
+        for (i in 0 until row.childCount) {
+            val child = row.getChild(i) ?: continue
+            if (!child.isClickable) continue
+            val r = Rect()
+            child.getBoundsInScreen(r)
+            if (r.width() <= 0 || r.height() <= 0) continue
+            // 轨道是横向的扁控件；排除接近正方形的图标和占满整行的容器
+            val ratio = r.width().toFloat() / r.height()
+            if (ratio < 1.3f || ratio > 3.5f) continue
+            if (r.width() > rowRect.width() / 2) continue
+            if (r.left > bestLeft) {
+                bestLeft = r.left
+                best = child
+            }
+        }
+        return best
+    }
+
+    /**
+     * 由滑块在轨道内的左右位置判断开关状态。
+     *
+     * @return [KUAISHOU_STATE_ON] / [KUAISHOU_STATE_OFF] / [KUAISHOU_STATE_UNKNOWN]
+     */
+    private fun kuaishouToggleState(track: AccessibilityNodeInfo): Int {
+        val trackRect = Rect()
+        track.getBoundsInScreen(trackRect)
+        if (trackRect.width() <= 0) return KUAISHOU_STATE_UNKNOWN
+
+        // 滑块 = 轨道内最大的那个子节点
+        var thumb: Rect? = null
+        for (i in 0 until track.childCount) {
+            val child = track.getChild(i) ?: continue
+            val r = Rect()
+            child.getBoundsInScreen(r)
+            if (r.width() <= 0 || r.height() <= 0) continue
+            if (thumb == null || r.width() * r.height() > thumb.width() * thumb.height()) {
+                thumb = r
+            }
+        }
+        if (thumb == null) return KUAISHOU_STATE_UNKNOWN
+
+        // 滑块中心相对轨道中心的偏移，按轨道宽度归一化
+        val offset = (thumb.exactCenterX() - trackRect.exactCenterX()) / trackRect.width()
+        return when {
+            offset <= -KUAISHOU_THUMB_OFFSET_RATIO -> KUAISHOU_STATE_OFF
+            offset >= KUAISHOU_THUMB_OFFSET_RATIO -> KUAISHOU_STATE_ON
+            // 落在中间说明可能正在动画中或结构变了，宁可不动
+            else -> KUAISHOU_STATE_UNKNOWN
+        }
+    }
+
+    /* 在当前界面找到开关那一行的文字节点 */
+    private fun findAutoplayTextNode(targetText: String): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        val nodes = root.findAccessibilityNodeInfosByText(targetText)
+        if (nodes.isEmpty()) return null
+        return nodes.firstOrNull { it.text?.toString()?.trim() == targetText } ?: nodes.first()
+    }
+    /**
      * 截屏判断快手开关状态（开=蓝色，关=灰色）
      * 截图失败或无法读取像素时返回 UNKNOWN，调用方不得点击
      */
-    private suspend fun kuaishouToggleState(rowRect: Rect): Int {
-        val bitmap = runCatching { captureScreenBitmap() }.getOrNull() ?: return KUAISHOU_STATE_UNKNOWN
-        return try {
-            // 无障碍截图可能是 HARDWARE 位图，不能直接 getPixel，先转成软件位图
-            val soft = if (bitmap.config == Bitmap.Config.ARGB_8888) {
-                bitmap
-            } else {
-                bitmap.copy(Bitmap.Config.ARGB_8888, false)
-            }
-            if (soft == null) {
-                KUAISHOU_STATE_UNKNOWN
-            } else {
-                try {
-                    val left = (rowRect.right - rowRect.width() * 0.32f).toInt().coerceIn(0, soft.width - 1)
-                    val right = (rowRect.right - rowRect.width() * 0.02f).toInt().coerceIn(0, soft.width - 1)
-                    val top = (rowRect.top + rowRect.height() * 0.1f).toInt().coerceIn(0, soft.height - 1)
-                    val bottom = (rowRect.bottom - rowRect.height() * 0.1f).toInt().coerceIn(0, soft.height - 1)
-                    var blue = 0
-                    var y = top
-                    while (y <= bottom) {
-                        var x = left
-                        while (x <= right) {
-                            val p = soft[x, y]
-                            val r = (p shr 16) and 0xFF
-                            val g = (p shr 8) and 0xFF
-                            val b = p and 0xFF
-                            if (r in 47..127 && g in 94..174 && b >= 215) blue++
-                            x += 2
-                        }
-                        y += 2
-                    }
-                    if (blue > 300) KUAISHOU_STATE_ON else KUAISHOU_STATE_OFF
-                } finally {
-                    if (soft !== bitmap) {
-                        runCatching { soft.recycle() }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            LogX.w(TAG, "Kuaishou toggle state check failed", e)
-            KUAISHOU_STATE_UNKNOWN
-        } finally {
-            if (bitmap.config != Bitmap.Config.ARGB_8888) {
-                runCatching { bitmap.recycle() }
-            }
-        }
-    }
 
     /* 在指定坐标模拟一次点击 */
     private suspend fun dispatchTap(x: Float, y: Float) {
@@ -1722,6 +1778,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
         if (!isRunning || !enabled || douyinAutoPlayCompleted || douyinSessionDone || douyinAutoPlayInProgress) {
             return
         }
+        // 连续失败过多时长时间退避：开关状态判断不出来的场景（快手改版、动画中等）
+        // 会一直失败，没有这道闸门就会每过一次冷却就长按一次，表现为反复弹菜单。
+        if (SystemClock.elapsedRealtime() < autoPlayBackoffUntil) {
+            return
+        }
         // 只在主界面执行：短剧播放页、直播间、评论页等子页面的长按菜单里没有连播开关，
         // 在那里长按只会误触（点赞、弹出无关菜单）。不置任何标记就返回，
         // 用户切回主界面时下一个事件会重新触发。
@@ -1799,6 +1860,9 @@ private const val SPEED_CURVE_FACTOR = 0.7
         douyinAutoPlayCompleted = false
         douyinSessionDone = false
         douyinAutoPlayInProgress = false
+        // 用户主动拨开关＝明确要求重试，解除之前因连续失败进入的退避
+        autoPlayFailCount = 0
+        autoPlayBackoffUntil = 0L
         if (enabled) {
             // 开关打开时立刻检查一次当前前台是否已是抖音/快手（一次性检查，不是轮询，不耗电）
             val currentPackage = rootInActiveWindow?.packageName?.toString()
