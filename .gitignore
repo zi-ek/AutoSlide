@@ -35,3 +35,6 @@ AI对话文档.md
 
 # 后台看板本地预览脚本的数据缓存（运行时生成）
 server/.preview-stats.json
+
+# 后台看板本地预览脚本导出的快照（运行时生成）
+server/preview_real.html
