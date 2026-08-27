@@ -23,6 +23,7 @@ import com.ziek.autoslide.MainActivity
 import com.ziek.autoslide.PREFS_NAME
 import com.ziek.autoslide.R
 import com.ziek.autoslide.isAccessibilityServicePermissionEnabled
+import androidx.core.content.edit
 
 /**
  * 自动滑动磁贴服务
@@ -92,8 +93,9 @@ class AutoSlideTileService : TileService() {
         val isRunning = FloatingWindowService.isRunning()
         if (isRunning) {
             // 用户主动关闭：进程复活时不再自动恢复悬浮球
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .putBoolean(KEY_FLOATING_DESIRED, false).apply()
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
+                putBoolean(KEY_FLOATING_DESIRED, false)
+            }
             // 停止滑动
             AutoSlideService.getInstance()?.stopSlide()
             // 停止悬浮窗服务

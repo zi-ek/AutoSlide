@@ -168,7 +168,7 @@
     <string name="total_swipes_label">累计滑屏</string>
     <string name="keyword_matches_label">关键词命中</string>
     <string name="saved_distance_label">节省手滑行程</string>
-    <string name="donate_tip">若有帮助到你，就给点打赏点吧🙏\n长按保存图片到相册</string>
+    <string name="donate_tip">若有帮助到你，就给点打赏吧🙏\n长按保存图片到相册</string>
     <string name="donate_qr_desc">微信打赏二维码</string>
     <string name="donate_qr_saved">二维码已保存到相册</string>
     <string name="donate_qr_save_failed">保存失败：%1$s</string>
@@ -217,6 +217,9 @@
     <!--「我的」页签-->
     <string name="mine_tutorial">使用教程</string>
     <string name="mine_import_settings">导入配置</string>
+    <string name="mine_usb_debugging">USB 调试</string>
+    <string name="usb_debugging_enabled">USB 调试已开启</string>
+    <string name="usb_debugging_disabled">USB 调试已关闭</string>
     <string name="mine_script_library">分享库</string>
     <string name="script_lib_title">分享库</string>
     <string name="script_lib_use">使用</string>

@@ -29,6 +29,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.ziek.autoslide.A11yState
+import com.ziek.autoslide.DEFAULT_STATUS_SERVICE_ENABLED
 import com.ziek.autoslide.KEY_STATUS_SERVICE_ENABLED
 import com.ziek.autoslide.LogX
 import com.ziek.autoslide.MainActivity
@@ -190,7 +191,7 @@ class StatusService : Service() {
          */
         fun isEnabled(context: Context): Boolean =
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getBoolean(KEY_STATUS_SERVICE_ENABLED, false)
+                .getBoolean(KEY_STATUS_SERVICE_ENABLED, DEFAULT_STATUS_SERVICE_ENABLED)
 
         /**
          * 记录用户是否希望常驻通知开启
@@ -229,12 +230,7 @@ class StatusService : Service() {
         /**
          * 启动常驻服务
          *
-         * 返回值表示「有没有成功把启动请求发出去」，不代表通知已经显示——
-         * 服务能否真正进入前台要看 [isForeground]。调用方拿它回滚用户意图，
-         * 避免出现「存储里开着、通知却永远不出现」的状态。
-         *
          * @param context 上下文
-         * @return 是否成功发起启动
          */
         @JvmStatic
         fun start(context: Context) {

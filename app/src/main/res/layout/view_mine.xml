@@ -244,7 +244,6 @@
                             app:thumbTint="@color/switch_thumb_color"
                             app:trackTint="@color/switch_track_color" />
 
-                        <!--标签兼作状态提示：开关已开但服务没真正跑起来时显示「常驻通知·未生效」-->
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
@@ -314,6 +313,31 @@
                     <ImageView
                         style="@style/Widget.AutoSlide.MineRow.Arrow"
                         android:contentDescription="@string/mine_import_settings" />
+                </LinearLayout>
+
+                <!-- USB 调试入口暂时隐藏（功能代码保留，去掉这两处 visibility 即可恢复）。
+                     分隔线跟着一起隐藏，否则上下两条会并排显示成一条粗线。 -->
+                <View
+                    style="@style/Widget.AutoSlide.MineRow.Divider"
+                    android:visibility="gone" />
+
+                <LinearLayout
+                    android:id="@+id/mineUsbDebuggingRow"
+                    style="@style/Widget.AutoSlide.MineRow"
+                    android:visibility="gone">
+
+                    <TextView
+                        style="@style/Widget.AutoSlide.MineRow.Title"
+                        android:text="@string/mine_usb_debugging" />
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/usbDebuggingSwitch"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"
+                        app:thumbTint="@color/switch_thumb_color"
+                        app:trackTint="@color/switch_track_color" />
                 </LinearLayout>
 
                 <View style="@style/Widget.AutoSlide.MineRow.Divider" />

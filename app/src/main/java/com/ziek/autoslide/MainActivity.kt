@@ -201,15 +201,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 刷新常驻通知开关与其下方标签。
+     * 更新常驻通知开关状态
      *
-     * 开关的 checked **只表达「用户是否想开」**（即存储值），这样无论服务当前
-     * 有没有真正跑起来，用户都能把它关掉——早先把 checked 定义成
-     * 「服务在前台 && 用户想开」，服务被系统停掉后开关会显示成关，
-     * 用户再点只会发出 isChecked=true，永远进不了关闭分支。
-     *
-     * 服务是否真的在前台，改用下方标签区分（「常驻通知」/「常驻通知·未生效」），
-     * 两种含义不再挤在同一个 checked 里。
+     * @param checked 开关状态
      */
     private fun updateStatusServiceSwitchState(checked: Boolean) {
         updateSwitchState(binding.minePanel.statusServiceSwitch, checked, statusServiceSwitchListener)
@@ -236,7 +230,7 @@ class MainActivity : AppCompatActivity() {
         binding.minePanel.accessibilityServicePermissionSwitch.setOnCheckedChangeListener(accessibilitySwitchListener)
         binding.minePanel.overlayPermissionSwitch.setOnCheckedChangeListener(overlaySwitchListener)
         binding.minePanel.statusServiceSwitch.setOnCheckedChangeListener(statusServiceSwitchListener)
-        // 服务前台状态变化时刷新标签（开关本身跟随存储值，不受这里影响）
+        // 常驻通知开关跟随服务实际运行状态（GKD: checked = manageRunning && store.enableStatusService）
         lifecycleScope.launch {
             StatusService.isForeground.collect { foreground ->
                 updateStatusServiceSwitchState(foreground && StatusService.isEnabled(this@MainActivity))
@@ -312,6 +306,9 @@ class MainActivity : AppCompatActivity() {
                 if (!isFinishing && !isDestroyed) {
                     updateAccessibilitySwitchState(finalAccessibilityEnabled)
                     updateOverlaySwitchState(finalCanDrawOverlays)
+                    // 同步 USB 调试开关状态
+                    val isAdbEnabled = Settings.Global.getInt(contentResolver, Settings.Global.ADB_ENABLED, 0) == 1
+                    binding.minePanel.usbDebuggingSwitch.isChecked = isAdbEnabled
                     // 每次打开 App 时重新允许抖音连播检测（关闭则停止轮询）
                     AutoSlideService.getInstance()?.setDouyinAutoPlayEnabled(
                         preferences.getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
@@ -1079,10 +1076,44 @@ class MainActivity : AppCompatActivity() {
         val status = License.statusFlow.value
         binding.minePanel.licenseText.text = when {
             License.blocked -> getString(R.string.license_entry_expired)
+            status.permanent -> getString(R.string.license_entry_permanent)
             status.known -> getString(R.string.license_entry_trial, License.remainDays(this))
             else -> getString(R.string.license_entry_unknown)
         }
-            status.permanent -> getString(R.string.license_entry_permanent)
+    }
+
+    /* 绑定 USB 调试开关 */
+    private fun setupUsbDebuggingSwitch() {
+        val mine = binding.minePanel
+        // 初始化开关状态
+        val isAdbEnabled = Settings.Global.getInt(contentResolver, Settings.Global.ADB_ENABLED, 0) == 1
+        mine.usbDebuggingSwitch.isChecked = isAdbEnabled
+
+        mine.mineUsbDebuggingRow.setOnClickListener {
+            val targetState = !mine.usbDebuggingSwitch.isChecked
+            try {
+                Settings.Global.putInt(contentResolver, Settings.Global.ADB_ENABLED, if (targetState) 1 else 0)
+                mine.usbDebuggingSwitch.isChecked = targetState
+                Toast.makeText(
+                    this,
+                    if (targetState) R.string.usb_debugging_enabled else R.string.usb_debugging_disabled,
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (e: Exception) {
+                LogX.e(TAG, "Failed to toggle USB debugging", e)
+                // 权限不足提示
+                MaterialAlertDialogBuilder(this)
+                    .setTitle(R.string.permission_required)
+                    .setMessage(R.string.accessibility_service_description) // 借用一下现有的权限说明
+                    .setPositiveButton(R.string.shizuku_authorization) { _, _ ->
+                        handleShizukuAuthorization(onGranted = {
+                            grantPermissionViaPrivKit()
+                        }, onFailed = {})
+                    }
+                    .setNegativeButton(R.string.cancel, null)
+                    .show()
+            }
+        }
     }
 
     /* 绑定⌈我的⌋页签：版本号（显示在检查更新一行右侧）+ 检查更新 / 导入配置入口 */
@@ -1101,6 +1132,7 @@ class MainActivity : AppCompatActivity() {
         }
         mine.mineScriptLibRow.setOnClickListener { showScriptLibraryDialog() }
         mine.mineLicenseRow.setOnClickListener { LicenseDialog.showShareDialog(this) }
+        setupUsbDebuggingSwitch()
         // 长按打赏二维码存到相册：微信不能直接识别屏幕上的码，得先存下来再从相册选
         mine.wxImageView.setOnLongClickListener {
             requestSaveDonateQrCode()
@@ -1391,6 +1423,11 @@ class MainActivity : AppCompatActivity() {
     /**
      * 首次安装上报统计
      */
+    /* ANDROID_ID 是授权与统计的设备身份：它由「设备 + 用户 + 应用签名」派生，
+       不同签名的应用拿到的值不同，无法跨应用关联用户，是 Google 推荐的
+       IMEI/序列号替代方案。这里不能换成随机 UUID —— 清一次应用数据就能
+       重置试用期，授权体系会直接失效。 */
+    @SuppressLint("HardwareIds")
     private fun reportInstallIfNeeded() {
         val isReported = preferences.getBoolean(KEY_IS_REPORTED, false)
         val lastReportedVersion = preferences.getInt(KEY_LAST_REPORTED_VERSION, 0)

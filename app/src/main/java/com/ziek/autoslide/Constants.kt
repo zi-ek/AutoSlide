@@ -91,6 +91,7 @@ const val DEFAULT_SKIP_KEYWORDS = "跳过"
 // 自动点击默认开启（保持原有行为）
 const val DEFAULT_AUTO_TAP_ENABLED = true
 const val DEFAULT_DOUYIN_AUTOPLAY = true            // 默认开启抖音自动连播
+const val DEFAULT_STATUS_SERVICE_ENABLED = false    // 默认关闭常驻通知
 
 /**
  * 把关键词文本拆分成关键词列表。
