@@ -3,7 +3,7 @@ package com.ziek.autoslide.chat
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
-import android.media.ExifInterface
+import androidx.exifinterface.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -31,6 +31,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import kotlin.time.Duration.Companion.milliseconds
 
 /** 频道聊天页：轮询拉取新消息 + 发送消息 */
 class ChatActivity : AppCompatActivity() {
@@ -110,7 +111,7 @@ class ChatActivity : AppCompatActivity() {
                 } catch (_: Exception) {
                     // 网络抖动时静默重试
                 }
-                delay(POLL_INTERVAL_MS)
+                delay(POLL_INTERVAL_MS.milliseconds)
             }
         }
     }

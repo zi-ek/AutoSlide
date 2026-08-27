@@ -16,6 +16,7 @@ package com.ziek.autoslide
  */
 
 import android.app.Activity
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.SystemClock
 import android.provider.Settings
@@ -320,6 +321,11 @@ object License {
     }
 
     /** 设备标识：与统计上报保持一致，用 ANDROID_ID（同签名同设备重装、清数据都不变） */
+    /* ANDROID_ID 是授权与统计的设备身份：它由「设备 + 用户 + 应用签名」派生，
+       不同签名的应用拿到的值不同，无法跨应用关联用户，是 Google 推荐的
+       IMEI/序列号替代方案。这里不能换成随机 UUID —— 清一次应用数据就能
+       重置试用期，授权体系会直接失效。 */
+    @SuppressLint("HardwareIds")
     private fun deviceId(context: Context): String =
         Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID).orEmpty()
 

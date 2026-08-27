@@ -11,6 +11,7 @@ package com.ziek.autoslide
  * 等本机设置。服务器按设备 ID 分目录保存，后台的设备列表里可以查看和下载。
  */
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
@@ -156,6 +157,11 @@ object MacroSync {
     }
 
     /* 真正发请求，返回服务器是否收下 */
+    /* ANDROID_ID 是授权与统计的设备身份：它由「设备 + 用户 + 应用签名」派生，
+       不同签名的应用拿到的值不同，无法跨应用关联用户，是 Google 推荐的
+       IMEI/序列号替代方案。这里不能换成随机 UUID —— 清一次应用数据就能
+       重置试用期，授权体系会直接失效。 */
+    @SuppressLint("HardwareIds")
     private fun upload(context: Context, name: String): Boolean {
         val payload = collectScript(context, name)
         if (payload == null) {

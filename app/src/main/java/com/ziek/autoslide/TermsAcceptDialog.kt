@@ -25,6 +25,7 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import androidx.core.content.edit
 
 object TermsAcceptDialog {
 
@@ -67,9 +68,9 @@ object TermsAcceptDialog {
             .setPositiveButton(R.string.terms_agree) { _, _ ->
                 if (isLastStep) {
                     activity.getSharedPreferences(PREFS_NAME, Activity.MODE_PRIVATE)
-                        .edit()
-                        .putBoolean(KEY_TERMS_ACCEPTED, true)
-                        .apply()
+                        .edit {
+                            putBoolean(KEY_TERMS_ACCEPTED, true)
+                        }
                     onAccepted()
                 } else {
                     showStep(activity, step + 1, onAccepted)

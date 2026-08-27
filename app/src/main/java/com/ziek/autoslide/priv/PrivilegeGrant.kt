@@ -26,6 +26,7 @@ import android.os.Process
 import com.ziek.autoslide.LogX
 import kotlinx.coroutines.delay
 import priv.kit.core.Privilege
+import kotlin.time.Duration.Companion.milliseconds
 
 internal object PrivilegeGrant {
 
@@ -176,7 +177,7 @@ internal object PrivilegeGrant {
     private suspend fun waitForServer(): Boolean {
         repeat(HANDSHAKE_POLL_TIMES) {
             if (Privilege.pingServer()) return true
-            delay(HANDSHAKE_POLL_INTERVAL_MS)
+            delay(HANDSHAKE_POLL_INTERVAL_MS.milliseconds)
         }
         return false
     }

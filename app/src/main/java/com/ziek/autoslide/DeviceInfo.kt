@@ -15,6 +15,7 @@ package com.ziek.autoslide
  * 后台按同样的结构展示。
  */
 
+import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
@@ -155,9 +156,9 @@ object DeviceInfo {
                     val addr = addrs.nextElement()
                     if (addr.isLoopbackAddress) continue
                     when (addr) {
-                        is Inet4Address -> ipv4.add(addr.hostAddress)
+                        is Inet4Address -> addr.hostAddress?.let { ipv4.add(it) }
                         is Inet6Address ->
-                            if (!addr.isLinkLocalAddress) ipv6.add("[${addr.hostAddress}]")
+                            if (!addr.isLinkLocalAddress) addr.hostAddress?.let { ipv6.add("[$it]") }
                     }
                 }
             }
@@ -194,6 +195,7 @@ object DeviceInfo {
     }
 
     /* 电池设计容量：PowerProfile 是内部类，只能反射；取不到返回 0 */
+    @SuppressLint("PrivateApi")
     private fun batteryCapacity(context: Context): Int = runCatching {
         val cls = Class.forName("com.android.internal.os.PowerProfile")
         val profile = cls.getConstructor(Context::class.java).newInstance(context)
