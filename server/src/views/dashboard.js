@@ -4584,6 +4584,14 @@ function renderDashboardStats(
         isActiveThisWeek(d)
     ).length;
 
+  /* 品牌数与「品牌分布」图共用 countBy 的归一口径，
+     否则 Redmi/REDMI 这类大小写变体会被重复计成两个品牌 */
+  const brandCount =
+    countBy(
+      devices,
+      d => d.brand
+    ).length;
+
   return `
     <div class="dashboard-stats">
 
@@ -4647,7 +4655,7 @@ function renderDashboardStats(
           </div>
 
           <div class="stat-value">
-            ${new Set(devices.map((d) => d.brand).filter(Boolean)).size}
+            ${brandCount}
           </div>
 
         </div>
