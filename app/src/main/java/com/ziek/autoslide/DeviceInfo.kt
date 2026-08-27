@@ -128,6 +128,16 @@ object DeviceInfo {
         return json
     }
 
+    /**
+     * 单独采集一次网络信息，供后台按需刷新使用。
+     *
+     * 与 [collect] 里的 network 段同源，但不采集其余分组——设备重报一次 IP
+     * 不该顺带把内存、电池、构建指纹整包再传一遍。
+     *
+     * @return 形如 `{"ipv4":[...],"ipv6":[...]}`
+     */
+    fun collectNetwork(): JSONObject = networkSection()
+
     /* 网络：本机局域网 IP 地址（IPv4 / IPv6）。
      * 移植自 Easycontrol 的 PublicTools.getLocalIp：
      * 枚举所有网卡取非环回、非链路本地地址。仅在统计上报时随 deviceInfo 交给后台，

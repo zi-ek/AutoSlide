@@ -1382,6 +1382,42 @@ ${baseStyles()}
     gap:7px;
   }
 
+  .net-refresh-state {
+    margin-left:auto;
+
+    font-family:var(--mono);
+    font-size:10px;
+    font-weight:400;
+
+    color:var(--text-faint);
+
+    white-space:nowrap;
+  }
+
+  .net-refresh {
+    padding:2px 9px;
+
+    border:1px solid var(--border);
+    border-radius:6px;
+
+    background:var(--panel);
+    color:var(--clay);
+
+    font-family:var(--mono);
+    font-size:10px;
+
+    cursor:pointer;
+  }
+
+  .net-refresh:hover:not(:disabled) {
+    background:rgba(217,119,87,.1);
+  }
+
+  .net-refresh:disabled {
+    opacity:.5;
+    cursor:default;
+  }
+
   .info-card h4::before {
     content:'';
     width:3px;
@@ -1824,20 +1860,22 @@ function row(label, value) {
   `;
 }
 
-function card(title, rows, wide) {
+function card(title, rows, wide, action) {
   const content =
     Array.isArray(rows)
       ? rows.filter(Boolean).join('')
       : String(rows || '');
 
-  if (!content) {
+  // 带动作位的卡片即使暂无数据也要渲染——没上报过 network 的设备
+  // 恰恰是最需要那个刷新按钮的，不能因为内容为空就把入口一起藏掉
+  if (!content && !action) {
     return '';
   }
 
   return `
     <section class="info-card${wide ? ' wide' : ''}">
-      <h4>${esc(title)}</h4>
-      ${content}
+      <h4>${esc(title)}${action || ''}</h4>
+      ${content || '<p class="info-empty">尚未上报</p>'}
     </section>
   `;
 }
@@ -2587,6 +2625,35 @@ function calculateDeviceScore(
   );
 }
 
+/**
+ * 「网络」卡片右上角的按需刷新入口。
+ *
+ * 点它只是把指令记到服务端内存里，真正生效要等设备下一次轮询（最长 60 秒）
+ * 取走并回报。设备没开无障碍、或进程被系统杀掉时根本收不到指令，
+ * 所以这里的状态文案必须如实反映「已请求、等待设备响应」这个中间态，
+ * 不能点完就假装成功。
+ *
+ * @param {object} d 设备记录
+ * @returns {string} HTML；没有 deviceId 时返回空串
+ */
+function networkRefreshAction(d) {
+  const deviceId = String(d.deviceId || '');
+
+  if (!deviceId) {
+    return '';
+  }
+
+  const updated = d.networkUpdatedAt
+    ? `更新于 ${esc(d.networkUpdatedAt)}`
+    : '尚未刷新过';
+
+  return `
+    <span class="net-refresh-state" data-refresh-state="${esc(deviceId)}">${updated}</span>
+    <button type="button" class="net-refresh" data-refresh-device="${esc(deviceId)}">刷新</button>
+  `;
+}
+
+
 /* =========================================================
  * 增强版 renderInfo
  * ========================================================= */
@@ -3100,7 +3167,9 @@ function renderInfo(d, tr) {
 
   const networkCard = card(
     '网络',
-    networkRows
+    networkRows,
+    false,
+    networkRefreshAction(d)
   );
 
   /* =======================================================
@@ -3618,6 +3687,184 @@ const dashboardScript = `
 (function () {
 
   'use strict';
+
+  /* =======================================================
+   * Network 按需刷新
+   * ======================================================= */
+
+  /* 管理口令与发版 / 脚本管理页共用同一份 localStorage 记录 */
+  function autoslideAdminToken() {
+    var token = '';
+
+    try {
+      token = localStorage.getItem('autoslideAdminToken') || '';
+    } catch (e) {}
+
+    if (!token) {
+      token = window.prompt('请输入管理口令') || '';
+
+      if (token) {
+        try {
+          localStorage.setItem('autoslideAdminToken', token);
+        } catch (e) {}
+      }
+    }
+
+    return token;
+  }
+
+
+  function setRefreshState(deviceId, text) {
+    var el = document.querySelector(
+      '[data-refresh-state="' + deviceId + '"]'
+    );
+
+    if (el) {
+      el.textContent = text;
+    }
+  }
+
+
+  /*
+   * 轮询刷新结果。
+   *
+   * pending 变回 false 就说明设备已经取走指令并回报过了。此时设备详情是
+   * 服务端预渲染进 <template> 的，没办法只更新那一张卡片，所以整页重载，
+   * 再把刚才那台设备的弹层原样打开。
+   */
+  function pollRefresh(deviceId, token, startedAt, btn) {
+    var waited = Math.round((Date.now() - startedAt) / 1000);
+
+    // 设备可能压根没开无障碍、或进程被系统杀了，等下去没有意义。
+    // 指令仍然留在服务端，设备下次上线时会执行。
+    if (waited > 180) {
+      setRefreshState(deviceId, '设备暂无响应 · 指令已排队');
+      if (btn) btn.disabled = false;
+      return;
+    }
+
+    setRefreshState(deviceId, '已请求 · 等待设备响应（' + waited + 's）');
+
+    fetch(
+      '/api/device/status?deviceId=' + encodeURIComponent(deviceId),
+      { headers: { 'X-Admin-Token': token } }
+    )
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) {
+          setRefreshState(deviceId, '查询失败：' + (j.error || '未知错误'));
+          if (btn) btn.disabled = false;
+          return;
+        }
+
+        if (j.pending) {
+          setTimeout(function () {
+            pollRefresh(deviceId, token, startedAt, btn);
+          }, 2000);
+          return;
+        }
+
+        setRefreshState(deviceId, '已更新 · 正在刷新页面');
+
+        try {
+          sessionStorage.setItem('autoslideReopenDevice', deviceId);
+        } catch (e) {}
+
+        location.reload();
+      })
+      .catch(function () {
+        setRefreshState(deviceId, '查询失败 · 网络异常');
+        if (btn) btn.disabled = false;
+      });
+  }
+
+
+  document.addEventListener('click', function (event) {
+    var btn =
+      event.target && event.target.closest
+        ? event.target.closest('[data-refresh-device]')
+        : null;
+
+    if (!btn) {
+      return;
+    }
+
+    // 别让这次点击冒泡成「打开设备详情」
+    event.preventDefault();
+    event.stopPropagation();
+
+    var deviceId = btn.getAttribute('data-refresh-device');
+    var token = autoslideAdminToken();
+
+    if (!token) {
+      return;
+    }
+
+    btn.disabled = true;
+    setRefreshState(deviceId, '正在下发指令…');
+
+    fetch('/api/device/refresh', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Token': token
+      },
+      body: JSON.stringify({ deviceId: deviceId })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) {
+          // 口令错了就把本地那份删掉，否则每次都拿错的去撞
+          if (j.error === 'bad token') {
+            try {
+              localStorage.removeItem('autoslideAdminToken');
+            } catch (e) {}
+            setRefreshState(deviceId, '管理口令不正确，请重试');
+          } else {
+            setRefreshState(deviceId, '下发失败：' + (j.error || '未知错误'));
+          }
+
+          btn.disabled = false;
+          return;
+        }
+
+        pollRefresh(deviceId, token, Date.now(), btn);
+      })
+      .catch(function () {
+        setRefreshState(deviceId, '下发失败 · 网络异常');
+        btn.disabled = false;
+      });
+  });
+
+
+  /* 整页重载后把刚才那台设备的弹层重新打开 */
+  function reopenLastDevice() {
+    var reopen = '';
+
+    try {
+      reopen = sessionStorage.getItem('autoslideReopenDevice') || '';
+      sessionStorage.removeItem('autoslideReopenDevice');
+    } catch (e) {}
+
+    if (!reopen) {
+      return;
+    }
+
+    var row = document.querySelector(
+      '.device-row[data-device-id="' + reopen + '"]'
+    );
+
+    if (row) {
+      row.click();
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', reopenLastDevice);
+  } else {
+    reopenLastDevice();
+  }
+
 
   /* =======================================================
    * Device modal

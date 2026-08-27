@@ -13,6 +13,7 @@
 //   src/chat.js         聊天域：/api/chat/*
 //   src/uploads.js      上传域：/api/upload、/api/scripts、/api/download、/admin/scripts
 //   src/update.js       更新域：/api/update、/download（版本信息与 APK 分发）
+//   src/commands.js     指令域：后台按需下发的一次性设备指令（内存队列）
 //   src/views/          页面模板与样式
 //
 // 接口一览：
@@ -32,6 +33,10 @@
 //   GET  /api/license  查询试用/奖励时长与邀请码
 //   POST /api/license/bind  新设备填写邀请码
 //   GET  /invite?code= 分享落地页；GET /invites 邀请榜
+//   POST /api/device/refresh  后台下发「重报 network」指令（需 AUTOSLIDE_ADMIN_TOKEN）
+//   GET  /api/device/pending  设备轮询自己的待执行指令
+//   POST /api/report/network  设备回报 network 段
+//   GET  /api/device/status   后台轮询刷新结果（需 AUTOSLIDE_ADMIN_TOKEN）
 //   GET  /             统计看板页面
 
 const http = require('http');
@@ -45,6 +50,7 @@ require('./src/uploads').register(router);
 require('./src/legal').register(router);
 require('./src/license').register(router);
 require('./src/update').register(router);
+require('./src/commands').register(router);
 
 const server = http.createServer((req, res) => router.handle(req, res));
 
