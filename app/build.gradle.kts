@@ -65,6 +65,12 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            // 只保留 ARM：x86/x86_64 仅模拟器用得上，却占了下载体积的 44%
+            // （ML Kit 的 libmlkit_google_ocr_pipeline.so 每个架构都要 4 MB 上下）。
+            // 只过滤 release，debug 仍带全部架构，模拟器调试不受影响。
+            ndk {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
             // 有正式 keystore 时用正式签名，没有则回退调试签名（方便其他机器直接构建）
             signingConfig = if (keystoreProperties.getProperty("storePassword").isNullOrEmpty()) {
                 signingConfigs.getByName("debug")
