@@ -4,14 +4,14 @@
 [versions]
 agp = "9.3.2"                 # Android Gradle Plugin 版本
 kotlin = "2.4.10"              # Kotlin 版本（与 GKD 一致；priv-core/loc 0.7.1 均要求 2.4.10 编译器）
-appcompat = "1.7.1"            # AndroidX AppCompat
+appcompat = "1.8.0"            # AndroidX AppCompat
 material = "1.14.0"            # Material Components
 shizuku = "13.1.5"             # Shizuku（免 root 提权执行 shell 命令）
 coroutines = "1.11.0"          # Kotlin 协程
 mlkit = "16.0.1"               # ML Kit 文字识别（中文 OCR）
-privkit = "0.3.4"              # Priv Kit 自管理特权运行时（替代原始 Shizuku 反射执行 pm grant）
+privkit = "0.9.3"              # Priv Kit 自管理特权运行时（替代原始 Shizuku 反射执行 pm grant）
 loc = "0.7.1"                  # kotlin-loc 编译器插件，为关键日志自动补上 文件:行号
-remap = "0.1.4"                # li.songe.remap：把 @RemapType 桩类重定向到系统真实类（hidden-api 模块用）
+remap = "0.1.5"                # li.songe.remap：把 @RemapType 桩类重定向到系统真实类（hidden-api 模块用）
 androidx-annotation = "1.10.0" # androidx.annotation，hidden-api 桩代码用 @RequiresApi
 hiddenapibypass = "6.1"        # LSPosed HiddenApiBypass：解除 Android P+ 的非 SDK 接口调用限制
 

@@ -24,6 +24,7 @@
 -dontwarn android.content.pm.IPackageManager$Stub
 -dontwarn android.content.pm.IPackageManager
 -dontwarn android.content.res.CompatibilityInfo
+-dontwarn android.os.SELinux
 -dontwarn android.os.ServiceManager
 -dontwarn android.permission.IPermissionManager$Stub
 -dontwarn android.permission.IPermissionManager
