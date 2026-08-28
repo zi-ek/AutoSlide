@@ -5,7 +5,7 @@ import java.util.Properties
 import java.io.InputStreamReader
 
 // 版本名称（APK 输出文件名也使用它）
-val appVersionName = "3.4.2"
+val appVersionName = "3.4.5"
 
 // 后端服务地址：来自 gradle.properties 的 autoslide.serverBaseUrl，
 // 经 buildConfigField 注入 BuildConfig，代码里只认 Constants.SERVER_BASE_URL 这一个来源
@@ -41,7 +41,7 @@ android {
         // 目标设备的SDK版本
         targetSdk = 37
         // 版本号
-        versionCode = 37
+        versionCode = 38
         // 版本名称
         versionName = appVersionName
         // 后端服务地址（统计 / 脚本备份 / 聊天室共用）
@@ -69,7 +69,7 @@ android {
             // （ML Kit 的 libmlkit_google_ocr_pipeline.so 每个架构都要 4 MB 上下）。
             // 只过滤 release，debug 仍带全部架构，模拟器调试不受影响。
             ndk {
-                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+                abiFilters += listOf("arm64-v8a")
             }
             // 有正式 keystore 时用正式签名，没有则回退调试签名（方便其他机器直接构建）
             signingConfig = if (keystoreProperties.getProperty("storePassword").isNullOrEmpty()) {
