@@ -127,6 +127,7 @@ dependencies {
     // ---- kotlin-loc：编译期注入日志位置，无需打包进 APK ----
     compileOnly(libs.loc.annotation)
     // ---- 系统隐藏 API 桩代码：只在编译期存在，运行时由系统真实实现提供 ----
+    "remapApi"(project(":hidden-api"))
     compileOnly(project(":hidden-api"))
     // ---- 解除 Android P+ 非 SDK 接口限制，否则反射不到 AppOpsManager 的隐藏字段 ----
     implementation(libs.lsposed.hiddenapibypass)

@@ -3,9 +3,9 @@
 // 插件管理仓库：从哪里下载 Android Gradle Plugin 和 Kotlin 插件
 pluginManagement {
     repositories {
-        gradlePluginPortal()
-        google()
         mavenCentral()
+        google()
+        gradlePluginPortal()
     }
 }
 plugins {
