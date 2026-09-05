@@ -990,6 +990,67 @@ ${baseStyles()}
     display:none;
   }
 
+  /* 分页隐藏和搜索隐藏是两回事，各用各的类，否则清搜索时会把翻页状态一起清掉 */
+  tr.off-page {
+    display:none;
+  }
+
+  .pager {
+    display:flex;
+    align-items:center;
+    gap:10px;
+
+    margin-top:14px;
+    padding:0 2px;
+
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--text-faint);
+  }
+
+  .pager-info {
+    margin-right:auto;
+    white-space:nowrap;
+  }
+
+  .pager button {
+    min-width:30px;
+    padding:3px 9px;
+
+    border:1px solid var(--border);
+    border-radius:6px;
+
+    background:var(--panel);
+    color:var(--text-dim);
+
+    font-family:var(--mono);
+    font-size:11.5px;
+
+    cursor:pointer;
+  }
+
+  .pager button:hover:not(:disabled) {
+    background:rgba(217,119,87,.1);
+    color:var(--clay);
+  }
+
+  .pager button:disabled {
+    opacity:.35;
+    cursor:default;
+  }
+
+  .pager button.current {
+    border-color:var(--clay);
+    background:rgba(217,119,87,.12);
+    color:var(--clay);
+    font-weight:600;
+  }
+
+  .pager-gap {
+    padding:0 2px;
+    color:var(--text-faint);
+  }
+
   .app-ver {
     font-family:var(--mono);
     font-size:12px;
@@ -3808,6 +3869,113 @@ const dashboardScript = `
 
 
   /* =======================================================
+   * 分页
+   *
+   * 搜索和排序都在前端做，所以分页也必须在前端：否则搜索只会在当前页里找，
+   * 排序也只排当前页这 20 行，两个功能都会变得不对。
+   *
+   * 一行可能因为两个互不相干的原因被藏起来——搜索没命中（hidden-row）、
+   * 不在当前页（off-page）。两个类分开，清掉搜索时不会顺手把翻页状态也清掉。
+   * ======================================================= */
+
+  var PAGE_SIZE = 20;
+  var currentPage = 1;
+
+  /* 当前搜索条件下还剩哪些行，按 DOM 顺序——排序改的就是 DOM 顺序，所以这里天然跟着排序走 */
+  function visibleRows() {
+    return Array.prototype.slice.call(
+      document.querySelectorAll('#device-table tbody tr[data-search]')
+    ).filter(function (row) {
+      return !row.classList.contains('hidden-row');
+    });
+  }
+
+  function pagerButton(label, page, opts) {
+    var o = opts || {};
+    return '<button type="button" data-page="' + page + '"' +
+      (o.disabled ? ' disabled' : '') +
+      (o.current ? ' class="current"' : '') +
+      '>' + label + '</button>';
+  }
+
+  /**
+   * 按当前页把行显示/隐藏，并重画分页条。
+   * 搜索、排序、翻页之后都要调它。
+   */
+  function applyPaging() {
+    var rows = visibleRows();
+    var total = rows.length;
+    var pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+    // 搜索把结果变少时，当前页可能已经越界，往回收
+    if (currentPage > pages) currentPage = pages;
+    if (currentPage < 1) currentPage = 1;
+
+    var start = (currentPage - 1) * PAGE_SIZE;
+    rows.forEach(function (row, i) {
+      row.classList.toggle('off-page', i < start || i >= start + PAGE_SIZE);
+    });
+
+    var pager = document.getElementById('device-pager');
+    if (!pager) return;
+
+    // 只有一页时不占地方
+    if (total <= PAGE_SIZE) {
+      pager.innerHTML = '';
+      return;
+    }
+
+    var shown = Math.min(PAGE_SIZE, total - start);
+    var html = '<span class="pager-info">第 ' + (start + 1) + '–' + (start + shown) +
+      ' 台，共 ' + total + ' 台 · ' + currentPage + '/' + pages + ' 页</span>';
+
+    html += pagerButton('上一页', currentPage - 1, { disabled: currentPage === 1 });
+
+    // 页码：头尾各留一个，当前页左右各一个，中间用省略号收起来，
+    // 302 台是 16 页还好，设备再多就不能全列了
+    var nums = [];
+    for (var p = 1; p <= pages; p++) {
+      if (p === 1 || p === pages || Math.abs(p - currentPage) <= 1) nums.push(p);
+    }
+    var last = 0;
+    nums.forEach(function (p) {
+      if (last && p - last > 1) html += '<span class="pager-gap">…</span>';
+      html += pagerButton(String(p), p, { current: p === currentPage });
+      last = p;
+    });
+
+    html += pagerButton('下一页', currentPage + 1, { disabled: currentPage === pages });
+    pager.innerHTML = html;
+  }
+
+  window.__applyPaging = applyPaging;
+
+  /* 翻页按钮是重画出来的，不能各自绑事件，统一在容器上代理 */
+  document.addEventListener('click', function (event) {
+    var btn = event.target.closest && event.target.closest('#device-pager button[data-page]');
+    if (!btn || btn.disabled) return;
+    var page = parseInt(btn.getAttribute('data-page'), 10);
+    if (!page) return;
+    currentPage = page;
+    applyPaging();
+    // 翻页后回到表格顶部，否则会停在上一页的位置，看着像没反应
+    var table = document.getElementById('device-table');
+    if (table) table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  /* 搜索和排序都会改变「哪些行、什么顺序」，两者都要回到第一页 */
+  window.__resetPage = function () {
+    currentPage = 1;
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', applyPaging);
+  } else {
+    applyPaging();
+  }
+
+
+  /* =======================================================
    * 搜索设备
    * ======================================================= */
 
@@ -3858,6 +4026,10 @@ const dashboardScript = `
       count.textContent =
         visible + ' 台';
     }
+
+    // 搜索结果变了，停在第 5 页没有意义
+    if (window.__resetPage) window.__resetPage();
+    if (window.__applyPaging) window.__applyPaging();
 
   };
 
@@ -3992,6 +4164,10 @@ const dashboardScript = `
         tbody.appendChild(row);
       }
     );
+
+    // 顺序变了，第一页装的已经是另一批设备，回到第 1 页才符合预期
+    if (window.__resetPage) window.__resetPage();
+    if (window.__applyPaging) window.__applyPaging();
 
   };
 
@@ -4617,6 +4793,8 @@ function renderDeviceTable(
       </table>
 
     </div>
+
+    <div class="pager" id="device-pager"></div>
   `;
 }
 
