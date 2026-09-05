@@ -1361,7 +1361,7 @@ ${baseStyles()}
 
   .device-metrics {
     display:grid;
-    /* auto-fill 而不是 auto-fit：只有电量一项时也保持一格宽度，不会被拉满整行 */
+    /* auto-fill 而不是 auto-fit：只剩一项时也保持一格宽度，不会被拉满整行 */
     grid-template-columns:
       repeat(auto-fill,minmax(190px,1fr));
 
@@ -2552,62 +2552,6 @@ function renderCameras(cameras) {
 }
 
 /* =========================================================
- * Device score
- * ========================================================= */
-
-function calculateDeviceScore(
-  cpuUsage,
-  memoryUsage,
-  storageUsage,
-  batteryLevel
-) {
-  /*
-   * 这是“状态评分”，不是性能跑分。
-   *
-   * 数值越高代表当前状态越健康。
-   */
-
-  let score = 100;
-  let count = 0;
-
-  const cpu = safeNumber(cpuUsage);
-
-  if (cpu !== null) {
-    score += 100 - cpu;
-    count++;
-  }
-
-  const mem = safeNumber(memoryUsage);
-
-  if (mem !== null) {
-    score += 100 - mem;
-    count++;
-  }
-
-  const storage = safeNumber(storageUsage);
-
-  if (storage !== null) {
-    score += 100 - storage;
-    count++;
-  }
-
-  const battery = safeNumber(batteryLevel);
-
-  if (battery !== null) {
-    score += battery;
-    count++;
-  }
-
-  if (!count) {
-    return null;
-  }
-
-  return Math.round(
-    score / (count + 1)
-  );
-}
-
-/* =========================================================
  * 可连地址
  * ========================================================= */
 
@@ -2768,13 +2712,6 @@ function renderInfo(d, tr) {
     bat.level
   );
 
-  const score = calculateDeviceScore(
-    cpuUsage,
-    memoryUsage,
-    storageUsage,
-    batteryLevel
-  );
-
   /* =======================================================
    * Overview
    * ======================================================= */
@@ -2836,16 +2773,16 @@ function renderInfo(d, tr) {
       </div>
 
       ${
-        score !== null
+        batteryLevel !== null
           ? `
             <div class="device-overview-score">
 
               <div class="device-score-number">
-                ${score}
+                ${fmtPercent(batteryLevel)}
               </div>
 
               <div class="device-score-label">
-                状态评分
+                电量
               </div>
 
             </div>
@@ -2860,7 +2797,13 @@ function renderInfo(d, tr) {
    * Quick metrics
    * ======================================================= */
 
-  const metrics = `
+  // 三项都没有时整块不渲染：空的 grid 虽然没高度，margin-bottom 仍会留一段空白
+  const hasMetrics =
+    cpuUsage !== null ||
+    memoryUsage !== null ||
+    storageUsage !== null;
+
+  const metrics = !hasMetrics ? '' : `
     <div class="device-metrics">
 
       ${
@@ -2936,33 +2879,6 @@ function renderInfo(d, tr) {
                 <div
                   class="device-progress-fill"
                   style="width:${progressPercent(storageUsage)}%">
-                </div>
-              </div>
-
-            </div>
-          `
-          : ''
-      }
-
-      ${
-        batteryLevel !== null
-          ? `
-            <div class="device-metric">
-
-              <div class="device-metric-head">
-                <span class="device-metric-name">
-                  电量
-                </span>
-
-                <span class="device-metric-value">
-                  ${fmtPercent(batteryLevel)}
-                </span>
-              </div>
-
-              <div class="device-progress">
-                <div
-                  class="device-progress-fill"
-                  style="width:${progressPercent(batteryLevel)}%">
                 </div>
               </div>
 
@@ -3104,11 +3020,6 @@ function renderInfo(d, tr) {
       ),
 
       row(
-        '设备 ID',
-        d.deviceId
-      ),
-
-      row(
         '应用版本',
         appVersion
           ? `${appVersion}${
@@ -3183,10 +3094,6 @@ function renderInfo(d, tr) {
           : ''
       ),
       row(
-        'OpenGL ES',
-        pf.glEsVersion
-      ),
-      row(
         'Vulkan',
         firstDefined(
           pf.vulkanVersion,
@@ -3253,11 +3160,6 @@ function renderInfo(d, tr) {
       row(
         '分辨率',
         resolution
-      ),
-
-      row(
-        'Density',
-        display.density
       ),
 
       row(
