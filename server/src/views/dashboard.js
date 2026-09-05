@@ -2238,12 +2238,6 @@ function getDisplayInfo(hw, sys) {
       hw.displayHeight
     ),
 
-    density: firstDefined(
-      display.density,
-      hw.displayDensity,
-      hw.density
-    ),
-
     dpi: firstDefined(
       display.dpi,
       hw.displayDpi,
