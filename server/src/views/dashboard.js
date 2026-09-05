@@ -27,7 +27,6 @@
 
 const { esc, wgs84ToGcj02 } = require('../util');
 const { baseStyles } = require('./styles');
-const { classify: ecClassify, ago: ecAgo } = require('./ecRegistry');
 
 /**
  * 按字段统计出现次数
@@ -1408,7 +1407,7 @@ ${baseStyles()}
     gap:7px;
   }
 
-  .net-refresh-state {
+  .net-updated {
     margin-left:auto;
 
     font-family:var(--mono);
@@ -1418,30 +1417,6 @@ ${baseStyles()}
     color:var(--text-faint);
 
     white-space:nowrap;
-  }
-
-  .net-refresh {
-    padding:2px 9px;
-
-    border:1px solid var(--border);
-    border-radius:6px;
-
-    background:var(--panel);
-    color:var(--clay);
-
-    font-family:var(--mono);
-    font-size:10px;
-
-    cursor:pointer;
-  }
-
-  .net-refresh:hover:not(:disabled) {
-    background:rgba(217,119,87,.1);
-  }
-
-  .net-refresh:disabled {
-    opacity:.5;
-    cursor:default;
   }
 
   .info-card h4::before {
@@ -2354,6 +2329,9 @@ function getNetworkInfo(net) {
       wifi.type
     ),
 
+    // 新版设备上报的有序可连地址；老设备没有这个字段，退回 ipv4/ipv6
+    addresses: net.addresses,
+
     ipv4: net.ipv4,
     ipv6: net.ipv6,
 
@@ -2650,178 +2628,58 @@ function calculateDeviceScore(
 }
 
 /* =========================================================
- * Easycontrol 登记地址
+ * 可连地址
  * ========================================================= */
 
 /**
- * 地址归一化，只用于比较是否同一个。
- * 本项目里 IPv6 统一写成 [xxx]，但两边来源不同，写法不一定一致。
+ * 标出每个地址是哪一类，光看一串十六进制分不清哪个能连。
+ * 只看地址本身，不代表可达性——那要 Easycontrol 真去连才知道。
  */
-function ecNormalizeAddress(value) {
-  const text = String(value || '').trim().toLowerCase();
-  return text.startsWith('[') && text.endsWith(']') ? text.slice(1, -1) : text;
+function classifyAddress(address) {
+  const bare = address.startsWith('[') ? address.slice(1, -1) : address;
+  if (!bare.includes(':')) {
+    if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(bare)) return '内网v4';
+    return '公网v4';
+  }
+  const lower = bare.toLowerCase();
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return 'ULA';
+  if (lower.startsWith('fe8') || lower.startsWith('fe9')) return '链路本地';
+  return '全局v6';
 }
 
 /**
- * 把登记表里的记录认到看板的设备上，认出来的挂在 `d.ecRegistry`。
+ * 「网络」卡片里的地址段。
  *
- * 麻烦在于两张表的主键根本不是一个东西：看板用 ANDROID_ID（应用能读），
- * 登记表用 ro.serialno（安卓10起普通应用读不到，是 Easycontrol 用 shell 权限读出来传过去的）。
- * 同一台手机在两边是两个 ID，没有现成的连接键，只能靠内容去认：
+ * 新版设备上报的是一个有序的 `addresses`——只含真正能连上的地址（带 INTERNET
+ * 能力的网络，排除了 IMS 这类专用 APN、ULA、蜂窝私有 v4），默认网络排最前，
+ * Easycontrol 按这个顺序并发尝试。
  *
- *  1. **地址重合**——两边报的是同一台机器时，至少有一个地址会一模一样。
- *     这是唯一不会认错人的判据，优先用。
- *  2. **机型兜底**——地址全都换过了（比如看板那份是上周的）时才走这条。
- *     登记表的 name 是 `品牌 型号`，看板有独立的型号字段，用后缀比对。
- *     但机型会撞车（这台服务器上有三百多台设备，同型号的不止一台），
- *     所以**两边都必须唯一**才认，宁可不认也不能张冠李戴——认错人就等于
- *     把别人手机的可连地址显示成你的。
- *
- * 一条登记记录最多认一台设备，反之亦然。
- *
- * @param {Array} devices 看板的设备列表，会被就地修改
- * @param {object} ecDevices 登记表，形如 { 序列号: { addresses, port, name, updatedAt } }
- * @param {number} staleMs 多久没上报算过期，跟接口侧同一个值；一并挂到记录上供渲染时用
- */
-function attachEcRegistry(devices, ecDevices, staleMs) {
-  const entries = Object.entries(ecDevices || {});
-  if (!entries.length || !devices.length) {
-    return;
-  }
-
-  const takenDevices = new Set();
-  const matchedSerials = new Set();
-
-  const deviceAddresses = new Map();
-  for (const d of devices) {
-    const net = (d.deviceInfo || {}).network || {};
-    const list = []
-      .concat(Array.isArray(net.ipv4) ? net.ipv4 : [])
-      .concat(Array.isArray(net.ipv6) ? net.ipv6 : [])
-      .map(ecNormalizeAddress)
-      .filter(Boolean);
-    deviceAddresses.set(d, new Set(list));
-  }
-
-  /* 第一轮：地址重合 */
-  for (const [serial, record] of entries) {
-    const addresses = (record.addresses || []).map(ecNormalizeAddress).filter(Boolean);
-    if (!addresses.length) {
-      continue;
-    }
-    const hit = devices.find(
-      (d) => !takenDevices.has(d) && addresses.some((a) => deviceAddresses.get(d).has(a))
-    );
-    if (hit) {
-      hit.ecRegistry = Object.assign({ serial, staleMs }, record);
-      takenDevices.add(hit);
-      matchedSerials.add(serial);
-    }
-  }
-
-  /* 第二轮：机型兜底，两边都唯一才认 */
-  const modelOf = (d) => String(((d.deviceInfo || {}).device || {}).model || '').trim().toLowerCase();
-
-  for (const [serial, record] of entries) {
-    if (matchedSerials.has(serial)) {
-      continue;
-    }
-    const name = String(record.name || '').trim().toLowerCase();
-    if (!name) {
-      continue;
-    }
-
-    // 登记表的 name 是「品牌 型号」，型号本身可能带空格（如 Redmi Note 8），
-    // 所以按后缀比，不按最后一段拆
-    const candidates = devices.filter((d) => {
-      if (takenDevices.has(d)) {
-        return false;
-      }
-      const model = modelOf(d);
-      return model && (name === model || name.endsWith(' ' + model));
-    });
-    if (candidates.length !== 1) {
-      continue;
-    }
-
-    // 登记表这边也要唯一：同机型的另一条记录同样会命中这台，那就谁都不认
-    const rivals = entries.filter(([otherSerial, other]) => {
-      if (otherSerial === serial || matchedSerials.has(otherSerial)) {
-        return false;
-      }
-      const otherName = String(other.name || '').trim().toLowerCase();
-      const model = modelOf(candidates[0]);
-      return otherName === model || otherName.endsWith(' ' + model);
-    });
-    if (rivals.length) {
-      continue;
-    }
-
-    candidates[0].ecRegistry = Object.assign({ serial, matchedBy: 'model', staleMs }, record);
-    takenDevices.add(candidates[0]);
-    matchedSerials.add(serial);
-  }
-}
-
-/**
- * 「网络」卡片里的 Easycontrol 登记地址段。
- *
- * 只有带口令访问首页时 `d.ecRegistry` 才会有值（见 stats.js 的路由），
- * 所以这里不用再判权限。
+ * 还没升级到新版的设备只有旧的 ipv4/ipv6 两个数组，那是「当前默认网络的快照」，
+ * 语义不同且可能是几天前的，所以只在没有 addresses 时才拿来兜底显示。
  *
  * @param {object} d 设备记录
+ * @param {object} net 归一化后的网络信息
  * @returns {Array<string>} info-row 片段
  */
-function ecRegistryRows(d) {
-  const ec = d.ecRegistry;
-  if (!ec) {
-    return [];
+function addressRows(d, net) {
+  const addresses = Array.isArray(net.addresses) ? net.addresses : [];
+
+  if (!addresses.length) {
+    // 旧设备：保持原样按 IPv4 / IPv6 分组列出
+    return [...ipRows('IPv4', net.ipv4), ...ipRows('IPv6', net.ipv6)];
   }
 
-  const updatedAt = ec.updatedAt || 0;
-  const stale = Date.now() - updatedAt > (ec.staleMs || 0);
-  const port = ec.port || 5555;
-
-  const rows = [
-    row('EC 序列号', ec.serial + (ec.matchedBy === 'model' ? '（按机型匹配）' : '')),
-    row('EC 上报', ecAgo(updatedAt) + (stale ? ' · 已过期' : '')),
-  ];
-
-  // 地址按上报顺序排，控制端是并发尝试的，排在前面不代表更优先
-  for (const address of ec.addresses || []) {
-    rows.push(row('EC 地址 · ' + ecClassify(address), address + ':' + port));
-  }
-
-  return rows;
+  const port = d.adbPort || 0;
+  return addresses.map((address) =>
+    row('可连地址 · ' + classifyAddress(address), port ? address + ':' + port : address));
 }
 
-
-/**
- * 「网络」卡片右上角的按需刷新入口。
- *
- * 点它只是把指令记到服务端内存里，真正生效要等设备下一次轮询（最长 60 秒）
- * 取走并回报。设备没开无障碍、或进程被系统杀掉时根本收不到指令，
- * 所以这里的状态文案必须如实反映「已请求、等待设备响应」这个中间态，
- * 不能点完就假装成功。
- *
- * @param {object} d 设备记录
- * @returns {string} HTML；没有 deviceId 时返回空串
- */
-function networkRefreshAction(d) {
-  const deviceId = String(d.deviceId || '');
-
-  if (!deviceId) {
+/** 「网络」卡片右上角：最后一次上报的时刻 */
+function networkUpdatedAction(d) {
+  if (!d.networkUpdatedAt) {
     return '';
   }
-
-  const updated = d.networkUpdatedAt
-    ? `更新于 ${esc(d.networkUpdatedAt)}`
-    : '尚未刷新过';
-
-  return `
-    <span class="net-refresh-state" data-refresh-state="${esc(deviceId)}">${updated}</span>
-    <button type="button" class="net-refresh" data-refresh-device="${esc(deviceId)}">刷新</button>
-  `;
+  return `<span class="net-updated">更新于 ${esc(d.networkUpdatedAt)}</span>`;
 }
 
 
@@ -3315,27 +3173,18 @@ function renderInfo(d, tr) {
           : ''
     ),
 
-    ...ipRows(
-      'IPv4',
-      net.ipv4
-    ),
+    // 设备主动上报的可连地址，网络一变就重报；没升级的老设备退回旧的 IPv4/IPv6
+    ...addressRows(d, net),
 
-    ...ipRows(
-      'IPv6',
-      net.ipv6
-    ),
-
-    // Easycontrol 登记的可连地址。它和上面的 IPv4/IPv6 不是一回事：
-    // 上面那份是本应用自己采的、随统计上报（可能是几天前的快照），
-    // 这份是被控端每次网络一变就重报的，专门用来跨网络找回设备。
-    ...ecRegistryRows(d)
+    row('设备序列号', d.ecSerial),
+    row('adb 端口', d.adbPort ? String(d.adbPort) : '')
   ];
 
   const networkCard = card(
     '网络',
     networkRows,
     false,
-    networkRefreshAction(d)
+    networkUpdatedAction(d)
   );
 
   /* =======================================================
@@ -3853,184 +3702,6 @@ const dashboardScript = `
 (function () {
 
   'use strict';
-
-  /* =======================================================
-   * Network 按需刷新
-   * ======================================================= */
-
-  /* 管理口令与发版 / 脚本管理页共用同一份 localStorage 记录 */
-  function autoslideAdminToken() {
-    var token = '';
-
-    try {
-      token = localStorage.getItem('autoslideAdminToken') || '';
-    } catch (e) {}
-
-    if (!token) {
-      token = window.prompt('请输入管理口令') || '';
-
-      if (token) {
-        try {
-          localStorage.setItem('autoslideAdminToken', token);
-        } catch (e) {}
-      }
-    }
-
-    return token;
-  }
-
-
-  function setRefreshState(deviceId, text) {
-    var el = document.querySelector(
-      '[data-refresh-state="' + deviceId + '"]'
-    );
-
-    if (el) {
-      el.textContent = text;
-    }
-  }
-
-
-  /*
-   * 轮询刷新结果。
-   *
-   * pending 变回 false 就说明设备已经取走指令并回报过了。此时设备详情是
-   * 服务端预渲染进 <template> 的，没办法只更新那一张卡片，所以整页重载，
-   * 再把刚才那台设备的弹层原样打开。
-   */
-  function pollRefresh(deviceId, token, startedAt, btn) {
-    var waited = Math.round((Date.now() - startedAt) / 1000);
-
-    // 设备可能压根没开无障碍、或进程被系统杀了，等下去没有意义。
-    // 指令仍然留在服务端，设备下次上线时会执行。
-    if (waited > 180) {
-      setRefreshState(deviceId, '设备暂无响应 · 指令已排队');
-      if (btn) btn.disabled = false;
-      return;
-    }
-
-    setRefreshState(deviceId, '已请求 · 等待设备响应（' + waited + 's）');
-
-    fetch(
-      '/api/device/status?deviceId=' + encodeURIComponent(deviceId),
-      { headers: { 'X-Admin-Token': token } }
-    )
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        if (!j.ok) {
-          setRefreshState(deviceId, '查询失败：' + (j.error || '未知错误'));
-          if (btn) btn.disabled = false;
-          return;
-        }
-
-        if (j.pending) {
-          setTimeout(function () {
-            pollRefresh(deviceId, token, startedAt, btn);
-          }, 2000);
-          return;
-        }
-
-        setRefreshState(deviceId, '已更新 · 正在刷新页面');
-
-        try {
-          sessionStorage.setItem('autoslideReopenDevice', deviceId);
-        } catch (e) {}
-
-        location.reload();
-      })
-      .catch(function () {
-        setRefreshState(deviceId, '查询失败 · 网络异常');
-        if (btn) btn.disabled = false;
-      });
-  }
-
-
-  document.addEventListener('click', function (event) {
-    var btn =
-      event.target && event.target.closest
-        ? event.target.closest('[data-refresh-device]')
-        : null;
-
-    if (!btn) {
-      return;
-    }
-
-    // 别让这次点击冒泡成「打开设备详情」
-    event.preventDefault();
-    event.stopPropagation();
-
-    var deviceId = btn.getAttribute('data-refresh-device');
-    var token = autoslideAdminToken();
-
-    if (!token) {
-      return;
-    }
-
-    btn.disabled = true;
-    setRefreshState(deviceId, '正在下发指令…');
-
-    fetch('/api/device/refresh', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Admin-Token': token
-      },
-      body: JSON.stringify({ deviceId: deviceId })
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        if (!j.ok) {
-          // 口令错了就把本地那份删掉，否则每次都拿错的去撞
-          if (j.error === 'bad token') {
-            try {
-              localStorage.removeItem('autoslideAdminToken');
-            } catch (e) {}
-            setRefreshState(deviceId, '管理口令不正确，请重试');
-          } else {
-            setRefreshState(deviceId, '下发失败：' + (j.error || '未知错误'));
-          }
-
-          btn.disabled = false;
-          return;
-        }
-
-        pollRefresh(deviceId, token, Date.now(), btn);
-      })
-      .catch(function () {
-        setRefreshState(deviceId, '下发失败 · 网络异常');
-        btn.disabled = false;
-      });
-  });
-
-
-  /* 整页重载后把刚才那台设备的弹层重新打开 */
-  function reopenLastDevice() {
-    var reopen = '';
-
-    try {
-      reopen = sessionStorage.getItem('autoslideReopenDevice') || '';
-      sessionStorage.removeItem('autoslideReopenDevice');
-    } catch (e) {}
-
-    if (!reopen) {
-      return;
-    }
-
-    var row = document.querySelector(
-      '.device-row[data-device-id="' + reopen + '"]'
-    );
-
-    if (row) {
-      row.click();
-    }
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', reopenLastDevice);
-  } else {
-    reopenLastDevice();
-  }
-
 
   /* =======================================================
    * Device modal
@@ -5118,9 +4789,9 @@ function renderDashboardStats(
  * Dashboard
  * ========================================================= */
 
-function dashboardHtml(stats, announcement, ec) {
+function dashboardHtml(stats, announcement) {
 
-  /* 真实调用是 dashboardHtml(readStats(), readAnnouncement(), ec)。
+  /* 真实调用是 dashboardHtml(readStats(), readAnnouncement())。
      也兼容直接传设备数组，方便本地预览。 */
   stats = stats || {};
 
@@ -5130,12 +4801,6 @@ function dashboardHtml(stats, announcement, ec) {
 
   if (Array.isArray(stats)) {
     stats = { devices };
-  }
-
-  /* Easycontrol 登记地址：只有带口令访问时 stats.js 才会把它传进来，
-     没口令时 ec 是 null，下面的设备详情里就完全不出现这一段 */
-  if (ec && ec.devices) {
-    attachEcRegistry(devices, ec.devices, ec.staleMs || 0);
   }
 
   const ann = announcement || { title: '公告栏', content: '', updatedAt: '' };

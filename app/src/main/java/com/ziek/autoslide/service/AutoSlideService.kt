@@ -45,7 +45,6 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import com.ziek.autoslide.A11yState
-import com.ziek.autoslide.NetworkReporter
 import com.ziek.autoslide.DEFAULT_AUTO_TAP_ENABLED
 import com.ziek.autoslide.DEFAULT_DOUYIN_AUTOPLAY
 import com.ziek.autoslide.DEFAULT_KEYWORDS
@@ -608,7 +607,6 @@ private const val SPEED_CURVE_FACTOR = 0.7
         // 不再启动固定间隔轮询，改为在 onAccessibilityEvent 里事件驱动触发，省电
         // 后台按需刷新网络信息的指令轮询：挂在无障碍服务而非 MainActivity——
         // 主界面可见时间通常只有十几秒，定时器放那里几乎轮不到
-        NetworkReporter.start(serviceScope, this)
     }
 
     /**
@@ -631,7 +629,6 @@ private const val SPEED_CURVE_FACTOR = 0.7
         stopSlide()
         // serviceScope.cancel() 也会带走轮询协程，这里显式停一次，
         // 让「启动/停止」在日志里成对出现，排查时不用去猜
-        NetworkReporter.stop()
         serviceScope.cancel()
         runCatching { textRecognizer?.close() }
         textRecognizer = null

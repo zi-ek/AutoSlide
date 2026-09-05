@@ -42,6 +42,18 @@ const LIMIT_APK = 200 * 1024 * 1024;
  */
 const ADMIN_TOKEN = process.env.AUTOSLIDE_ADMIN_TOKEN || '';
 
+/**
+ * 上报口令：设备往 /api/report/network 写当前地址时要带的凭据。
+ *
+ * 和管理口令分开，因为持有者不同——这一个编译进 AutoSlide / adbboot 的 APK，
+ * 反编译就能拿到，等于半公开；管理口令只在你手上，绝不能混用。
+ *
+ * 它挡的是「别人把某台设备的地址改成任意值」——Easycontrol 下次就会去连那个
+ * 地址。读那一侧完全公开，因为看板本来就是公开的。
+ *   Environment=AUTOSLIDE_REPORT_TOKEN=你的口令
+ */
+const REPORT_TOKEN = process.env.AUTOSLIDE_REPORT_TOKEN || '';
+
 module.exports = {
   PORT,
   DATA_DIR,
@@ -60,4 +72,5 @@ module.exports = {
   IP_CACHE_MAX,
   LIMIT_APK,
   ADMIN_TOKEN,
+  REPORT_TOKEN,
 };

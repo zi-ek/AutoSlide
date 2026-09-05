@@ -20,7 +20,6 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.net.ConnectivityManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
@@ -29,10 +28,6 @@ import android.os.SystemClock
 import android.provider.Settings
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.Inet4Address
-import java.net.Inet6Address
-import java.net.InetAddress
-import java.net.NetworkInterface
 import java.util.Locale
 
 object DeviceInfo {
@@ -142,54 +137,18 @@ object DeviceInfo {
      */
     fun collectNetwork(context: Context): JSONObject = networkSection(context)
 
-    /* 网络：本机 IP 地址（IPv4 / IPv6）。
-     *
-     * 只取当前默认网络的地址，与系统「设置 - 状态信息」里显示的 IP 一致。
-     * 手机上往往同时挂着多条蜂窝网络（上网、IMS、副卡等），它们各自都有全局 IPv6，
-     * 但只有默认网络这条能用于连接。旧实现枚举所有网卡（移植自 Easycontrol 的
-     * PublicTools.getLocalIp），会把 IMS 专用地址也一并报上去，后台无从分辨哪个才是真实出口。
-     * 仅在统计上报时随 deviceInfo 交给后台，供排查设备所在网段，App 端不展示。 */
-    private fun networkSection(context: Context): JSONObject {
-        val ipv4 = mutableListOf<String>()
-        val ipv6 = mutableListOf<String>()
-        val fromDefaultNetwork = runCatching {
-            val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            val network = manager?.activeNetwork ?: return@runCatching false
-            val link = manager.getLinkProperties(network) ?: return@runCatching false
-            link.linkAddresses.forEach { addIp(it.address, ipv4, ipv6) }
-            true
-        }.getOrDefault(false)
-        if (!fromDefaultNetwork) {
-            // 拿不到默认网络时（断网瞬间、系统异常）退回遍历网卡，宁可多报也不让这段全空
-            runCatching {
-                val interfaces = NetworkInterface.getNetworkInterfaces()
-                while (interfaces.hasMoreElements()) {
-                    val nif = interfaces.nextElement()
-                    if (!nif.isUp) continue
-                    val addrs = nif.inetAddresses
-                    while (addrs.hasMoreElements()) addIp(addrs.nextElement(), ipv4, ipv6)
-                }
-            }
-        }
-        return JSONObject().put("ipv4", JSONArray(ipv4)).put("ipv6", JSONArray(ipv6))
-    }
-
     /**
-     * 将单个地址归类到 IPv4 / IPv6 列表。
+     * 网络段：本机当前的可连地址。
      *
-     * @param addr 待归类地址
-     * @param ipv4 IPv4 结果列表
-     * @param ipv6 IPv6 结果列表，按惯例加方括号
+     * 采集本身在 [LocalAddresses]——全应用只有那一份。这里以前有过自己的一套
+     * （只看默认网络、留 ULA、留蜂窝私有 v4），和 Easycontrol 那套报出来的地址对不上，
+     * 同一台手机在看板上显示两组数字，谁也说不清哪组是对的。现在两边同源。
+     *
+     * 报的是一个**有序列表**而不再拆成 ipv4/ipv6：顺序有意义（默认网络排最前，
+     * 控制端按这个顺序并发尝试），拆开就丢了。
      */
-    private fun addIp(addr: InetAddress, ipv4: MutableList<String>, ipv6: MutableList<String>) {
-        if (addr.isLoopbackAddress) return
-        when (addr) {
-            is Inet4Address -> addr.hostAddress?.let { ipv4.add(it) }
-            // 链路本地地址（fe80::）必须带作用域才能用，对连接没意义，不上报
-            is Inet6Address ->
-                if (!addr.isLinkLocalAddress) addr.hostAddress?.let { ipv6.add("[$it]") }
-        }
-    }
+    private fun networkSection(context: Context): JSONObject =
+        JSONObject().put("addresses", JSONArray(LocalAddresses.collect(context)))
 
     /**
      * 供统计上报用的展示型号，与 [deviceName] 同源。

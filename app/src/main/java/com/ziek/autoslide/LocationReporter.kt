@@ -4,7 +4,7 @@ package com.ziek.autoslide
  * 设备地理位置采集。
  *
  * 走系统 [LocationManager]，不引入 Google Play 服务的 FusedLocationProviderClient——
- * 本项目的目标机型里华为/荣耀无 GMS、其余机型也常连不上 Google（见 [NetworkReporter]
+ * 本项目的目标机型里华为/荣耀无 GMS、其余机型也常连不上 Google（见 [com.ziek.autoslide.ec.EcNetworkWatcher]
  * 的说明），依赖 play-services-location 会在这些设备上直接不可用。系统 LocationManager
  * 是所有 Android 设备都有的最小公分母。
  *

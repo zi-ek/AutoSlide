@@ -28,6 +28,7 @@ import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import com.ziek.autoslide.LocalAddresses
 import com.ziek.autoslide.LogX
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -151,7 +152,7 @@ object EcNetworkWatcher {
         var reason = first
         for (attempt in 1..MAX_ATTEMPTS) {
             // 每次重试都重新采一遍：这几十秒里网络很可能又变了，报旧的没有意义
-            val addresses = EcRegistry.globalAddresses(context)
+            val addresses = LocalAddresses.collect(context)
             if (addresses.isEmpty()) {
                 // 正处在没有任何可用地址的状态（飞行模式、切换中途）。
                 // 重试也是白搭，等下一次回调把我们叫醒

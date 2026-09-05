@@ -1,219 +1,233 @@
-// 指令域：后台按需下发的一次性设备指令
+// 设备地址域：设备主动上报当前可连地址，看板与 Easycontrol 从同一份数据读
 //
-// 目前只有一种指令：让某台设备立刻重报一次 network 段。
-//
-// 为什么指令只存内存、不落盘：
-//   1. 指令是瞬态的——服务重启后丢失完全可接受，后台再点一次即可；
-//   2. 轮询接口会被每台在线设备每分钟敲一次，若每次都读写 JSON 文件，
-//      stats.json（当前 450 KB 量级）会被整份重写上千次/小时，纯粹浪费磁盘。
-//   只有设备真正回报数据的那一次才落盘。
+// 要解决的问题：Easycontrol 两端都是手机，IP 一换网络就变。局域网内还能靠 mDNS
+// 找（adbd 自己在广播），跨网络就彻底失联——两边都在漂，没有汇合点。这里就是那个
+// 汇合点。它同时也是看板「网络」卡片的数据来源，两者用的是同一条记录，不再分家。
 //
 // 接口分工：
-//   POST /api/device/refresh   后台下指令        （需管理口令）
-//   GET  /api/device/pending   设备问有无指令    （无鉴权，零磁盘 I/O）
-//   POST /api/report/network   设备回报 network  （无鉴权，最小间隔兜底）
-//   GET  /api/device/status    后台轮询结果      （需管理口令）
+//   POST /api/report/network      设备上报当前地址（需 AUTOSLIDE_REPORT_TOKEN）
+//   GET  /api/device/address      按序列号查地址，给 Easycontrol 用（公开）
 //
-// ⚠️ /api/device/pending 与 /api/report/network 无法鉴权——App 侧没有任何凭据可用，
-//    deviceId 是客户端自报且公开在看板上。因此伪造 deviceId 往看板写假 IP 是可能的，
-//    与既有的 /api/report 属同一性质。这里只能用最小间隔限制写入频率，
-//    真正的解法是给设备签发 per-device token，那是另一件事。
+// 为什么写要口令、读不要：
+//   读出去最多是「知道某台设备此刻在哪」，而这台服务器的看板本来就是公开的；
+//   写进来却能把某台设备的地址改成任意值，Easycontrol 下次就会去连那个地址——
+//   那是改写别人的连接目标，性质完全不同。上报方都是我们自己的 APK，带个请求头
+//   零成本，所以写这一侧必须认口令，且没配置口令时一律拒绝（fail closed）。
+//
+// 两个设备标识的关系：
+//   deviceId  = ANDROID_ID，AutoSlide 用它，与统计库的主键一致
+//   serial    = ro.serialno，Easycontrol 认的就是它；安卓10 起普通应用读不到，
+//               由 Easycontrol 部署时用 shell 权限读出来交给设备
+//   同一台手机上不同应用的 ANDROID_ID 并不相同（按签名分配），所以 adbboot 只报
+//   serial，不报 deviceId——它那个 ANDROID_ID 和 AutoSlide 的对不上，报了反而错。
 
-const { ADMIN_TOKEN, LIMIT_JSON_BODY } = require('./config');
+const { REPORT_TOKEN, LIMIT_JSON_BODY } = require('./config');
 const { readFields, sendJson } = require('./http');
 const { nowCN, sanitizeLocation } = require('./util');
 const { readStats, updateStats } = require('./stats');
 
-/* deviceId -> 下指令的时刻（ms）；设备取走或过期后移除 */
-const pendingRefresh = new Map();
-
-/* deviceId -> 上次接受回报的时刻（ms），仅用于最小间隔限流 */
-const lastReportAt = new Map();
-
-/* 指令有效期：设备长期不在线时不要无限堆积 */
-const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
-
-/* 同一设备两次回报的最小间隔，挡住高频伪造写入 */
-const MIN_REPORT_INTERVAL_MS = 30 * 1000;
-
-/* 待执行指令数量上限，防止内存被刷爆 */
-const MAX_PENDING = 1000;
-
-/* 口令校验：没配置一律拒绝（fail closed），与发版、脚本删除同一道门 */
-function checkAdmin(req, res, token) {
-  if (!ADMIN_TOKEN) {
-    sendJson(res, 403, { ok: false, error: 'admin token not configured' });
+/* 上报口令校验：没配置一律拒绝，不退化成人人可写 */
+function checkReportToken(req, res) {
+  if (!REPORT_TOKEN) {
+    sendJson(res, 503, { ok: false, error: 'report token not configured' });
     return false;
   }
-  if (String(token || '') !== ADMIN_TOKEN) {
-    sendJson(res, 403, { ok: false, error: 'bad token' });
+  if (String(req.headers['x-report-token'] || '') !== REPORT_TOKEN) {
+    sendJson(res, 401, { ok: false, error: 'unauthorized' });
     return false;
   }
   return true;
 }
 
-/* 清掉过期指令；每次读写指令表时顺带跑一次，不另起定时器 */
-function sweepExpired() {
-  const cutoff = Date.now() - PENDING_TTL_MS;
-  for (const [id, at] of pendingRefresh) {
-    if (at < cutoff) pendingRefresh.delete(id);
-  }
+/* 设备标识限定字符集，免得被拿去做路径或注入 */
+function cleanSerial(value) {
+  const text = String(value || '').trim();
+  return /^[A-Za-z0-9._:-]{1,64}$/.test(text) ? text : '';
+}
+
+function cleanPort(value) {
+  const port = Number(value);
+  return Number.isInteger(port) && port > 0 && port < 65536 ? port : 0;
 }
 
 /**
- * 只保留看板真正会渲染的网络字段，且逐项限长。
+ * 地址清洗：只收 IPv4 / 带方括号的 IPv6 / 主机名，逐项限长，总数封顶。
  *
- * 不直接存客户端传来的整个对象：这个接口无鉴权，整块存下等于让任何人
- * 往 stats.json 里塞任意结构的 JSON。
- *
- * @param {object} raw 客户端上报的 network 段
- * @returns {object} 清洗后的字段集合（只含本次带来的键）
+ * 不做可达性判断——服务器在自己的网络里，判断不了对方从哪能连上，
+ * 那是 Easycontrol 并发尝试时才知道的事。
  */
-function sanitizeNetwork(raw) {
-  const src = raw && typeof raw === 'object' ? raw : {};
-  const out = {};
-
-  const ipList = (v) =>
-    (Array.isArray(v) ? v : [])
-      .slice(0, 20)
-      .map((x) => String(x || '').slice(0, 64))
-      .filter(Boolean);
-
-  if (src.ipv4 !== undefined) out.ipv4 = ipList(src.ipv4);
-  if (src.ipv6 !== undefined) out.ipv6 = ipList(src.ipv6);
-
-  // 客户端目前只报 ipv4/ipv6，其余字段看板已有位置，先留好通道
-  const scalars = [
-    'type', 'networkType', 'ssid', 'bssid', 'rssi', 'frequency',
-    'wifiFrequency', 'linkSpeed', 'gateway', 'dns', 'mac',
-    'vpn', 'vpnConnected', 'proxy', 'proxyEnabled',
-  ];
-  for (const key of scalars) {
-    if (src[key] === undefined || src[key] === null) continue;
-    out[key] = typeof src[key] === 'boolean' ? src[key] : String(src[key]).slice(0, 120);
+function cleanAddresses(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  for (const item of list) {
+    const text = String(item || '').trim();
+    if (!text || text.length > 64) continue;
+    if (!/^[A-Za-z0-9._:[\]-]+$/.test(text)) continue;
+    // 去方括号后比较：同一个 IPv6 有带括号和不带两种写法，存两份等于让客户端白试一次
+    const key = text.startsWith('[') && text.endsWith(']') ? text.slice(1, -1) : text;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= 8) break;
   }
-
   return out;
 }
 
-/* POST /api/device/refresh  {deviceId}  后台下发刷新指令 */
-async function handleRefreshRequest(req, res) {
-  const field = await readFields(req, LIMIT_JSON_BODY);
-  if (!checkAdmin(req, res, field('token') || req.headers['x-admin-token'])) return undefined;
+/**
+ * 认设备。两个标识都可能缺，规则如下：
+ *
+ *  1. 先按 serial 找——它是 Easycontrol 查询用的键，最该保持稳定
+ *  2. 再按 deviceId 找，找到就顺手把 serial 补上（AutoSlide 首次上报走这条）
+ *  3. 都没有就新建一条。只有 serial 的设备（adbboot 先于 AutoSlide 报上来，
+ *     或者那台压根没装 AutoSlide）用 `serial:xxx` 当主键，避免多台挤成一条
+ *
+ * 第 3 条建出来的是「影子记录」。等 AutoSlide 带着真正的 ANDROID_ID 报上来时，
+ * 走第 2 条命中真身，此时把影子记录的地址搬过去再删掉，否则同一台手机会在
+ * 看板上占两行。
+ *
+ * @returns {object|null} 命中的设备记录
+ */
+function resolveDevice(stats, deviceId, serial, name) {
+  const devices = stats.devices || (stats.devices = []);
+  const shadowId = serial ? 'serial:' + serial : '';
 
-  const deviceId = String(field('deviceId') || '').slice(0, 64);
-  if (!deviceId) return sendJson(res, 400, { ok: false, error: 'deviceId required' });
-
-  sweepExpired();
-  if (pendingRefresh.size >= MAX_PENDING && !pendingRefresh.has(deviceId)) {
-    return sendJson(res, 429, { ok: false, error: 'too many pending commands' });
+  if (serial) {
+    const bySerial = devices.find((d) => d.ecSerial === serial);
+    // 影子记录 + 这次带了真 deviceId：说明真身出现了，合并过去
+    if (bySerial && deviceId && bySerial.deviceId === shadowId) {
+      const real = devices.find((d) => d.deviceId === deviceId);
+      if (real) {
+        real.ecSerial = serial;
+        if (!real.adbPort) real.adbPort = bySerial.adbPort;
+        devices.splice(devices.indexOf(bySerial), 1);
+        return real;
+      }
+      // 真身还没建档，把影子记录直接改名认领，省得再造一条
+      bySerial.deviceId = deviceId;
+      return bySerial;
+    }
+    if (bySerial) return bySerial;
   }
 
-  const requestedAt = Date.now();
-  pendingRefresh.set(deviceId, requestedAt);
-  return sendJson(res, 200, { ok: true, deviceId, requestedAt });
+  if (deviceId) {
+    const byId = devices.find((d) => d.deviceId === deviceId);
+    if (byId) {
+      if (serial) byId.ecSerial = serial;
+      return byId;
+    }
+  }
+
+  if (!serial) {
+    // 只有 deviceId 又没建过档：不凭空造设备，让它先走安装上报
+    return null;
+  }
+
+  const created = {
+    deviceId: deviceId || shadowId,
+    ecSerial: serial,
+    brand: String(name || '').split(' ')[0] || '',
+    model: String(name || '').slice(0, 64),
+    firstInstall: nowCN(),
+    installs: 0,
+    deviceInfo: {},
+  };
+  devices.push(created);
+  return created;
 }
 
 /**
- * GET /api/device/pending?deviceId=..  设备轮询自己的待执行指令。
+ * POST /api/report/network
  *
- * 这是全服调用最密集的接口（每台在线设备每分钟一次），因此刻意做成
- * 纯内存查表：不读 stats.json、不写任何文件。
+ * body: {
+ *   deviceId:  "ANDROID_ID"（AutoSlide 带，adbboot 不带）,
+ *   serial:    "ro.serialno",
+ *   port:      5555,
+ *   addresses: ["192.168.1.5", "[240e:...]"],
+ *   name:      "Redmi M2007J3SC"（仅建档用）,
+ *   location:  {...}（可选，采不到时省略，服务端沿用上次）
+ * }
  */
-function handlePending(req, res, url) {
-  const deviceId = String(url.searchParams.get('deviceId') || '').slice(0, 64);
-  if (!deviceId) return sendJson(res, 400, { ok: false, error: 'deviceId required' });
-
-  sweepExpired();
-  return sendJson(res, 200, {
-    ok: true,
-    refreshNetwork: pendingRefresh.has(deviceId),
-  });
-}
-
-/* POST /api/report/network  {deviceId, network}  设备回报，指令随之清除 */
 async function handleNetworkReport(req, res) {
+  if (!checkReportToken(req, res)) return undefined;
+
   const field = await readFields(req, LIMIT_JSON_BODY);
   const deviceId = String(field('deviceId') || '').slice(0, 64);
-  if (!deviceId) return sendJson(res, 400, { ok: false, error: 'deviceId required' });
-
-  const rawNetwork = field('network');
-  const incoming = sanitizeNetwork(
-    typeof rawNetwork === 'string' ? JSON.parse(rawNetwork || '{}') : rawNetwork
-  );
-  if (!Object.keys(incoming).length) {
-    return sendJson(res, 400, { ok: false, error: 'network payload empty' });
+  const serial = cleanSerial(field('serial'));
+  if (!deviceId && !serial) {
+    return sendJson(res, 400, { ok: false, error: 'deviceId or serial required' });
   }
 
-  // 位置随刷新指令一并回报，可选：非法或未采集到时为 null，不覆盖既有值
+  const rawAddresses = field('addresses');
+  const addresses = cleanAddresses(
+    typeof rawAddresses === 'string' ? JSON.parse(rawAddresses || '[]') : rawAddresses
+  );
+  if (!addresses.length) {
+    return sendJson(res, 400, { ok: false, error: 'no address' });
+  }
+
+  const port = cleanPort(field('port')) || 5555;
+  const name = String(field('name') || '').slice(0, 64);
+
+  // 位置可选：采不到时不带，服务端保留上次的值，不会被这次上报抹掉
   const rawLocation = field('location');
   const location = sanitizeLocation(
     typeof rawLocation === 'string' ? JSON.parse(rawLocation || 'null') : rawLocation
   );
 
-  const now = Date.now();
-  const last = lastReportAt.get(deviceId) || 0;
-  if (now - last < MIN_REPORT_INTERVAL_MS) {
-    // 指令仍然清掉：设备已经响应过了，不该让它反复重试
-    pendingRefresh.delete(deviceId);
-    return sendJson(res, 429, { ok: false, error: 'reported too frequently' });
-  }
-  lastReportAt.set(deviceId, now);
-
-  let found = false;
+  let ok = false;
   await updateStats((stats) => {
-    const device = (stats.devices || []).find((d) => d.deviceId === deviceId);
+    const device = resolveDevice(stats, deviceId, serial, name);
     if (!device) return;
-    found = true;
+    ok = true;
     device.deviceInfo = device.deviceInfo || {};
-    // 合并而不是整段替换：客户端这次没带的字段（如将来才采集的 SSID）应当保留
-    device.deviceInfo.network = { ...(device.deviceInfo.network || {}), ...incoming };
+    device.deviceInfo.network = { ...(device.deviceInfo.network || {}), addresses };
+    // 旧字段留着会和 addresses 打架：看板优先读 addresses，读到就不该再看这两个
+    delete device.deviceInfo.network.ipv4;
+    delete device.deviceInfo.network.ipv6;
+    device.adbPort = port;
     device.networkUpdatedAt = nowCN();
-    // 位置采到才更新，采不到保留上次，避免偶发失败把已有位置抹掉
     if (location) {
       device.location = location;
       device.locationUpdatedAt = nowCN();
     }
-    // 设备刚刚应答过指令，说明它确实活着
+    // 刚报上来，说明它确实活着
     device.lastSeen = nowCN();
   });
 
-  pendingRefresh.delete(deviceId);
-
-  if (!found) {
-    // 设备还没在统计库里建档（没上报过安装），不新建记录，避免凭 deviceId 凭空造设备
+  if (!ok) {
     return sendJson(res, 404, { ok: false, error: 'device not found in stats' });
   }
-  return sendJson(res, 200, { ok: true });
+  return sendJson(res, 200, { ok: true, addresses, port });
 }
 
-/* GET /api/device/status?deviceId=..  后台轮询刷新结果 */
-async function handleStatus(req, res, url) {
-  // 口令只走请求头，不接受查询参数——URL 会进反代与浏览器历史的日志
-  if (!checkAdmin(req, res, req.headers['x-admin-token'])) {
-    return undefined;
-  }
-  const deviceId = String(url.searchParams.get('deviceId') || '').slice(0, 64);
-  if (!deviceId) return sendJson(res, 400, { ok: false, error: 'deviceId required' });
+/**
+ * GET /api/device/address?serial=..
+ *
+ * 给 Easycontrol 用：直连和 mDNS 都失败时才该调它。
+ * 公开无口令——这台服务器的看板本来就是公开的，读这一份不增加暴露面。
+ */
+function handleAddressQuery(req, res, url) {
+  const serial = cleanSerial(url.searchParams.get('serial'));
+  if (!serial) return sendJson(res, 400, { ok: false, error: 'serial required' });
 
-  sweepExpired();
-  const device = (readStats().devices || []).find((d) => d.deviceId === deviceId);
+  const device = (readStats().devices || []).find((d) => d.ecSerial === serial);
+  const addresses = (device && device.deviceInfo && device.deviceInfo.network
+    && device.deviceInfo.network.addresses) || [];
+  if (!device || !addresses.length) {
+    return sendJson(res, 404, { ok: false, error: 'not found' });
+  }
   return sendJson(res, 200, {
     ok: true,
-    pending: pendingRefresh.has(deviceId),
-    requestedAt: pendingRefresh.get(deviceId) || 0,
-    networkUpdatedAt: (device && device.networkUpdatedAt) || '',
-    network: (device && device.deviceInfo && device.deviceInfo.network) || null,
-    locationUpdatedAt: (device && device.locationUpdatedAt) || '',
-    location: (device && device.location) || null,
+    addresses,
+    port: device.adbPort || 5555,
+    updatedAt: device.networkUpdatedAt || '',
   });
 }
 
 function register(router) {
-  router.on('POST', '/api/device/refresh', handleRefreshRequest);
-  router.on('GET', '/api/device/pending', handlePending);
   router.on('POST', '/api/report/network', handleNetworkReport);
-  router.on('GET', '/api/device/status', handleStatus);
+  router.on('GET', '/api/device/address', handleAddressQuery);
 }
 
-module.exports = { register, sanitizeNetwork };
+module.exports = { register };
