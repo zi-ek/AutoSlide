@@ -3,6 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
     <!--允许应用访问网络(主要用于检查更新)-->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 读网络状态：监听网络变化（切 Wi-Fi / 掉到蜂窝）以便及时把本机地址报给 Easycontrol，
+         同时也让设备信息里的 IP 走「当前默认网络」而不是遍历全部网卡 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 采集设备大致位置随统计上报：粗略走基站/WiFi 即可，精确用于有 GPS 缓存时提高精度。
          二者是「或」关系，用户只授其一也能定位。仅前台采集，不申请后台定位。 -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />

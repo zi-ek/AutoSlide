@@ -20,6 +20,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
@@ -30,6 +31,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.NetworkInterface
 import java.util.Locale
 
@@ -49,7 +51,7 @@ object DeviceInfo {
         put("hardware", hardwareSection(context))
         put("platform", platformSection(context))
         put("battery", batterySection(context))
-        put("network", networkSection())
+        put("network", networkSection(context))
     }
 
     /* 设备：名称、平台、厂商、型号、语言、应用版本 */
@@ -135,35 +137,58 @@ object DeviceInfo {
      * 与 [collect] 里的 network 段同源，但不采集其余分组——设备重报一次 IP
      * 不该顺带把内存、电池、构建指纹整包再传一遍。
      *
+     * @param context 上下文
      * @return 形如 `{"ipv4":[...],"ipv6":[...]}`
      */
-    fun collectNetwork(): JSONObject = networkSection()
+    fun collectNetwork(context: Context): JSONObject = networkSection(context)
 
-    /* 网络：本机局域网 IP 地址（IPv4 / IPv6）。
-     * 移植自 Easycontrol 的 PublicTools.getLocalIp：
-     * 枚举所有网卡取非环回、非链路本地地址。仅在统计上报时随 deviceInfo 交给后台，
-     * 供排查设备所在网段，App 端不展示。 */
-    private fun networkSection(): JSONObject {
+    /* 网络：本机 IP 地址（IPv4 / IPv6）。
+     *
+     * 只取当前默认网络的地址，与系统「设置 - 状态信息」里显示的 IP 一致。
+     * 手机上往往同时挂着多条蜂窝网络（上网、IMS、副卡等），它们各自都有全局 IPv6，
+     * 但只有默认网络这条能用于连接。旧实现枚举所有网卡（移植自 Easycontrol 的
+     * PublicTools.getLocalIp），会把 IMS 专用地址也一并报上去，后台无从分辨哪个才是真实出口。
+     * 仅在统计上报时随 deviceInfo 交给后台，供排查设备所在网段，App 端不展示。 */
+    private fun networkSection(context: Context): JSONObject {
         val ipv4 = mutableListOf<String>()
         val ipv6 = mutableListOf<String>()
-        runCatching {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            while (interfaces.hasMoreElements()) {
-                val nif = interfaces.nextElement()
-                if (!nif.isUp) continue
-                val addrs = nif.inetAddresses
-                while (addrs.hasMoreElements()) {
-                    val addr = addrs.nextElement()
-                    if (addr.isLoopbackAddress) continue
-                    when (addr) {
-                        is Inet4Address -> addr.hostAddress?.let { ipv4.add(it) }
-                        is Inet6Address ->
-                            if (!addr.isLinkLocalAddress) addr.hostAddress?.let { ipv6.add("[$it]") }
-                    }
+        val fromDefaultNetwork = runCatching {
+            val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            val network = manager?.activeNetwork ?: return@runCatching false
+            val link = manager.getLinkProperties(network) ?: return@runCatching false
+            link.linkAddresses.forEach { addIp(it.address, ipv4, ipv6) }
+            true
+        }.getOrDefault(false)
+        if (!fromDefaultNetwork) {
+            // 拿不到默认网络时（断网瞬间、系统异常）退回遍历网卡，宁可多报也不让这段全空
+            runCatching {
+                val interfaces = NetworkInterface.getNetworkInterfaces()
+                while (interfaces.hasMoreElements()) {
+                    val nif = interfaces.nextElement()
+                    if (!nif.isUp) continue
+                    val addrs = nif.inetAddresses
+                    while (addrs.hasMoreElements()) addIp(addrs.nextElement(), ipv4, ipv6)
                 }
             }
         }
         return JSONObject().put("ipv4", JSONArray(ipv4)).put("ipv6", JSONArray(ipv6))
+    }
+
+    /**
+     * 将单个地址归类到 IPv4 / IPv6 列表。
+     *
+     * @param addr 待归类地址
+     * @param ipv4 IPv4 结果列表
+     * @param ipv6 IPv6 结果列表，按惯例加方括号
+     */
+    private fun addIp(addr: InetAddress, ipv4: MutableList<String>, ipv6: MutableList<String>) {
+        if (addr.isLoopbackAddress) return
+        when (addr) {
+            is Inet4Address -> addr.hostAddress?.let { ipv4.add(it) }
+            // 链路本地地址（fe80::）必须带作用域才能用，对连接没意义，不上报
+            is Inet6Address ->
+                if (!addr.isLinkLocalAddress) addr.hostAddress?.let { ipv6.add("[$it]") }
+        }
     }
 
     /**
