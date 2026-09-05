@@ -1300,19 +1300,6 @@ ${baseStyles()}
     font-family:var(--mono);
   }
 
-  .device-chip-live {
-    color:var(--clay);
-  }
-
-  .device-chip-live::before {
-    content:'';
-    width:6px;
-    height:6px;
-    border-radius:50%;
-    background:var(--clay);
-    box-shadow:0 0 8px var(--clay);
-  }
-
   .device-overview-id {
     margin-top:10px;
 
@@ -2751,9 +2738,19 @@ function renderInfo(d, tr) {
               : ''
           }
 
-          <span class="device-chip device-chip-live">
-            在线
-          </span>
+          ${
+            appVersion
+              ? `
+                <span class="device-chip">
+                  v${esc(appVersion)}${
+                    appBuild
+                      ? ` (${esc(String(appBuild))})`
+                      : ''
+                  }
+                </span>
+              `
+              : ''
+          }
 
         </div>
 
@@ -2991,9 +2988,7 @@ function renderInfo(d, tr) {
    * Basic
    * ======================================================= */
 
-  const basicCard = card(
-    '设备',
-    [
+  const basicRows = [
       row(
         '设备名称',
         deviceName
@@ -3017,24 +3012,14 @@ function renderInfo(d, tr) {
       row(
         '语言',
         dev.language
-      ),
-
-      row(
-        '应用版本',
-        appVersion
-          ? `${appVersion}${
-              appBuild
-                ? ` (${appBuild})`
-                : ''
-            }`
-          : ''
       )
-    ]
-  );
+  ];
 
-  const hardwareCard = card(
-    '硬件',
+  const deviceCard = card(
+    '设备',
     [
+      ...basicRows,
+
       row('处理器', cpu.name),
       row('架构', cpu.arch),
       row('核心数', cpu.cores),
@@ -3298,9 +3283,7 @@ function renderInfo(d, tr) {
 
     <div class="info-grid">
 
-      ${basicCard}
-
-      ${hardwareCard}
+      ${deviceCard}
 
       ${networkCard}
 
