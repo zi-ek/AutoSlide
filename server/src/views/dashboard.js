@@ -1826,44 +1826,6 @@ function fmtHz(v) {
   return `${n} Hz`;
 }
 
-function fmtUptime(v) {
-  const n = safeNumber(v);
-
-  if (n === null || n < 0) {
-    return '';
-  }
-
-  /*
-   * Android 通常可能上传：
-   *
-   * milliseconds
-   * seconds
-   *
-   * 这里兼容两种。
-   */
-  const ms = n > 100000000 ? n : n * 1000;
-
-  let sec = Math.floor(ms / 1000);
-
-  const days = Math.floor(sec / 86400);
-  sec %= 86400;
-
-  const hours = Math.floor(sec / 3600);
-  sec %= 3600;
-
-  const minutes = Math.floor(sec / 60);
-
-  if (days > 0) {
-    return `${days}d ${hours}h ${minutes}m`;
-  }
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-
-  return `${minutes}m`;
-}
-
 function calcPercent(used, total) {
   const u = safeNumber(used);
   const t = safeNumber(total);
@@ -2304,10 +2266,6 @@ function getDisplayInfo(hw, sys) {
  * Battery
  * ========================================================= */
 
-/* 电池字段中文映射：原文件用了这三个常量却没定义，会 ReferenceError */
-const HEALTH = { 1: '未知', 2: '良好', 3: '过热', 4: '损坏', 5: '过压', 6: '未知故障', 7: '过冷' };
-const STATUS = { 1: '未知', 2: '充电中', 3: '放电中', 4: '未充电', 5: '已充满' };
-const PLUGGED = { 0: '电池', 1: '交流充电器', 2: 'USB', 4: '无线' };
 
 function getBatteryInfo(bat) {
   const voltage = safeNumber(
@@ -2454,45 +2412,6 @@ function getNetworkInfo(net) {
 /* =========================================================
  * Runtime
  * ========================================================= */
-
-function getRuntimeInfo(di) {
-  const runtime =
-    di.runtime ||
-    di.platform?.runtime ||
-    {};
-
-  return {
-    java: firstDefined(
-      runtime.javaVersion,
-      di.platform?.javaVmVersion
-    ),
-
-    art: firstDefined(
-      runtime.artVersion,
-      runtime.art
-    ),
-
-    heapUsed: firstDefined(
-      runtime.heapUsed,
-      runtime.usedHeap
-    ),
-
-    heapMax: firstDefined(
-      runtime.heapMax,
-      runtime.maxHeap
-    ),
-
-    processCount: firstDefined(
-      runtime.processCount,
-      runtime.processes
-    ),
-
-    threadCount: firstDefined(
-      runtime.threadCount,
-      runtime.threads
-    )
-  };
-}
 
 /* =========================================================
  * Sensors
@@ -2785,10 +2704,6 @@ function renderInfo(d, tr) {
   const display = getDisplayInfo(
     hw,
     sys
-  );
-
-  const runtime = getRuntimeInfo(
-    di
   );
 
   /* =======================================================
@@ -3091,98 +3006,6 @@ function renderInfo(d, tr) {
 
 
   /* =======================================================
-   * Battery
-   * ======================================================= */
-
-  const batteryPower =
-    bat.power !== ''
-      ? `${formatNumber(bat.power, 2)} W`
-      : '';
-
-  const batteryCard = card(
-    '电池',
-    [
-      row(
-        '健康',
-        HEALTH && bat.health
-          ? HEALTH[bat.health]
-          : bat.health
-      ),
-
-      row(
-        '电量',
-        batteryLevel !== null
-          ? `${batteryLevel}%`
-          : ''
-      ),
-
-      row(
-        '状态',
-        STATUS && bat.status
-          ? STATUS[bat.status]
-          : bat.status
-      ),
-
-      row(
-        '电源',
-        PLUGGED && bat.plugged
-          ? PLUGGED[bat.plugged]
-          : bat.plugged
-      ),
-
-      row(
-        '技术',
-        bat.technology
-      ),
-
-      row(
-        '温度',
-        bat.temperature !== ''
-          ? `${bat.temperature} ℃`
-          : ''
-      ),
-
-      row(
-        '电压',
-        bat.voltage !== null
-          ? `${bat.voltage} mV`
-          : ''
-      ),
-
-      row(
-        '容量',
-        bat.capacity !== ''
-          ? `${bat.capacity} mAh`
-          : ''
-      ),
-
-      row(
-        '电流',
-        bat.current !== null
-          ? `${bat.current} mA`
-          : ''
-      ),
-
-      row(
-        '充电功率',
-        batteryPower
-      ),
-
-      row(
-        '循环次数',
-        bat.cycleCount
-      ),
-
-      row(
-        '设计容量',
-        bat.designCapacity !== ''
-          ? `${bat.designCapacity} mAh`
-          : ''
-      )
-    ]
-  );
-
-  /* =======================================================
    * Network
    * ======================================================= */
 
@@ -3246,161 +3069,6 @@ function renderInfo(d, tr) {
     networkRows,
     false,
     networkUpdatedAction(d)
-  );
-
-  /* =======================================================
-   * Android
-   * ======================================================= */
-
-  const androidCard = card(
-    '系统平台',
-    [
-      row(
-        '系统',
-        sys.osName ||
-          'Android'
-      ),
-
-      row(
-        '版本',
-        androidVersion
-      ),
-
-      row(
-        'SDK',
-        pf.sdkVersion
-          ? `SDK ${pf.sdkVersion}`
-          : ''
-      ),
-
-      row(
-        '安全补丁',
-        pf.securityPatch
-      ),
-
-      row(
-        'Bootloader',
-        pf.bootloader
-      ),
-
-      row(
-        'Build Number',
-        pf.buildNumber
-      ),
-
-      row(
-        'Build ID',
-        pf.buildId
-      ),
-
-      row(
-        'Build Type',
-        pf.buildType
-      ),
-
-      row(
-        'Build Tags',
-        pf.buildTags
-      ),
-
-      row(
-        '基带版本',
-        pf.radioVersion
-      ),
-
-      row(
-        'Board',
-        pf.board
-      ),
-
-      row(
-        'Device',
-        pf.device
-      ),
-
-      row(
-        '品牌',
-        pf.buildBrand
-      ),
-
-      row(
-        '构建指纹',
-        pf.fingerprint
-      ),
-
-      row(
-        '时区',
-        firstDefined(
-          pf.timezone,
-          sys.timezone
-        )
-      ),
-
-      row(
-        '构建时间',
-        pf.buildTime
-          ? new Date(
-              Number(pf.buildTime)
-            ).toLocaleString(
-              'zh-CN'
-            )
-          : ''
-      )
-    ],
-    true
-  );
-
-  /* =======================================================
-   * Runtime
-   * ======================================================= */
-
-  const runtimeCard = card(
-    '运行时',
-    [
-      row(
-        'Java VM',
-        runtime.java
-      ),
-
-      row(
-        'ART',
-        runtime.art
-      ),
-
-      row(
-        'Heap Used',
-        runtime.heapUsed !== ''
-          ? fmtBytes(runtime.heapUsed)
-          : ''
-      ),
-
-      row(
-        'Heap Max',
-        runtime.heapMax !== ''
-          ? fmtBytes(runtime.heapMax)
-          : ''
-      ),
-
-      row(
-        '进程数',
-        runtime.processCount
-      ),
-
-      row(
-        '线程数',
-        runtime.threadCount
-      ),
-
-      row(
-        'Kernel',
-        sys.kernelVersion
-      ),
-
-      row(
-        'Uptime',
-        fmtUptime(sys.uptime)
-      )
-    ]
   );
 
   /* =======================================================
@@ -3732,21 +3400,13 @@ function renderInfo(d, tr) {
 
       ${hardwareCard}
 
-      ${batteryCard}
-
       ${networkCard}
-
-      ${runtimeCard}
 
       ${capabilitiesCard}
 
       ${sensors}
 
       ${cameras}
-
-      <!-- 系统平台跨整行，放最后：Fingerprint / Baseband 这类超长值需要整行宽度，
-           且放中间会把普通卡的网格截断，留出成片空位 -->
-      ${androidCard}
 
     </div>
   `;
