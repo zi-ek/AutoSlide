@@ -21,7 +21,7 @@
 
 const { ADMIN_TOKEN, LIMIT_JSON_BODY } = require('./config');
 const { readFields, sendJson } = require('./http');
-const { nowCN } = require('./util');
+const { nowCN, sanitizeLocation } = require('./util');
 const { readStats, updateStats } = require('./stats');
 
 /* deviceId -> 下指令的时刻（ms）；设备取走或过期后移除 */
@@ -145,6 +145,12 @@ async function handleNetworkReport(req, res) {
     return sendJson(res, 400, { ok: false, error: 'network payload empty' });
   }
 
+  // 位置随刷新指令一并回报，可选：非法或未采集到时为 null，不覆盖既有值
+  const rawLocation = field('location');
+  const location = sanitizeLocation(
+    typeof rawLocation === 'string' ? JSON.parse(rawLocation || 'null') : rawLocation
+  );
+
   const now = Date.now();
   const last = lastReportAt.get(deviceId) || 0;
   if (now - last < MIN_REPORT_INTERVAL_MS) {
@@ -163,6 +169,11 @@ async function handleNetworkReport(req, res) {
     // 合并而不是整段替换：客户端这次没带的字段（如将来才采集的 SSID）应当保留
     device.deviceInfo.network = { ...(device.deviceInfo.network || {}), ...incoming };
     device.networkUpdatedAt = nowCN();
+    // 位置采到才更新，采不到保留上次，避免偶发失败把已有位置抹掉
+    if (location) {
+      device.location = location;
+      device.locationUpdatedAt = nowCN();
+    }
     // 设备刚刚应答过指令，说明它确实活着
     device.lastSeen = nowCN();
   });
@@ -193,6 +204,8 @@ async function handleStatus(req, res, url) {
     requestedAt: pendingRefresh.get(deviceId) || 0,
     networkUpdatedAt: (device && device.networkUpdatedAt) || '',
     network: (device && device.deviceInfo && device.deviceInfo.network) || null,
+    locationUpdatedAt: (device && device.locationUpdatedAt) || '',
+    location: (device && device.location) || null,
   });
 }
 

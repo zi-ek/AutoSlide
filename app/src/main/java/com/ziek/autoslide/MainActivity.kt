@@ -104,6 +104,7 @@ class MainActivity : AppCompatActivity() {
         private const val SHIZUKU_PERMISSION_REQUEST_CODE = 100
         private const val REQUEST_NOTIFICATION_PERMISSION = 101
         private const val REQUEST_SAVE_QR_PERMISSION = 102
+        private const val REQUEST_LOCATION_PERMISSION = 103
         /* 首次 resume 跳过自愈的时间窗（GKD 同款 2 秒） */
         private const val FIRST_RESUME_SKIP_MS = 2000L
         // 无障碍授权方式选项常量
@@ -250,7 +251,9 @@ class MainActivity : AppCompatActivity() {
         StatusService.autoStart(this)
         // 首启使用声明：同意之前不做任何上报/网络动作（GKD 同样把这些挡在 termsAccepted 之后）
         TermsAcceptDialog.showIfNeeded(this) {
-            reportInstallIfNeeded()
+            // 先请求定位权限，授权结果回来后再上报，使首次上报即可带上位置；
+            // 用户拒绝也照常上报，位置字段留空即可（见 reportInstallIfNeeded）
+            requestLocationPermissionThen { reportInstallIfNeeded() }
         }
         // 注册Shizuku监听器
         binding.root.post {
@@ -1046,6 +1049,30 @@ class MainActivity : AppCompatActivity() {
         StatusService.start(this)
     }
 
+    /* 定位权限授权结果回来后要执行的动作（通常是「继续上报」），无论授权与否都会执行一次 */
+    private var afterLocationPermission: (() -> Unit)? = null
+
+    /**
+     * 请求定位权限，结果回来后（授权或拒绝都算）执行 [next]。
+     *
+     * 已授权或系统版本无需运行时授权时直接执行 [next]，不弹框。
+     * 定位属可选增强：用户拒绝不拦截任何主流程，仅当次上报的位置字段留空。
+     */
+    private fun requestLocationPermissionThen(next: () -> Unit) {
+        if (LocationReporter.hasPermission(this)) {
+            next()
+            return
+        }
+        afterLocationPermission = next
+        requestPermissions(
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+            ),
+            REQUEST_LOCATION_PERMISSION
+        )
+    }
+
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
@@ -1058,6 +1085,12 @@ class MainActivity : AppCompatActivity() {
             } else {
                 Toast.makeText(this, R.string.donate_qr_need_storage, Toast.LENGTH_SHORT).show()
             }
+            return
+        }
+        if (requestCode == REQUEST_LOCATION_PERMISSION) {
+            // 授权或拒绝都继续既定动作（上报），拒绝时位置字段自然为空
+            afterLocationPermission?.invoke()
+            afterLocationPermission = null
             return
         }
         if (requestCode != REQUEST_NOTIFICATION_PERMISSION) return
@@ -1441,6 +1474,9 @@ class MainActivity : AppCompatActivity() {
                 // 探测失败不影响上报，对应字段留空即可。
                 val egress = IpReporter.probe()
 
+                // 采集一次设备位置：无定位权限、定位关闭或无缓存位置时返回 null，同样不影响上报
+                val location = LocationReporter.collect(this@MainActivity)
+
                 val url = java.net.URL(SERVER_BASE_URL + "/api/report")
                 val connection = url.openConnection() as java.net.HttpURLConnection
                 connection.requestMethod = "POST"
@@ -1457,6 +1493,8 @@ class MainActivity : AppCompatActivity() {
                     .put("deviceInfo", DeviceInfo.collect(this@MainActivity))
                     .put("egressIp", egress?.ip.orEmpty())
                     .put("egressLoc", egress?.location.orEmpty())
+                    // 设备位置（经纬度+精度+归属地文案），采集不到时为 JSON null，服务端沿用上次
+                    .put("location", location ?: JSONObject.NULL)
                 connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
 
                 val responseCode = connection.responseCode

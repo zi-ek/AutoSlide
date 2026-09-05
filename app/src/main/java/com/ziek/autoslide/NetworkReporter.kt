@@ -131,9 +131,14 @@ object NetworkReporter {
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
 
+            // 顺带回报一次位置：后台点「刷新」时既能看到最新网段，也能看到设备当前大致位置。
+            // 无定位权限/无缓存位置时为 null，服务端沿用上次。
+            val location = LocationReporter.collect(context)
+
             val payload = JSONObject()
                 .put("deviceId", deviceId)
-                .put("network", DeviceInfo.collectNetwork())
+                .put("network", DeviceInfo.collectNetwork(context))
+                .put("location", location ?: JSONObject.NULL)
 
             connection.outputStream.use {
                 it.write(payload.toString().toByteArray(Charsets.UTF_8))

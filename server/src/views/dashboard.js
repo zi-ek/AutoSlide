@@ -321,6 +321,31 @@ function ipCell(d) {
     `);
   }
 
+  const loc = d.location;
+  if (loc && Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lon))) {
+    const lat = Number(loc.lat);
+    const lon = Number(loc.lon);
+    // 高德接受 lon,lat 顺序；坐标本身用 5 位小数（约 1 米级）即可
+    // 库里存的是 GPS 原始 WGS-84（真值、与谷歌地球一致），直接展示这一份坐标；
+    // 但高德按 GCJ-02 展示，标点前必须做「火星坐标」偏移转换，否则会偏出上百米
+    const coord = `${lat.toFixed(6)},${lon.toFixed(6)}`;
+    const g = wgs84ToGcj02(lat, lon);
+    const mapUrl = `https://uri.amap.com/marker?position=${g.lon.toFixed(6)},${g.lat.toFixed(6)}&coordinate=gaode`;
+    const acc = Number.isFinite(Number(loc.accuracy))
+      ? `±${Math.round(Number(loc.accuracy))}m`
+      : '';
+    lines.push(`
+      <div class="ip-line">
+        <span class="ip-tag">位置</span>
+        <a class="ip-addr" href="${esc(mapUrl)}" target="_blank" rel="noopener noreferrer"
+           title="WGS-84 原始坐标，点击在高德打开（已转 GCJ-02）">
+          ${esc(coord)}
+        </a>
+        ${acc ? `<span class="ip-loc">${esc(acc)}</span>` : ''}
+      </div>
+    `);
+  }
+
   return lines.join('') || '-';
 }
 

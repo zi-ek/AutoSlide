@@ -107,7 +107,11 @@ async function handleReport(req, res) {
         deviceInfo: payload.deviceInfo && typeof payload.deviceInfo === 'object' ? payload.deviceInfo : undefined,
         egressIp: String(payload.egressIp || '').slice(0, 64),
         egressLoc: String(payload.egressLoc || '').slice(0, 80),
+        // 设备位置：非法或未采集到时为 undefined，下面沿用上次
+        location: sanitizeLocation(payload.location) || undefined,
+        locationUpdatedAt: undefined,
       };
+      if (incoming.location) incoming.locationUpdatedAt = now;
       if (idx >= 0) {
         const d = devices[idx];
         incoming.firstInstall = d.firstInstall;
@@ -115,6 +119,10 @@ async function handleReport(req, res) {
         if (!incoming.deviceInfo) incoming.deviceInfo = d.deviceInfo;
         if (!incoming.egressIp) incoming.egressIp = d.egressIp || '';
         if (!incoming.egressLoc) incoming.egressLoc = d.egressLoc || '';
+        if (!incoming.location) {
+          incoming.location = d.location;
+          incoming.locationUpdatedAt = d.locationUpdatedAt;
+        }
         incoming.installs = (d.installs || 0) + (event === 'install' ? 1 : 0);
         devices[idx] = { ...d, ...incoming };
       } else {
