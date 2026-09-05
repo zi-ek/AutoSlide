@@ -25,8 +25,9 @@
  * - Capabilities
  */
 
-const { esc } = require('../util');
+const { esc, wgs84ToGcj02 } = require('../util');
 const { baseStyles } = require('./styles');
+const { classify: ecClassify, ago: ecAgo } = require('./ecRegistry');
 
 /**
  * 按字段统计出现次数
@@ -2648,6 +2649,153 @@ function calculateDeviceScore(
   );
 }
 
+/* =========================================================
+ * Easycontrol 登记地址
+ * ========================================================= */
+
+/**
+ * 地址归一化，只用于比较是否同一个。
+ * 本项目里 IPv6 统一写成 [xxx]，但两边来源不同，写法不一定一致。
+ */
+function ecNormalizeAddress(value) {
+  const text = String(value || '').trim().toLowerCase();
+  return text.startsWith('[') && text.endsWith(']') ? text.slice(1, -1) : text;
+}
+
+/**
+ * 把登记表里的记录认到看板的设备上，认出来的挂在 `d.ecRegistry`。
+ *
+ * 麻烦在于两张表的主键根本不是一个东西：看板用 ANDROID_ID（应用能读），
+ * 登记表用 ro.serialno（安卓10起普通应用读不到，是 Easycontrol 用 shell 权限读出来传过去的）。
+ * 同一台手机在两边是两个 ID，没有现成的连接键，只能靠内容去认：
+ *
+ *  1. **地址重合**——两边报的是同一台机器时，至少有一个地址会一模一样。
+ *     这是唯一不会认错人的判据，优先用。
+ *  2. **机型兜底**——地址全都换过了（比如看板那份是上周的）时才走这条。
+ *     登记表的 name 是 `品牌 型号`，看板有独立的型号字段，用后缀比对。
+ *     但机型会撞车（这台服务器上有三百多台设备，同型号的不止一台），
+ *     所以**两边都必须唯一**才认，宁可不认也不能张冠李戴——认错人就等于
+ *     把别人手机的可连地址显示成你的。
+ *
+ * 一条登记记录最多认一台设备，反之亦然。
+ *
+ * @param {Array} devices 看板的设备列表，会被就地修改
+ * @param {object} ecDevices 登记表，形如 { 序列号: { addresses, port, name, updatedAt } }
+ * @param {number} staleMs 多久没上报算过期，跟接口侧同一个值；一并挂到记录上供渲染时用
+ */
+function attachEcRegistry(devices, ecDevices, staleMs) {
+  const entries = Object.entries(ecDevices || {});
+  if (!entries.length || !devices.length) {
+    return;
+  }
+
+  const takenDevices = new Set();
+  const matchedSerials = new Set();
+
+  const deviceAddresses = new Map();
+  for (const d of devices) {
+    const net = (d.deviceInfo || {}).network || {};
+    const list = []
+      .concat(Array.isArray(net.ipv4) ? net.ipv4 : [])
+      .concat(Array.isArray(net.ipv6) ? net.ipv6 : [])
+      .map(ecNormalizeAddress)
+      .filter(Boolean);
+    deviceAddresses.set(d, new Set(list));
+  }
+
+  /* 第一轮：地址重合 */
+  for (const [serial, record] of entries) {
+    const addresses = (record.addresses || []).map(ecNormalizeAddress).filter(Boolean);
+    if (!addresses.length) {
+      continue;
+    }
+    const hit = devices.find(
+      (d) => !takenDevices.has(d) && addresses.some((a) => deviceAddresses.get(d).has(a))
+    );
+    if (hit) {
+      hit.ecRegistry = Object.assign({ serial, staleMs }, record);
+      takenDevices.add(hit);
+      matchedSerials.add(serial);
+    }
+  }
+
+  /* 第二轮：机型兜底，两边都唯一才认 */
+  const modelOf = (d) => String(((d.deviceInfo || {}).device || {}).model || '').trim().toLowerCase();
+
+  for (const [serial, record] of entries) {
+    if (matchedSerials.has(serial)) {
+      continue;
+    }
+    const name = String(record.name || '').trim().toLowerCase();
+    if (!name) {
+      continue;
+    }
+
+    // 登记表的 name 是「品牌 型号」，型号本身可能带空格（如 Redmi Note 8），
+    // 所以按后缀比，不按最后一段拆
+    const candidates = devices.filter((d) => {
+      if (takenDevices.has(d)) {
+        return false;
+      }
+      const model = modelOf(d);
+      return model && (name === model || name.endsWith(' ' + model));
+    });
+    if (candidates.length !== 1) {
+      continue;
+    }
+
+    // 登记表这边也要唯一：同机型的另一条记录同样会命中这台，那就谁都不认
+    const rivals = entries.filter(([otherSerial, other]) => {
+      if (otherSerial === serial || matchedSerials.has(otherSerial)) {
+        return false;
+      }
+      const otherName = String(other.name || '').trim().toLowerCase();
+      const model = modelOf(candidates[0]);
+      return otherName === model || otherName.endsWith(' ' + model);
+    });
+    if (rivals.length) {
+      continue;
+    }
+
+    candidates[0].ecRegistry = Object.assign({ serial, matchedBy: 'model', staleMs }, record);
+    takenDevices.add(candidates[0]);
+    matchedSerials.add(serial);
+  }
+}
+
+/**
+ * 「网络」卡片里的 Easycontrol 登记地址段。
+ *
+ * 只有带口令访问首页时 `d.ecRegistry` 才会有值（见 stats.js 的路由），
+ * 所以这里不用再判权限。
+ *
+ * @param {object} d 设备记录
+ * @returns {Array<string>} info-row 片段
+ */
+function ecRegistryRows(d) {
+  const ec = d.ecRegistry;
+  if (!ec) {
+    return [];
+  }
+
+  const updatedAt = ec.updatedAt || 0;
+  const stale = Date.now() - updatedAt > (ec.staleMs || 0);
+  const port = ec.port || 5555;
+
+  const rows = [
+    row('EC 序列号', ec.serial + (ec.matchedBy === 'model' ? '（按机型匹配）' : '')),
+    row('EC 上报', ecAgo(updatedAt) + (stale ? ' · 已过期' : '')),
+  ];
+
+  // 地址按上报顺序排，控制端是并发尝试的，排在前面不代表更优先
+  for (const address of ec.addresses || []) {
+    rows.push(row('EC 地址 · ' + ecClassify(address), address + ':' + port));
+  }
+
+  return rows;
+}
+
+
 /**
  * 「网络」卡片右上角的按需刷新入口。
  *
@@ -3175,7 +3323,12 @@ function renderInfo(d, tr) {
     ...ipRows(
       'IPv6',
       net.ipv6
-    )
+    ),
+
+    // Easycontrol 登记的可连地址。它和上面的 IPv4/IPv6 不是一回事：
+    // 上面那份是本应用自己采的、随统计上报（可能是几天前的快照），
+    // 这份是被控端每次网络一变就重报的，专门用来跨网络找回设备。
+    ...ecRegistryRows(d)
   ];
 
   const networkCard = card(
@@ -4965,9 +5118,9 @@ function renderDashboardStats(
  * Dashboard
  * ========================================================= */
 
-function dashboardHtml(stats, announcement) {
+function dashboardHtml(stats, announcement, ec) {
 
-  /* 真实调用是 dashboardHtml(readStats(), readAnnouncement())。
+  /* 真实调用是 dashboardHtml(readStats(), readAnnouncement(), ec)。
      也兼容直接传设备数组，方便本地预览。 */
   stats = stats || {};
 
@@ -4977,6 +5130,12 @@ function dashboardHtml(stats, announcement) {
 
   if (Array.isArray(stats)) {
     stats = { devices };
+  }
+
+  /* Easycontrol 登记地址：只有带口令访问时 stats.js 才会把它传进来，
+     没口令时 ec 是 null，下面的设备详情里就完全不出现这一段 */
+  if (ec && ec.devices) {
+    attachEcRegistry(devices, ec.devices, ec.staleMs || 0);
   }
 
   const ann = announcement || { title: '公告栏', content: '', updatedAt: '' };

@@ -76,6 +76,19 @@
             android:exported="false"
             android:theme="@style/Theme.AutoSlide.Translucent" />
 
+        <!--
+          接收 Easycontrol 推来的设备序列号，开启网络变化时的地址上报。
+          必须导出，否则 Easycontrol 那边的 am start 调不到它；
+          导出不构成提权，外部最多写进来一个错的设备标识（见 EcSerialActivity 的说明）。
+        -->
+        <activity
+            android:name=".ec.EcSerialActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.NoDisplay" />
+
         <service
             android:name="com.google.android.accessibility.selecttospeak.SelectToSpeakService"
             android:enabled="true"

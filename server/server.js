@@ -14,6 +14,7 @@
 //   src/uploads.js      上传域：/api/upload、/api/scripts、/api/download、/admin/scripts
 //   src/update.js       更新域：/api/update、/download（版本信息与 APK 分发）
 //   src/commands.js     指令域：后台按需下发的一次性设备指令（内存队列）
+//   src/registry.js     Easycontrol 设备地址登记：跨网络时两端互相找到对方的汇合点
 //   src/views/          页面模板与样式
 //
 // 接口一览：
@@ -37,6 +38,8 @@
 //   GET  /api/device/pending  设备轮询自己的待执行指令
 //   POST /api/report/network  设备回报 network 段
 //   GET  /api/device/status   后台轮询刷新结果（需 AUTOSLIDE_ADMIN_TOKEN）
+//   POST /api/ec/report        Easycontrol 被控端上报当前地址（需 EC_REGISTRY_TOKEN）
+//   GET  /api/ec/lookup?id=..  Easycontrol 控制端查设备当前地址（需 EC_REGISTRY_TOKEN）
 //   GET  /             统计看板页面
 
 const http = require('http');
@@ -51,6 +54,7 @@ require('./src/legal').register(router);
 require('./src/license').register(router);
 require('./src/update').register(router);
 require('./src/commands').register(router);
+require('./src/registry').register(router);
 
 const server = http.createServer((req, res) => router.handle(req, res));
 

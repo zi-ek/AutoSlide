@@ -2,11 +2,12 @@
 
 const { JsonStore } = require('./store');
 const { STATS_FILE } = require('./config');
-const { nowCN } = require('./util');
+const { nowCN, sanitizeLocation } = require('./util');
 const { readJson, sendJson, sendHtml, clientIp } = require('./http');
 const { lookupIpLocation } = require('./ip');
 const { dashboardHtml } = require('./views/dashboard');
 const { readAnnouncement } = require('./chat');
+const ecRegistry = require('./registry');
 
 const statsStore = new JsonStore(STATS_FILE, () => ({
   install_count: 0,
@@ -143,7 +144,18 @@ async function handleReport(req, res) {
 function register(router) {
   router.on('POST', '/api/report', handleReport);
   router.on('GET', '/api/stats', (req, res) => sendJson(res, 200, readStats()));
-  router.on('GET', '/', (req, res) => sendHtml(res, dashboardHtml(readStats(), readAnnouncement())));
+  /*
+   * 看板首页是**完全公开**的（没有任何鉴权），所以 Easycontrol 的登记地址不能无条件塞进去：
+   * 那张表泄漏出去等于告诉别人「这台手机此刻在这个地址上，而且那个端口开着 adbd」。
+   * 带上口令（/?token=... 或 X-Ec-Token 头）才渲染这一段，没口令时页面和以前一模一样——
+   * 连「此处有内容被隐藏」都不提示，免得反过来告诉人家这里有东西可挖。
+   */
+  router.on('GET', '/', (req, res, url) => {
+    const ec = ecRegistry.isAuthorized(req, url)
+      ? { devices: ecRegistry.readDevices(), staleMs: ecRegistry.STALE_MS }
+      : null;
+    sendHtml(res, dashboardHtml(readStats(), readAnnouncement(), ec));
+  });
   router.alias('GET', '/index.html', '/');
   router.alias('GET', '/stats', '/');
   router.alias('GET', '/stats/', '/');

@@ -265,4 +265,8 @@
     <string name="license_still_expired">还没有新的时长到账</string>
     <string name="license_network_error">网络异常，请稍后再试</string>
     <string name="license_blocked_toast">试用已结束，请在 App 内分享获取使用时长</string>
+
+    <!-- Easycontrol 地址上报：由 Easycontrol 部署时 am start 推来序列号，见 ec/EcSerialActivity -->
+    <string name="ec_serial_saved">已接入 Easycontrol：网络变化时会自动上报本机地址</string>
+    <string name="ec_serial_invalid">Easycontrol 传来的设备标识无效，未开启地址上报</string>
 </resources>
