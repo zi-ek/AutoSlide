@@ -1,7 +1,7 @@
 package com.ziek.autoslide
 
 /**
- * 设备信息采集（移植自 PlainApp 的 DeviceInfoHelper / PhoneHelper / BatteryReceiver）
+ * 设备信息采集（移植自 PlainApp 的 DeviceInfoHelper / PhoneHelper）
  *
  * 全部走公开 API，不需要任何额外权限：
  * - 设备与系统：`android.os.Build` 家族
@@ -9,18 +9,14 @@ package com.ziek.autoslide
  *   实测红米返回「Redmi K30S Ultra」、一加返回「OnePlus 15R」，即厂商设定的营销名，
  *   比 `Build.MODEL` 的内部代号（M2007J3SC / CPH2767）可读得多
  * - 内存/存储：`ActivityManager.MemoryInfo` 与 `StatFs`
- * - 电池：`ACTION_BATTERY_CHANGED` 粘性广播；容量走 PowerProfile 反射，取不到记 0
  *
- * 字段命名与分组对齐 PlainApp 的「设备 / 系统 / 硬件 / 平台信息 / 电池」五张卡片，
- * 后台按同样的结构展示。
+ * 只采后台真正会用到的字段：后台不展示、也不检索的一律不采。电池整组
+ * （电量/电压/温度/状态/健康/技术/容量）与平台里的 SDK、安全补丁、bootloader、
+ * 基带、产品代号、Java VM、OpenGL ES、构建时间等，都已因此停止采集。
  */
 
-import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
@@ -32,8 +28,6 @@ import java.util.Locale
 
 object DeviceInfo {
 
-    private const val TAG = "DeviceInfo"
-
     /**
      * 采集全部设备信息。
      *
@@ -44,8 +38,7 @@ object DeviceInfo {
         put("device", deviceSection(context))
         put("system", systemSection())
         put("hardware", hardwareSection(context))
-        put("platform", platformSection(context))
-        put("battery", batterySection(context))
+        put("platform", platformSection())
         put("network", networkSection(context))
     }
 
@@ -66,7 +59,7 @@ object DeviceInfo {
         .put("kernelVersion", System.getProperty("os.version").orEmpty())
         .put("uptime", SystemClock.elapsedRealtime())
 
-    /* 硬件：CPU 架构、总内存、总存储、分辨率、屏幕密度 */
+    /* 硬件：CPU 架构、总内存、总存储、分辨率 */
     private fun hardwareSection(context: Context): JSONObject {
         val memInfo = ActivityManager.MemoryInfo()
         runCatching {
@@ -80,51 +73,23 @@ object DeviceInfo {
             .put("totalStorage", totalStorage)
             .put("displayWidth", dm.widthPixels)
             .put("displayHeight", dm.heightPixels)
-            .put("displayDensity", dm.density)
     }
 
-    /* 平台信息：SDK、安全补丁、构建标识等 */
-    private fun platformSection(context: Context): JSONObject {
-        val glEs = runCatching {
-            (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager)
-                .deviceConfigurationInfo.glEsVersion
-        }.getOrDefault("")
-        return JSONObject()
-            .put("sdkVersion", Build.VERSION.SDK_INT)
-            .put("versionCodeName", Build.VERSION.CODENAME)
-            .put("securityPatch", Build.VERSION.SECURITY_PATCH.orEmpty())
-            .put("bootloader", Build.BOOTLOADER)
-            .put("buildNumber", Build.DISPLAY)
-            .put("radioVersion", runCatching { Build.getRadioVersion().orEmpty() }.getOrDefault(""))
-            .put("hardware", Build.HARDWARE)
-            .put("board", Build.BOARD)
-            .put("device", Build.DEVICE)
-            .put("product", Build.PRODUCT)
-            .put("buildBrand", Build.BRAND)
-            .put("javaVmVersion", System.getProperty("java.vm.version").orEmpty())
-            .put("glEsVersion", glEs)
-            .put("fingerprint", Build.FINGERPRINT)
-            .put("buildTime", Build.TIME)
-    }
-
-    /* 电池：健康、电量、状态、电源、技术、温度、电压、容量 */
-    private fun batterySection(context: Context): JSONObject {
-        val json = JSONObject()
-        val intent = runCatching {
-            context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        }.getOrNull()
-        if (intent != null) {
-            json.put("level", intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1))
-                .put("voltage", intent.getIntExtra("voltage", 0))
-                .put("temperature", intent.getIntExtra("temperature", 0) / 10)
-                .put("status", intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1))
-                .put("plugged", intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1))
-                .put("health", intent.getIntExtra(BatteryManager.EXTRA_HEALTH, -1))
-                .put("technology", intent.extras?.getString(BatteryManager.EXTRA_TECHNOLOGY).orEmpty())
-        }
-        json.put("capacity", batteryCapacity(context))
-        return json
-    }
+    /*
+     * 平台信息：只保留后台真正会用到的几项。
+     *
+     * hardware 是概览上显示的「处理器」；buildBrand 是那行徽标里的品牌；
+     * buildNumber / board / device / fingerprint 供设备列表搜索用。
+     * 其余（SDK、安全补丁、bootloader、基带、产品代号、Java VM、OpenGL ES、
+     * 构建时间）后台一个都没消费过，属于采了就扔，已停止采集。
+     */
+    private fun platformSection() = JSONObject()
+        .put("buildNumber", Build.DISPLAY)
+        .put("hardware", Build.HARDWARE)
+        .put("board", Build.BOARD)
+        .put("device", Build.DEVICE)
+        .put("buildBrand", Build.BRAND)
+        .put("fingerprint", Build.FINGERPRINT)
 
     /**
      * 单独采集一次网络信息，供后台按需刷新使用。
@@ -176,19 +141,6 @@ object DeviceInfo {
         } else {
             manufacturer.replaceFirstChar { it.uppercase() } + " " + model
         }
-    }
-
-    /* 电池设计容量：PowerProfile 是内部类，只能反射；取不到返回 0 */
-    @SuppressLint("PrivateApi")
-    private fun batteryCapacity(context: Context): Int = runCatching {
-        val cls = Class.forName("com.android.internal.os.PowerProfile")
-        val profile = cls.getConstructor(Context::class.java).newInstance(context)
-        val value = cls.getMethod("getAveragePower", String::class.java)
-            .invoke(profile, "battery.capacity") as Double
-        value.toInt()
-    }.getOrElse {
-        LogX.w(TAG, "read battery capacity failed", it)
-        0
     }
 
     private fun appVersionName(context: Context): String = runCatching {
