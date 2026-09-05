@@ -309,9 +309,6 @@ class MainActivity : AppCompatActivity() {
                 if (!isFinishing && !isDestroyed) {
                     updateAccessibilitySwitchState(finalAccessibilityEnabled)
                     updateOverlaySwitchState(finalCanDrawOverlays)
-                    // 同步 USB 调试开关状态
-                    val isAdbEnabled = Settings.Global.getInt(contentResolver, Settings.Global.ADB_ENABLED, 0) == 1
-                    binding.minePanel.usbDebuggingSwitch.isChecked = isAdbEnabled
                     // 每次打开 App 时重新允许抖音连播检测（关闭则停止轮询）
                     AutoSlideService.getInstance()?.setDouyinAutoPlayEnabled(
                         preferences.getBoolean(KEY_DOUYIN_AUTOPLAY, DEFAULT_DOUYIN_AUTOPLAY)
@@ -1115,40 +1112,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /* 绑定 USB 调试开关 */
-    private fun setupUsbDebuggingSwitch() {
-        val mine = binding.minePanel
-        // 初始化开关状态
-        val isAdbEnabled = Settings.Global.getInt(contentResolver, Settings.Global.ADB_ENABLED, 0) == 1
-        mine.usbDebuggingSwitch.isChecked = isAdbEnabled
-
-        mine.mineUsbDebuggingRow.setOnClickListener {
-            val targetState = !mine.usbDebuggingSwitch.isChecked
-            try {
-                Settings.Global.putInt(contentResolver, Settings.Global.ADB_ENABLED, if (targetState) 1 else 0)
-                mine.usbDebuggingSwitch.isChecked = targetState
-                Toast.makeText(
-                    this,
-                    if (targetState) R.string.usb_debugging_enabled else R.string.usb_debugging_disabled,
-                    Toast.LENGTH_SHORT
-                ).show()
-            } catch (e: Exception) {
-                LogX.e(TAG, "Failed to toggle USB debugging", e)
-                // 权限不足提示
-                MaterialAlertDialogBuilder(this)
-                    .setTitle(R.string.permission_required)
-                    .setMessage(R.string.accessibility_service_description) // 借用一下现有的权限说明
-                    .setPositiveButton(R.string.shizuku_authorization) { _, _ ->
-                        handleShizukuAuthorization(onGranted = {
-                            grantPermissionViaPrivKit()
-                        }, onFailed = {})
-                    }
-                    .setNegativeButton(R.string.cancel, null)
-                    .show()
-            }
-        }
-    }
-
     /* 绑定⌈我的⌋页签：版本号（显示在检查更新一行右侧）+ 检查更新 / 导入配置入口 */
     private fun setupMinePage() {
         val mine = binding.minePanel
@@ -1165,7 +1128,6 @@ class MainActivity : AppCompatActivity() {
         }
         mine.mineScriptLibRow.setOnClickListener { showScriptLibraryDialog() }
         mine.mineLicenseRow.setOnClickListener { LicenseDialog.showShareDialog(this) }
-        setupUsbDebuggingSwitch()
         // 长按打赏二维码存到相册：微信不能直接识别屏幕上的码，得先存下来再从相册选
         mine.wxImageView.setOnLongClickListener {
             requestSaveDonateQrCode()

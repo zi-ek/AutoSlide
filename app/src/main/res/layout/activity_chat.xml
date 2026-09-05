@@ -103,7 +103,7 @@
             android:background="?attr/selectableItemBackgroundBorderless"
             android:contentDescription="@string/chat_image_desc"
             android:src="@drawable/ic_chat_image"
-            android:tint="@color/primary" />
+            app:tint="@color/primary" />
 
         <EditText
             android:id="@+id/chatInputEditText"
