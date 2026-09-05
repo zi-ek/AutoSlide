@@ -4337,26 +4337,18 @@ function renderDeviceRow(
    * 这里暂时不直接把完整 HTML
    * 放进 data-device-info。
    *
-   * 原因：
+   * 详情面板不再随首页一起下发。
    *
-   * 1. Device ID 可能包含特殊字符
-   * 2. HTML 属性长度可能非常大
-   * 3. JSON + HTML 双重转义很容易出问题
-   *
-   * 所以使用隐藏节点保存内容。
+   * 以前每台设备都内嵌一份 <template>，302 台就是 3 MB HTML——虽然 template 是惰性的、
+   * 不参与布局，但那 3 MB 仍要一次性下载并解析完，打开页面的头几秒整个标签页是卡住的。
+   * 现在点开哪台才去取哪台（GET /api/device/info），首页只剩表格本身。
    */
-
-  const infoId =
-    `device-info-${index}-${Math.random()
-      .toString(36)
-      .slice(2, 10)}`;
 
   return `
     <tr
       class="device-row"
       data-search="${esc(searchText)}"
       data-device-index="${index}"
-      data-info-id="${infoId}"
       data-device-id="${esc(d.deviceId || '')}"
       data-script-file="${esc(d.scriptFile || 'scripts.json')}"
       data-script-count="${esc(String(d.scriptCount || 0))}"
@@ -4468,13 +4460,6 @@ function renderDeviceRow(
     </tr>
 
 
-    <!-- ===================================================
-         隐藏设备详情
-         =================================================== -->
-
-    <template id="${infoId}">
-      ${buildDeviceInfoHtml(d, null)}
-    </template>
   `;
 }
 
@@ -5097,15 +5082,41 @@ function dashboardHtml(stats, announcement) {
      * 打开设备详情
      */
 
-    function openTemplate(
-      templateId,
+    /* 取过的详情留在内存里，反复点同一台不再走网络 */
+    const detailCache = new Map();
+
+    /* 取一台设备的详情 HTML。失败时返回一句给人看的话，不抛 */
+    function fetchDetail(deviceId) {
+      if (detailCache.has(deviceId)) {
+        return Promise.resolve(detailCache.get(deviceId));
+      }
+      return fetch('/api/device/info?deviceId=' + encodeURIComponent(deviceId))
+        .then(function (res) {
+          if (!res.ok) throw new Error(String(res.status));
+          return res.text();
+        })
+        .then(function (html) {
+          detailCache.set(deviceId, html);
+          return html;
+        })
+        .catch(function (err) {
+          // 不写进缓存：下次点开还能重试
+          return '<div class="modal-empty">详情加载失败（' + err.message + '），关掉重开可重试</div>';
+        });
+    }
+
+    /* 记住这次点的是谁：取回来时若用户已经切到别台，就把结果丢掉 */
+    let currentDeviceId = null;
+
+    /* 关闭弹窗的代码在另一个 IIFE 里，够不到上面这个变量，只能从 window 上开个口子 */
+    window.__cancelDeviceDetail = function () {
+      currentDeviceId = null;
+    };
+
+    function openDeviceDetail(
+      deviceId,
       row
     ) {
-
-      const template =
-        document.getElementById(
-          templateId
-        );
 
       const modal =
         document.getElementById(
@@ -5128,26 +5139,23 @@ function dashboardHtml(stats, announcement) {
 
 
       if (
-        !template ||
+        !deviceId ||
         !modal ||
         !body
       ) {
         return;
       }
 
+      currentDeviceId = deviceId;
 
-      /*
-       * template.content
-       * 是 DocumentFragment。
-       */
+      // 先给个占位，别让弹窗空着——局域网内通常几十毫秒就回来了
+      body.innerHTML = '<div class="modal-empty">正在加载…</div>';
 
-      body.innerHTML = '';
-
-      body.appendChild(
-        template.content.cloneNode(
-          true
-        )
-      );
+      fetchDetail(deviceId).then(function (html) {
+        // 取的过程中用户可能已经关掉或换了一台，那这次结果就不该再往里塞
+        if (currentDeviceId !== deviceId) return;
+        body.innerHTML = html;
+      });
 
 
       if (row) {
@@ -5380,8 +5388,8 @@ function dashboardHtml(stats, announcement) {
         }
 
 
-        openTemplate(
-          row.getAttribute('data-info-id'),
+        openDeviceDetail(
+          row.getAttribute('data-device-id'),
           row
         );
 
@@ -5411,8 +5419,8 @@ function dashboardHtml(stats, announcement) {
 
         event.preventDefault();
 
-        openTemplate(
-          row.getAttribute('data-info-id'),
+        openDeviceDetail(
+          row.getAttribute('data-device-id'),
           row
         );
 
@@ -5573,6 +5581,9 @@ function dashboardHtml(stats, announcement) {
         return;
       }
 
+      // 详情是异步取的，关掉后那次请求可能才回来；作废它，别往已关掉的弹窗里塞
+      if (window.__cancelDeviceDetail) window.__cancelDeviceDetail();
+
 
       modal.classList.remove(
         'visible'
@@ -5611,4 +5622,17 @@ function dashboardHtml(stats, announcement) {
 `;
 }
 
-module.exports = { dashboardHtml };
+/**
+ * 单台设备的详情面板 HTML。
+ *
+ * 和首页表格里的详情**同一份实现**——首页只是不再内嵌它了，改由
+ * GET /api/device/info 按需取（见 stats.js）。
+ *
+ * @param {object} device 设备记录
+ * @returns {string} 面板 HTML 片段
+ */
+function deviceInfoHtml(device) {
+  return buildDeviceInfoHtml(device, null);
+}
+
+module.exports = { dashboardHtml, deviceInfoHtml };

@@ -3,9 +3,9 @@
 const { JsonStore } = require('./store');
 const { STATS_FILE } = require('./config');
 const { nowCN, sanitizeLocation } = require('./util');
-const { readJson, sendJson, sendHtml, clientIp } = require('./http');
+const { readJson, sendJson, sendHtml, sendText, clientIp } = require('./http');
 const { lookupIpLocation } = require('./ip');
-const { dashboardHtml } = require('./views/dashboard');
+const { dashboardHtml, deviceInfoHtml } = require('./views/dashboard');
 const { readAnnouncement } = require('./chat');
 
 const statsStore = new JsonStore(STATS_FILE, () => ({
@@ -144,6 +144,21 @@ function register(router) {
   router.on('POST', '/api/report', handleReport);
   router.on('GET', '/api/stats', (req, res) => sendJson(res, 200, readStats()));
   router.on('GET', '/', (req, res) => sendHtml(res, dashboardHtml(readStats(), readAnnouncement())));
+
+  /*
+   * 单台设备的详情面板，点开哪台才取哪台。
+   *
+   * 以前 302 台的详情全内嵌在首页里，3 MB HTML 一次性下载解析，打开的头几秒
+   * 整个标签页是卡住的。拆出来之后首页只剩表格，详情按需取、取过就缓存在前端。
+   * 和首页一样公开：内容本来就是首页的一部分，单独取不增加暴露面。
+   */
+  router.on('GET', '/api/device/info', (req, res, url) => {
+    const deviceId = String(url.searchParams.get('deviceId') || '').slice(0, 64);
+    if (!deviceId) return sendText(res, 400, 'deviceId required');
+    const device = (readStats().devices || []).find((d) => d.deviceId === deviceId);
+    if (!device) return sendText(res, 404, '设备不存在');
+    return sendHtml(res, deviceInfoHtml(device));
+  });
   router.alias('GET', '/index.html', '/');
   router.alias('GET', '/stats', '/');
   router.alias('GET', '/stats/', '/');
