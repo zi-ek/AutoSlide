@@ -1755,6 +1755,37 @@ function formatNumber(v, digits) {
   return n.toFixed(digits === undefined ? 1 : digits);
 }
 
+/* 开机时长：兼容毫秒与秒两种上报单位 */
+function fmtUptime(v) {
+  const n = safeNumber(v);
+
+  if (n === null || n < 0) {
+    return '';
+  }
+
+  const ms = n > 100000000 ? n : n * 1000;
+
+  let sec = Math.floor(ms / 1000);
+
+  const days = Math.floor(sec / 86400);
+  sec %= 86400;
+
+  const hours = Math.floor(sec / 3600);
+  sec %= 3600;
+
+  const minutes = Math.floor(sec / 60);
+
+  if (days > 0) {
+    return `${days}天 ${hours}小时`;
+  }
+
+  if (hours > 0) {
+    return `${hours}小时 ${minutes}分`;
+  }
+
+  return `${minutes}分`;
+}
+
 function fmtPercent(v) {
   const n = safeNumber(v);
 
@@ -2250,78 +2281,6 @@ function getDisplayInfo(hw, sys) {
 }
 
 /* =========================================================
- * Battery
- * ========================================================= */
-
-
-function getBatteryInfo(bat) {
-  const voltage = safeNumber(
-    firstDefined(
-      bat.voltage,
-      bat.voltageMv
-    )
-  );
-
-  const current = safeNumber(
-    firstDefined(
-      bat.current,
-      bat.currentMa,
-      bat.currentNow
-    )
-  );
-
-  let power = firstDefined(
-    bat.power,
-    bat.powerW,
-    bat.chargingPower
-  );
-
-  if (
-    power === '' &&
-    voltage !== null &&
-    current !== null
-  ) {
-    power =
-      Math.abs(
-        voltage * current / 1000000
-      );
-  }
-
-  return {
-    health: bat.health,
-    level: bat.level,
-    status: bat.status,
-    plugged: bat.plugged,
-    technology: bat.technology,
-
-    temperature: firstDefined(
-      bat.temperature,
-      bat.temp
-    ),
-
-    voltage,
-    capacity: firstDefined(
-      bat.capacity,
-      bat.capacityMah
-    ),
-
-    current,
-    power,
-
-    cycleCount: firstDefined(
-      bat.cycleCount,
-      bat.cycles,
-      bat.cycle
-    ),
-
-    designCapacity: firstDefined(
-      bat.designCapacity,
-      bat.designCapacityMah
-    )
-  };
-}
-
-/* =========================================================
  * Network
  * ========================================================= */
 
@@ -2606,10 +2565,8 @@ function renderInfo(d, tr) {
   const sys = di.system || {};
   const hw = di.hardware || {};
   const pf = di.platform || {};
-  const batRaw = di.battery || {};
   const netRaw = di.network || {};
 
-  const bat = getBatteryInfo(batRaw);
   const net = getNetworkInfo(netRaw);
 
   const cpu = getCpuInfo(
@@ -2658,6 +2615,14 @@ function renderInfo(d, tr) {
     d.model
   );
 
+  const uptimeText = fmtUptime(sys.uptime);
+
+  const brand = firstDefined(
+    pf.buildBrand,
+    manufacturer,
+    d.brand
+  );
+
   const androidVersion = firstDefined(
     sys.osVersion,
     d.android
@@ -2695,10 +2660,6 @@ function renderInfo(d, tr) {
     storage.percent
   );
 
-  const batteryLevel = safeNumber(
-    bat.level
-  );
-
   /* =======================================================
    * Overview
    * ======================================================= */
@@ -2719,10 +2680,10 @@ function renderInfo(d, tr) {
         <div class="device-overview-sub">
 
           ${
-            model
+            brand
               ? `
                 <span class="device-chip">
-                  ${esc(model)}
+                  ${esc(brand)}
                 </span>
               `
               : ''
@@ -2752,6 +2713,16 @@ function renderInfo(d, tr) {
               : ''
           }
 
+          ${
+            uptimeText
+              ? `
+                <span class="device-chip">
+                  已开机 ${esc(uptimeText)}
+                </span>
+              `
+              : ''
+          }
+
         </div>
 
         ${
@@ -2770,16 +2741,16 @@ function renderInfo(d, tr) {
       </div>
 
       ${
-        batteryLevel !== null
+        cpu.name
           ? `
             <div class="device-overview-score">
 
               <div class="device-score-number">
-                ${fmtPercent(batteryLevel)}
+                ${esc(cpu.name)}
               </div>
 
               <div class="device-score-label">
-                电量
+                处理器
               </div>
 
             </div>
@@ -3020,7 +2991,6 @@ function renderInfo(d, tr) {
     [
       ...basicRows,
 
-      row('处理器', cpu.name),
       row('架构', cpu.arch),
       row('核心数', cpu.cores),
       row(
