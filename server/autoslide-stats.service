@@ -6,11 +6,23 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/autoslide-stats
-ExecStart=/usr/bin/node /opt/autoslide-stats/server.js
+# node 路径按机器实测填，不要想当然写 /usr/bin/node：
+# 现网这台 apt 装的版本不够新，实际用的是 /root/.local/bin/node。
+# 部署前先 `command -v node` 确认，路径不对 systemd 只会反复重启，日志里也只有一句 203/EXEC。
+ExecStart=/root/.local/bin/node /opt/autoslide-stats/server.js
 Restart=always
 RestartSec=3
 Environment=PORT=8080
-Environment=AUTOSLIDE_ADMIN_TOKEN=
+
+# 口令不写在这里，一律放 drop-in：
+#   /etc/systemd/system/autoslide-stats.service.d/token.conf
+# 原因有两个：
+#  1. 这个文件在 git 仓库里，而仓库是公开的——口令写进来就等于公开发布；
+#  2. 重新部署时 README 那步 `cp` 会用本文件覆盖 /etc 下的实例，
+#     口令若写在这里，一次覆盖就可能把线上的值改回旧值或空值。
+#     空值不是"没保护"而是 fail closed：上报接口直接 503，设备静默停止上报。
+# drop-in 不受覆盖影响，systemd 会把它和本文件叠加生效。
+# 需要哪些口令、各自管什么，见 README 的「口令」一节。
 
 [Install]
 WantedBy=multi-user.target

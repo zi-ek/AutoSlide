@@ -71,7 +71,39 @@
    > unit 名就是 `autoslide-stats`（中间没有连字符），改完代码重启用：
    > `systemctl restart autoslide-stats`
 
-6. **防火墙/网络**
+   ⚠️ 这个 `cp` 是**覆盖**。`/opt` 下那份是随代码传上来的模板，`/etc` 下那份才是
+   systemd 真正加载的（`systemctl show autoslide-stats -p FragmentPath` 可确认）。
+   两份不是链接，拷完就各走各的——所以**任何只改 `/etc` 那份的改动，下次重新部署都会被冲掉**。
+   要长期生效的东西，改仓库里的模板；口令一律走下面的 drop-in。
+
+6. **配置口令（drop-in，不写进 unit 文件）**
+   ```bash
+   mkdir -p /etc/systemd/system/autoslide-stats.service.d
+   cat > /etc/systemd/system/autoslide-stats.service.d/token.conf <<'EOF'
+   [Service]
+   Environment=AUTOSLIDE_ADMIN_TOKEN=换成你的管理口令
+   Environment=AUTOSLIDE_REPORT_TOKEN=换成你的上报口令
+   EOF
+   systemctl daemon-reload && systemctl restart autoslide-stats
+   ```
+
+   | 变量 | 管什么 | 谁持有 |
+   |---|---|---|
+   | `AUTOSLIDE_ADMIN_TOKEN` | 发版页、删脚本、查刷新结果 | 只有你 |
+   | `AUTOSLIDE_REPORT_TOKEN` | `POST /api/report/network` 写设备地址 | 编译进 AutoSlide 与 ADB 助手的 APK，等于半公开 |
+
+   两个都**没配就一律拒绝**（fail closed），不会退化成人人可写。上报口令为空时
+   上报接口回 503，设备会静默停止上报——服务看着一切正常，只是地址永远不再更新，
+   所以换机器部署后务必确认这一项配上了。
+
+   读那一侧（看板首页、`GET /api/device/address`）没有口令，是有意的：看板本来就是
+   公开的，读出去最多是「知道某台设备此刻在哪」；写却能把某台设备的地址改成任意值，
+   Easycontrol 下次就会去连那个地址。
+
+   放 drop-in 而不是 unit 文件的原因：仓库是公开的，口令写进模板等于公开发布；
+   而且模板会被上面那步 `cp` 覆盖，drop-in 不会。
+
+7. **防火墙/网络**
    - 容器内：`apt install -y ufw && ufw allow 8080`（或 iptables）。
    - 只在局域网用，手机直接访问 `http://容器IP:8080`。
    - 如果需要外网访问：建议用 Nginx/Caddy 反代并加 HTTPS，不要把 8080 裸暴露到公网。
