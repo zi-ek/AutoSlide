@@ -805,6 +805,62 @@ test('GET /api/track 用 Basic Auth 取回轨迹', async () => {
   assert.equal(r.json.count, 2);
 });
 
+// Easycontrol 只握有 ro.serialno，先经 /api/report/network 把 serial↔deviceId 关联起来
+const SERIAL_T = 'TSERIAL0001';
+
+test('POST /api/report/network 关联 serial↔deviceId', async () => {
+  const r = await req('POST', '/api/report/network', {
+    body: { deviceId: DEVICE_T, serial: SERIAL_T, addresses: ['192.168.1.50'], port: 5555 },
+    headers: { 'x-report-token': REPORT_TOKEN },
+  });
+  assert.equal(r.status, 200);
+});
+
+test('GET /api/track?serial= 按序列号取回轨迹（Easycontrol 路径）', async () => {
+  const r = await req('GET', `/api/track?serial=${SERIAL_T}`, { headers: { 'x-admin-token': ADMIN_TOKEN } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.deviceId, DEVICE_T, 'serial 应解析回原 deviceId');
+  assert.equal(r.json.count, 2, 'serial 路径取回的点数应与 deviceId 路径一致');
+});
+
+test('GET /api/track?serial= 未知序列号返回 404', async () => {
+  const r = await req('GET', '/api/track?serial=NOSUCHSERIAL', { headers: { 'x-admin-token': ADMIN_TOKEN } });
+  assert.equal(r.status, 404);
+});
+
+test('GET /api/track 无 deviceId 也无 serial 返回 400', async () => {
+  const r = await req('GET', '/api/track', { headers: { 'x-admin-token': ADMIN_TOKEN } });
+  assert.equal(r.status, 400);
+});
+
+test('GET /track 完整页带工具条，交互不关', async () => {
+  const r = await req('GET', `/track?deviceId=${DEVICE_T}`, { headers: AUTH });
+  assert.equal(r.status, 200);
+  assert.match(r.text, /id="bar"/);
+  assert.match(r.text, /var EMBED = false/);
+});
+
+test('GET /track?embed=1 预览页去掉工具条并锁死交互', async () => {
+  const r = await req('GET', `/track?deviceId=${DEVICE_T}&embed=1`, { headers: AUTH });
+  assert.equal(r.status, 200);
+  // 工具条没了，但 deviceId 还得留在隐藏 input 里给脚本取用
+  assert.ok(!/id="bar"/.test(r.text));
+  assert.match(r.text, new RegExp(`type="hidden" id="dev" value="${DEVICE_T}"`));
+  assert.match(r.text, /var EMBED = true/);
+});
+
+test('GET /track 无口令一样被看板锁挡住', async () => {
+  const r = await req('GET', `/track?deviceId=${DEVICE_T}&embed=1`);
+  assert.equal(r.status, 401);
+});
+
+test('设备详情里带定位的设备会渲染出轨迹预览', async () => {
+  const r = await req('GET', `/api/device/info?deviceId=${DEVICE_T}`, { headers: AUTH });
+  assert.equal(r.status, 200);
+  assert.match(r.text, /class="track-preview"/);
+  assert.match(r.text, new RegExp(`src="/track\\?deviceId=${DEVICE_T}&amp;embed=1"`));
+});
+
 /* ==================== 看板锁 ==================== */
 
 test('GET / 无口令返回 401 并带 WWW-Authenticate', async () => {

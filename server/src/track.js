@@ -3,8 +3,8 @@
 // 与 stats.json 完全分开：轨迹点会持续增长，混进主库会把首页 payload 重新撑大
 // （之前专门从 3.26MB 压到 707KB）。这里只在「点开某台设备的轨迹」时按需读对应文件。
 //
-// 坐标一律存原始 WGS-84（与谷歌地球一致）。Leaflet + OSM 用的就是 WGS-84，直接画；
-// 只有拼高德链接时才临时转 GCJ-02（见 util.wgs84ToGcj02）。
+// 坐标一律存原始 WGS-84（与谷歌地球一致）。地图页用高德瓦片（GCJ-02），
+// 前端绘制前临时转 GCJ-02（见 mapHtml 内联的 wgs84ToGcj02）。
 
 const fs = require('fs');
 const path = require('path');
@@ -19,7 +19,7 @@ const {
 } = require('./config');
 const { readJson, sendJson, sendHtml, sendText } = require('./http');
 const { sanitizeLocation, nowCN, esc } = require('./util');
-const { updateStats, touchDevice } = require('./stats');
+const { readStats, updateStats, touchDevice } = require('./stats');
 
 const RETENTION_MS = TRACK_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
@@ -27,6 +27,12 @@ const RETENTION_MS = TRACK_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 function safeId(deviceId) {
   const id = String(deviceId || '').slice(0, 64);
   return /^[A-Za-z0-9_-]{1,64}$/.test(id) ? id : null;
+}
+
+/* ro.serialno 清洗，与 commands.js 的 cleanSerial 保持一致 */
+function cleanSerial(value) {
+  const text = String(value || '').trim();
+  return /^[A-Za-z0-9._:-]{1,64}$/.test(text) ? text : '';
 }
 
 function trackFile(id) {
@@ -139,11 +145,21 @@ async function handleIngest(req, res) {
   sendJson(res, 200, { ok: true });
 }
 
-/* ============ GET /api/track?deviceId=&since=：取某设备轨迹（验口令） ============ */
+/* ============ GET /api/track?deviceId=|serial= &since=：取某设备轨迹（验口令） ============ */
 function handleFetch(req, res, url) {
   if (!isAdmin(req)) return sendJson(res, 403, { ok: false, error: 'forbidden' });
-  const id = safeId(url.searchParams.get('deviceId'));
-  if (!id) return sendJson(res, 400, { ok: false, error: 'bad deviceId' });
+  // 支持两种寻址：deviceId（ANDROID_ID，看板用）或 serial（ro.serialno，Easycontrol 用）。
+  // Easycontrol 只握有 serial，这里内部按 ecSerial 解析成 deviceId，deviceId 不出服务端。
+  let id = safeId(url.searchParams.get('deviceId'));
+  if (!id) {
+    const serial = cleanSerial(url.searchParams.get('serial'));
+    if (serial) {
+      const device = (readStats().devices || []).find((d) => d.ecSerial === serial);
+      id = device ? safeId(device.deviceId) : null;
+      if (!id) return sendJson(res, 404, { ok: false, error: 'device not found for serial' });
+    }
+  }
+  if (!id) return sendJson(res, 400, { ok: false, error: 'deviceId or serial required' });
   const since = Number(url.searchParams.get('since'));
   const points = readPoints(id, since);
   sendJson(res, 200, { ok: true, deviceId: id, count: points.length, points });
@@ -152,10 +168,22 @@ function handleFetch(req, res, url) {
 /* ============ GET /track?deviceId=：轨迹地图页（Basic Auth 由中间件把关） ============ */
 function handleMapPage(req, res, url) {
   const id = esc(String(url.searchParams.get('deviceId') || ''));
-  sendHtml(res, mapHtml(id));
+  // embed=1：看板设备详情里的那块小预览——不要工具条、不要交互，放大交给外层页面
+  const embed = url.searchParams.get('embed') === '1';
+  sendHtml(res, mapHtml(id, embed));
 }
 
-function mapHtml(deviceId) {
+/**
+ * 轨迹地图页，一份代码两副面孔：
+ *
+ * - 完整页（默认）：顶部工具条能换设备重查，地图能拖能缩放，每个点都能点开看时间；
+ * - 预览页（embed=1）：嵌在看板设备卡里的一小块，只画线和起终点，交互全关——
+ *   外层盖了一块透明板收走点击用来放大，这边再响应就是两处抢同一下点击。
+ *
+ * deviceId 进来时已经 esc 过，只能往 HTML 属性里放；要用它取数就从 #dev 的 value 读，
+ * 别再拼进 JS 字面量。
+ */
+function mapHtml(deviceId, embed) {
   return `<!doctype html>
 <html lang="zh">
 <head>
@@ -165,27 +193,67 @@ function mapHtml(deviceId) {
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
   html,body{margin:0;height:100%;font-family:system-ui,sans-serif}
-  #map{height:100%}
+  #map{height:100%;background:#e9e6e1}
   #bar{position:absolute;z-index:1000;top:10px;left:50px;right:10px;background:#fff;
        padding:8px 12px;border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,.2);font-size:13px}
   #bar input{width:230px;padding:4px 6px}
-  #bar b{color:#c0562b}
+  #info b{color:#c0562b}
   .muted{color:#888}
+  /* 预览模式没有工具条，那行说明挤成左下角一枚小胶囊 */
+  #info.chip{position:absolute;z-index:1000;left:8px;bottom:8px;
+       background:rgba(255,255,255,.92);padding:3px 8px;border-radius:6px;
+       box-shadow:0 1px 4px rgba(0,0,0,.18);font-size:11px;color:#666;
+       max-width:calc(100% - 16px);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 </style>
 </head>
 <body>
-<div id="bar">
+${embed
+  ? `<input type="hidden" id="dev" value="${deviceId}">
+<div id="info" class="chip">加载中…</div>`
+  : `<div id="bar">
   设备 <input id="dev" value="${deviceId}" placeholder="deviceId">
   <button onclick="load()">加载</button>
   <span id="info" class="muted">—</span>
-</div>
+</div>`}
 <div id="map"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
-  var map = L.map('map').setView([31.23, 121.47], 12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+  var EMBED = ${embed ? 'true' : 'false'};
+
+  // WGS-84 → GCJ-02：轨迹点是 GPS 原始坐标，高德瓦片是加密坐标，不转会偏出几百米
+  function wgs84ToGcj02(lat, lon) {
+    if (!(lon > 73.66 && lon < 135.05 && lat > 3.86 && lat < 53.55)) return { lat: lat, lon: lon };
+    var A = 6378245.0, EE = 0.00669342162296594323;
+    var x = lon - 105.0, y = lat - 35.0;
+    var dLat = -100.0 + 2.0*x + 3.0*y + 0.2*y*y + 0.1*x*y + 0.2*Math.sqrt(Math.abs(x));
+    dLat += ((20.0*Math.sin(6.0*x*Math.PI) + 20.0*Math.sin(2.0*x*Math.PI)) * 2.0) / 3.0;
+    dLat += ((20.0*Math.sin(y*Math.PI) + 40.0*Math.sin(y/3.0*Math.PI)) * 2.0) / 3.0;
+    dLat += ((160.0*Math.sin(y/12.0*Math.PI) + 320*Math.sin(y*Math.PI/30.0)) * 2.0) / 3.0;
+    var dLon = 300.0 + x + 2.0*y + 0.1*x*x + 0.1*x*y + 0.1*Math.sqrt(Math.abs(x));
+    dLon += ((20.0*Math.sin(6.0*x*Math.PI) + 20.0*Math.sin(2.0*x*Math.PI)) * 2.0) / 3.0;
+    dLon += ((20.0*Math.sin(x*Math.PI) + 40.0*Math.sin(x/3.0*Math.PI)) * 2.0) / 3.0;
+    dLon += ((150.0*Math.sin(x/12.0*Math.PI) + 300.0*Math.sin(x/30.0*Math.PI)) * 2.0) / 3.0;
+    var radLat = lat / 180.0 * Math.PI;
+    var magic = Math.sin(radLat);
+    magic = 1 - EE * magic * magic;
+    var sqrtMagic = Math.sqrt(magic);
+    dLat = (dLat * 180.0) / (((A * (1 - EE)) / (magic * sqrtMagic)) * Math.PI);
+    dLon = (dLon * 180.0) / ((A / sqrtMagic) * Math.cos(radLat) * Math.PI);
+    return { lat: lat + dLat, lon: lon + dLon };
+  }
+
+  // 预览就是一张不能动的图：拖拽/缩放/双击全关，免得小窗里误触，也不跟外层的放大抢点击
+  var map = L.map('map', EMBED ? {
+    zoomControl:false, attributionControl:false, dragging:false, touchZoom:false,
+    scrollWheelZoom:false, doubleClickZoom:false, boxZoom:false, keyboard:false, tap:false
+  } : {}).setView([31.23, 121.47], 12);
+
+  L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+    { maxZoom: 19, subdomains: '1234', attribution: '© 高德地图' }).addTo(map);
   var layer = L.layerGroup().addTo(map);
+
+  // 从预览放大到全屏时窗口尺寸变了，Leaflet 不会自己重算容器，得推它一把
+  window.addEventListener('resize', function(){ map.invalidateSize(); });
 
   function fmt(t){ return new Date(t).toLocaleString('zh-CN'); }
 
@@ -201,20 +269,24 @@ function mapHtml(deviceId) {
       var d = await r.json();
       var pts = d.points || [];
       if(!pts.length){ info.textContent = '这台设备暂无轨迹点'; return; }
-      var latlngs = pts.map(function(p){ return [p.lat, p.lon]; });
+      var latlngs = pts.map(function(p){ var c = wgs84ToGcj02(p.lat, p.lon); return [c.lat, c.lon]; });
       L.polyline(latlngs, { color:'#c0562b', weight:3, opacity:.8 }).addTo(layer);
-      // 起点/终点特别标注，中间点用小圆点
+      // 起点/终点特别标注，中间点用小圆点；预览里只留起终两个，几百个圆点铺上去又糊又慢
       pts.forEach(function(p, i){
         var isEnd = i === 0 || i === pts.length - 1;
-        var m = L.circleMarker([p.lat, p.lon], {
+        if(EMBED && !isEnd) return;
+        var pc = wgs84ToGcj02(p.lat, p.lon);
+        var m = L.circleMarker([pc.lat, pc.lon], {
           radius: isEnd ? 7 : 3,
           color: i === pts.length-1 ? '#1a7f37' : (i === 0 ? '#888' : '#c0562b'),
           fillOpacity: .9
         }).addTo(layer);
-        m.bindPopup(fmt(p.t) + '<br>±' + (p.acc||'?') + 'm' + (p.mv? ' · 移动':'') );
+        if(!EMBED) m.bindPopup(fmt(p.t) + '<br>±' + (p.acc||'?') + 'm' + (p.mv? ' · 移动':'') );
       });
       map.fitBounds(L.latLngBounds(latlngs).pad(0.15));
-      info.innerHTML = '<b>' + pts.length + '</b> 个点 · ' + fmt(pts[0].t) + ' → ' + fmt(pts[pts.length-1].t);
+      info.innerHTML = EMBED
+        ? '<b>' + pts.length + '</b> 个点 · 最近 ' + fmt(pts[pts.length-1].t)
+        : '<b>' + pts.length + '</b> 个点 · ' + fmt(pts[0].t) + ' → ' + fmt(pts[pts.length-1].t);
     }catch(e){ info.textContent = '出错：' + e; }
   }
   if (document.getElementById('dev').value.trim()) load();

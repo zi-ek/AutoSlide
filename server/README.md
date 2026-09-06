@@ -113,7 +113,7 @@
 服务地址不在 Kotlin 代码里，改根目录 `gradle.properties` 的这一行即可：
 
 ```properties
-autoslide.serverBaseUrl=http://你的PVE容器IP:8080
+autoslide.serverBaseUrl=http://你的PVE容器IP:8080，https://pve.8450696.shop/
 ```
 
 构建时经 `buildConfigField` 注入 `BuildConfig.SERVER_BASE_URL`，由
@@ -123,7 +123,7 @@ autoslide.serverBaseUrl=http://你的PVE容器IP:8080
 也可以不改文件，构建时临时覆盖：
 
 ```
-./gradlew assembleRelease -Pautoslide.serverBaseUrl=http://192.168.100.1:8080
+./gradlew assembleRelease -Pautoslide.serverBaseUrl=http://192.168.100.254:8080
 ```
 
 重新编译安装即可。App 会在首次安装和版本升级时上报一次设备信息。
@@ -158,3 +158,6 @@ data/stats.json — 统计数据就存在这里（安装数、设备列表等）
 系统服务：cloudflared（开机自启）和 autoslide-stats（统计服务，开机自启）
 
 systemctl restart autoslide-stats 重启服务
+
+cat /etc/systemd/system/autoslide-stats.service.d/token.conf
+systemctl show autoslide-stats -p Environment 查看口令

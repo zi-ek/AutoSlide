@@ -1522,6 +1522,128 @@ ${baseStyles()}
   }
 
   /* =========================================================
+     Track preview
+
+     设备卡里嵌一块 /track?embed=1 的小地图，点一下换成全屏的完整轨迹页。
+     ========================================================= */
+
+  .track-preview {
+    position:relative;
+
+    height:200px;
+
+    border:1px solid var(--border-soft);
+    border-radius:9px;
+
+    overflow:hidden;
+
+    background:var(--panel);
+
+    cursor:zoom-in;
+  }
+
+  .track-preview iframe {
+    display:block;
+
+    width:100%;
+    height:100%;
+
+    border:0;
+  }
+
+  /* 透明盖板：把点击留在外层，不让它落进 iframe 里的地图 */
+  .track-hit {
+    position:absolute;
+    inset:0;
+  }
+
+  .track-hit span {
+    position:absolute;
+    right:8px;
+    top:8px;
+
+    padding:3px 8px;
+    border-radius:6px;
+
+    background:rgba(35,34,31,.68);
+    color:#fff;
+
+    font-size:11px;
+
+    opacity:0;
+    transition:opacity .15s;
+  }
+
+  .track-preview:hover .track-hit span {
+    opacity:1;
+  }
+
+  .track-updated {
+    margin:7px 0 0;
+
+    font-family:var(--mono);
+    font-size:10px;
+
+    color:var(--text-faint);
+  }
+
+  /* 全屏轨迹：盖在设备弹窗（z-index:50）之上。
+     顶上留 46px 是给关闭按钮的：地图页自己的工具条贴在 top:10px，
+     按钮压在 iframe 里就正好盖住那行信息，只能挪到画面外面去。 */
+  .track-full {
+    position:fixed;
+    inset:0;
+
+    display:none;
+
+    padding:46px 24px 24px;
+
+    background:rgba(35,34,31,.75);
+
+    z-index:60;
+  }
+
+  .track-full.open {
+    display:block;
+  }
+
+  .track-full iframe {
+    display:block;
+
+    width:100%;
+    height:100%;
+
+    border:0;
+    border-radius:12px;
+
+    background:var(--panel);
+  }
+
+  .track-full-close {
+    position:absolute;
+    right:24px;
+    top:9px;
+
+    width:30px;
+    height:30px;
+
+    border:none;
+    border-radius:8px;
+
+    background:rgba(255,255,255,.18);
+    color:#fff;
+
+    font-size:20px;
+    line-height:1;
+
+    cursor:pointer;
+  }
+
+  .track-full-close:hover {
+    background:rgba(255,255,255,.3);
+  }
+
+  /* =========================================================
      Status badges
      ========================================================= */
 
@@ -1716,6 +1838,19 @@ ${baseStyles()}
 
     .info-card.wide {
       grid-column:auto;
+    }
+
+    .track-preview {
+      height:150px;
+    }
+
+    .track-full {
+      padding:42px 12px 12px;
+    }
+
+    .track-full-close {
+      right:12px;
+      top:7px;
     }
   }
 
@@ -2547,6 +2682,65 @@ function networkUpdatedAction(d) {
 }
 
 
+/**
+ * 「行动轨迹」卡片：卡里嵌一块 /track?embed=1 的只读小地图，点一下放到全屏。
+ *
+ * 没开轨迹的设备只留一行「尚未上报」——不嵌 iframe，省掉一次注定画不出东西的
+ * 地图加载（Leaflet + 一屏 OSM 瓦片）。地图页与看板同源，Basic Auth 的凭据浏览器
+ * 会自己带上，所以这里用相对路径就够，不必把服务器地址写死。
+ */
+function trackCard(d) {
+  const id = String(d.deviceId || '');
+
+  if (!id) {
+    return '';
+  }
+
+  if (!d.location) {
+    return card(
+      '行动轨迹',
+      '<p class="info-empty">尚未上报</p>',
+      true
+    );
+  }
+
+  const preview = `
+    <div
+      class="track-preview"
+      data-track-id="${esc(id)}"
+      onclick="openTrackModal(this)"
+      title="点击放大">
+
+      <iframe
+        src="/track?deviceId=${encodeURIComponent(id)}&amp;embed=1"
+        title="行动轨迹预览"
+        loading="lazy"></iframe>
+
+      <div class="track-hit">
+        <span>点击放大</span>
+      </div>
+
+    </div>
+
+    ${
+      d.locationUpdatedAt
+        ? `
+          <p class="track-updated">
+            更新于 ${esc(d.locationUpdatedAt)}
+          </p>
+        `
+        : ''
+    }
+  `;
+
+  return card(
+    '行动轨迹',
+    preview,
+    true
+  );
+}
+
+
 /* =========================================================
  * 增强版 renderInfo
  * ========================================================= */
@@ -3251,6 +3445,8 @@ function renderInfo(d, tr) {
 
       ${networkCard}
 
+      ${trackCard(d)}
+
       ${capabilitiesCard}
 
       ${sensors}
@@ -3337,6 +3533,144 @@ const dashboardScript = `
     document.body.style.overflow =
       '';
   };
+
+
+  /* =======================================================
+   * Track fullscreen
+   *
+   * 设备卡里嵌的是 embed 版小地图——只有线，拖不动也缩放不了。点一下才把完整的
+   * /track 页面装进全屏 iframe：那份带工具条、能拖能缩放、点得开每个轨迹点。
+   * ======================================================= */
+
+  window.openTrackModal = function (el) {
+
+    const modal =
+      document.getElementById(
+        'track-modal'
+      );
+
+    const frame =
+      document.getElementById(
+        'track-frame'
+      );
+
+    if (!modal || !frame) {
+      return;
+    }
+
+    /* 传进来的既可能是预览容器（带 data-track-id），也可能直接是个 deviceId */
+    const deviceId =
+      el && el.getAttribute
+        ? el.getAttribute('data-track-id')
+        : String(el || '');
+
+    if (!deviceId) {
+      return;
+    }
+
+    frame.src =
+      '/track?deviceId=' +
+      encodeURIComponent(deviceId);
+
+    modal.classList.add('open');
+
+    modal.setAttribute(
+      'aria-hidden',
+      'false'
+    );
+  };
+
+
+  /* 收起全屏轨迹；没开着就什么都不做，当清理函数反复调也安全 */
+  window.closeTrackModal = function () {
+
+    const modal =
+      document.getElementById(
+        'track-modal'
+      );
+
+    if (
+      !modal ||
+      !modal.classList.contains('open')
+    ) {
+      return;
+    }
+
+    modal.classList.remove('open');
+
+    modal.setAttribute(
+      'aria-hidden',
+      'true'
+    );
+
+    /* 卸掉 src：不然关了之后那张地图还在后台拉瓦片 */
+    const frame =
+      document.getElementById(
+        'track-frame'
+      );
+
+    if (frame) {
+      frame.removeAttribute('src');
+    }
+  };
+
+
+  /* 点轨迹遮罩（iframe 之外那圈）收起 */
+
+  document.addEventListener(
+    'click',
+    function (event) {
+
+      const modal =
+        document.getElementById(
+          'track-modal'
+        );
+
+      if (
+        modal &&
+        event.target === modal
+      ) {
+        closeTrackModal();
+      }
+
+    }
+  );
+
+
+  /*
+   * ESC：一次只退一层，轨迹开着就只收轨迹，设备弹窗留在原地。
+   *
+   * 页面里有两处 ESC 处理器都会调 closeDeviceModal，各加一遍判断迟早漏一处；
+   * 这里挂在捕获阶段抢先一步，退完这层就把事件掐断，后面两处自然收不到。
+   */
+
+  document.addEventListener(
+    'keydown',
+    function (event) {
+
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      const modal =
+        document.getElementById(
+          'track-modal'
+        );
+
+      if (
+        !modal ||
+        !modal.classList.contains('open')
+      ) {
+        return;
+      }
+
+      event.stopPropagation();
+
+      closeTrackModal();
+
+    },
+    true
+  );
 
 
   /* 点击遮罩关闭 */
@@ -4733,6 +5067,37 @@ function dashboardHtml(stats, announcement) {
 
 
     <!-- =================================================
+         Track fullscreen
+
+         设备卡里的轨迹只是张不能动的小图，点开换成完整的 /track 页面。
+         src 开时才填、关时清掉，免得关掉之后地图还在后台拉瓦片。
+         ================================================= -->
+
+    <div
+      id="track-modal"
+      class="track-full"
+      role="dialog"
+      aria-modal="true"
+      aria-hidden="true">
+
+      <button
+        type="button"
+        class="track-full-close"
+        aria-label="关闭轨迹"
+        onclick="closeTrackModal()">
+
+        ×
+
+      </button>
+
+      <iframe
+        id="track-frame"
+        title="行动轨迹"></iframe>
+
+    </div>
+
+
+    <!-- =================================================
          Footer
          ================================================= -->
 
@@ -5257,6 +5622,9 @@ function dashboardHtml(stats, announcement) {
 
   window.closeDeviceModal =
     function () {
+
+      // 轨迹全屏是盖在设备弹窗上的一层，底下这层收了，它不能还浮在那儿
+      if (window.closeTrackModal) window.closeTrackModal();
 
       const modal =
         document.getElementById(
