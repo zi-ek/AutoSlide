@@ -4,7 +4,6 @@ import android.app.AppOpsManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.Process
 
 /**
  * AppOps 状态检查（移植自 GKD 的 PermissionState.kt，去掉隐藏 API 依赖）。
@@ -84,10 +83,16 @@ object AppOpsState {
         )
     }
 
+    @Suppress("DEPRECATION")
     private fun checkAllowedOp(context: Context, op: String): Boolean {
         val manager = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return true
         return runCatching {
-            manager.checkOpNoThrow(op, Process.myUid(), context.packageName)
+            val uid = context.applicationInfo.uid
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                manager.unsafeCheckOpNoThrow(op, uid, context.packageName)
+            } else {
+                manager.checkOpNoThrow(op, uid, context.packageName)
+            }
         }.getOrDefault(AppOpsManager.MODE_ALLOWED).let { mode ->
             mode != AppOpsManager.MODE_IGNORED && mode != AppOpsManager.MODE_ERRORED
         }

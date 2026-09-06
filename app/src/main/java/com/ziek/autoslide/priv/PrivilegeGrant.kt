@@ -22,7 +22,6 @@ import android.app.AppOpsManagerHidden
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.Process
 import com.ziek.autoslide.LogX
 import kotlinx.coroutines.delay
 import priv.kit.core.Privilege
@@ -114,15 +113,12 @@ internal object PrivilegeGrant {
         }
     }
 
-    /* 单个 op：已经是 ALLOWED 就不重复下发（GKD: setAllowSelfMode） */
+    /* 单个 op：直接设为 ALLOWED（避免调用 service.value.checkOperation 触发 AppOpsService.verifyAndGetBypass 的 SecurityException） */
     private fun setAllowSelfMode(context: Context, service: CompatAppOpsService, code: Int) {
         runCatching {
-            val uid = Process.myUid()
-            val mode = service.value.checkOperation(code, uid, context.packageName)
-            if (mode != AppOpsManager.MODE_ALLOWED) {
-                service.value.setMode(code, uid, context.packageName, AppOpsManager.MODE_ALLOWED)
-                LogX.i(TAG, "app op $code set to allowed")
-            }
+            val uid = context.applicationInfo.uid
+            service.value.setMode(code, uid, context.packageName, AppOpsManager.MODE_ALLOWED)
+            LogX.i(TAG, "app op $code set to allowed")
         }.onFailure { LogX.w(TAG, "set app op $code failed", it) }
     }
 
