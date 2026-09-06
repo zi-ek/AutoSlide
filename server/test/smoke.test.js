@@ -14,6 +14,9 @@ const path = require('node:path');
 
 const SERVER_JS = path.join(__dirname, '..', 'server.js');
 const ADMIN_TOKEN = 'test-admin-token';
+const REPORT_TOKEN = 'test-report-token';
+/* 首页看板已上 Basic Auth，密码即 ADMIN_TOKEN；打被锁路由要带上 */
+const AUTH = { Authorization: 'Basic ' + Buffer.from('x:' + ADMIN_TOKEN).toString('base64') };
 
 let child;
 let baseUrl;
@@ -29,6 +32,7 @@ before(async () => {
       PORT: '0', // 交给下面的监听日志回报实际端口
       AUTOSLIDE_DATA_DIR: dataDir,
       AUTOSLIDE_ADMIN_TOKEN: ADMIN_TOKEN,
+      AUTOSLIDE_REPORT_TOKEN: REPORT_TOKEN,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -122,7 +126,7 @@ test('POST /api/report 非法 JSON 返回 400', async () => {
 });
 
 test('GET /api/stats 返回统计结构', async () => {
-  const r = await req('GET', '/api/stats');
+  const r = await req('GET', '/api/stats', { headers: AUTH });
   assert.equal(r.status, 200);
   assert.equal(r.json.install_count, 2);
   assert.equal(r.json.update_count, 1);
@@ -131,7 +135,7 @@ test('GET /api/stats 返回统计结构', async () => {
 });
 
 test('并发上报不丢计数', async () => {
-  const before = (await req('GET', '/api/stats')).json.install_count;
+  const before = (await req('GET', '/api/stats', { headers: AUTH })).json.install_count;
   const N = 20;
   await Promise.all(
     Array.from({ length: N }, (_, i) =>
@@ -140,7 +144,7 @@ test('并发上报不丢计数', async () => {
       })
     )
   );
-  const after = (await req('GET', '/api/stats')).json.install_count;
+  const after = (await req('GET', '/api/stats', { headers: AUTH })).json.install_count;
   assert.equal(after, before + N, '并发写入串行化失败，计数被覆盖');
 });
 
@@ -379,14 +383,14 @@ test('超大请求体被拒绝且不挂起连接', async () => {
 });
 
 test('超大请求体后服务仍然可用', async () => {
-  const r = await req('GET', '/api/stats');
+  const r = await req('GET', '/api/stats', { headers: AUTH });
   assert.equal(r.status, 200, '服务在处理超大请求后不可用');
 });
 
 /* ==================== HTML 页面 ==================== */
 
 test('GET / 返回统计看板', async () => {
-  const r = await req('GET', '/');
+  const r = await req('GET', '/', { headers: AUTH });
   assert.equal(r.status, 200);
   assert.match(r.headers.get('content-type'), /text\/html/);
   assert.match(r.text, /AutoSlide 数据端/);
@@ -395,7 +399,7 @@ test('GET / 返回统计看板', async () => {
 });
 
 test('看板上有发版与脚本库管理入口', async () => {
-  const r = await req('GET', '/');
+  const r = await req('GET', '/', { headers: AUTH });
   assert.equal(r.status, 200);
   // 页面本身一直都在，丢的是看板上的入口链接，这里把它钉住
   assert.match(r.text, /href="\/admin\/release"/);
@@ -404,7 +408,7 @@ test('看板上有发版与脚本库管理入口', async () => {
 
 test('看板别名路径可访问', async () => {
   for (const p of ['/index.html', '/stats', '/stats/']) {
-    const r = await req('GET', p);
+    const r = await req('GET', p, { headers: AUTH });
     assert.equal(r.status, 200, `${p} 不可访问`);
   }
 });
@@ -736,4 +740,90 @@ test('stats.json 损坏时保留备份而非静默丢弃', async () => {
   // 同时：新的 stats.json 必须是合法 JSON，服务已恢复正常
   const fresh = JSON.parse(fs.readFileSync(statsFile, 'utf8'));
   assert.ok(fresh.devices.some((d) => d.deviceId === 'after-corrupt'));
+});
+
+/* ==================== 行动轨迹 ==================== */
+
+const DEVICE_T = 'track-device-ttt';
+
+test('POST /api/track 无 report token 返回 401', async () => {
+  const r = await req('POST', '/api/track', { body: { deviceId: DEVICE_T, lat: 31.23, lon: 121.47 } });
+  assert.equal(r.status, 401);
+});
+
+test('POST /api/track 非法 deviceId 返回 400', async () => {
+  const r = await req('POST', '/api/track', {
+    body: { deviceId: '../etc/passwd', lat: 1, lon: 1 },
+    headers: { 'x-report-token': REPORT_TOKEN },
+  });
+  assert.equal(r.status, 400);
+});
+
+test('POST /api/track 非法坐标返回 400', async () => {
+  const r = await req('POST', '/api/track', {
+    body: { deviceId: DEVICE_T, lat: 999, lon: 121 },
+    headers: { 'x-report-token': REPORT_TOKEN },
+  });
+  assert.equal(r.status, 400);
+});
+
+test('POST /api/track 上报两点并覆盖当前位置', async () => {
+  // 真实设备先经 /api/report 登记，location 才有承载对象（touchDevice 只更新已存在的设备）
+  await req('POST', '/api/report', { body: { event: 'install', deviceId: DEVICE_T, device: { model: 'T', brand: 'T' } } });
+  const r1 = await req('POST', '/api/track', {
+    body: { deviceId: DEVICE_T, lat: 31.2300, lon: 121.4700, accuracy: 12, provider: 'gps', time: Date.now() - 120000 },
+    headers: { 'x-report-token': REPORT_TOKEN },
+  });
+  assert.equal(r1.status, 200);
+  const r2 = await req('POST', '/api/track', {
+    body: { deviceId: DEVICE_T, lat: 31.2312, lon: 121.4720, accuracy: 8, provider: 'gps', moving: 1 },
+    headers: { 'x-report-token': REPORT_TOKEN },
+  });
+  assert.equal(r2.status, 200);
+  // 设备的 location 应被最新点覆盖
+  const stats = (await req('GET', '/api/stats', { headers: AUTH })).json;
+  const dev = stats.devices.find((d) => d.deviceId === DEVICE_T);
+  assert.ok(dev && dev.location, '轨迹上报后设备应有 location');
+  assert.ok(Math.abs(dev.location.lat - 31.2312) < 1e-6, 'location 未被最新点覆盖');
+});
+
+test('GET /api/track 无口令返回 403', async () => {
+  const r = await req('GET', `/api/track?deviceId=${DEVICE_T}`);
+  assert.equal(r.status, 403);
+});
+
+test('GET /api/track 用 x-admin-token 取回轨迹', async () => {
+  const r = await req('GET', `/api/track?deviceId=${DEVICE_T}`, { headers: { 'x-admin-token': ADMIN_TOKEN } });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.count, 2);
+  assert.ok(r.json.points[0].t <= r.json.points[1].t, '轨迹点应按时间升序');
+});
+
+test('GET /api/track 用 Basic Auth 取回轨迹', async () => {
+  const r = await req('GET', `/api/track?deviceId=${DEVICE_T}`, { headers: AUTH });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.count, 2);
+});
+
+/* ==================== 看板锁 ==================== */
+
+test('GET / 无口令返回 401 并带 WWW-Authenticate', async () => {
+  const r = await req('GET', '/');
+  assert.equal(r.status, 401);
+  assert.match(String(r.headers.get('www-authenticate') || ''), /Basic/);
+});
+
+test('GET / 带 Basic Auth 返回 200', async () => {
+  const r = await req('GET', '/', { headers: AUTH });
+  assert.equal(r.status, 200);
+});
+
+test('GET /privacy 法律页无需口令即可访问', async () => {
+  const r = await req('GET', '/privacy');
+  assert.equal(r.status, 200);
+});
+
+test('GET /api/device/address 机器接口无需口令即可访问', async () => {
+  const r = await req('GET', '/api/device/address?serial=nonexistent');
+  assert.notEqual(r.status, 401);
 });

@@ -38,7 +38,7 @@
 //   GET  /             统计看板页面
 
 const http = require('http');
-const { PORT } = require('./src/config');
+const { PORT, ADMIN_TOKEN } = require('./src/config');
 const { createRouter } = require('./src/http');
 
 const router = createRouter();
@@ -49,8 +49,49 @@ require('./src/legal').register(router);
 require('./src/license').register(router);
 require('./src/update').register(router);
 require('./src/commands').register(router);
+require('./src/track').register(router);
 
-const server = http.createServer((req, res) => router.handle(req, res));
+// 首页看板锁：给人看的页面挂 Basic Auth，密码即 AUTOSLIDE_ADMIN_TOKEN。
+// 只锁「浏览器打开的看板」，机器调用的接口（上报、授权、更新、地址、聊天）与
+// 法律页(/privacy /terms)、脚本分享页(/view) 一律放行，锁了会把 App 和 Easycontrol 打瘫。
+// 轨迹是敏感数据，/track 与 /api/track 也在此列（/api/track 另接受 x-admin-token 供 Easycontrol）。
+const LOCKED_PAGES = new Set([
+  '/', '/index.html', '/stats', '/stats/', '/api/stats', '/api/device/info', '/track', '/api/track',
+]);
+
+/* Basic Auth 校验：用户名忽略，密码等于 ADMIN_TOKEN 即放行 */
+function dashboardAuthOk(req) {
+  const m = /^Basic (.+)$/.exec(String(req.headers['authorization'] || ''));
+  if (!m) return false;
+  const decoded = Buffer.from(m[1], 'base64').toString('utf8');
+  const pass = decoded.slice(decoded.indexOf(':') + 1);
+  return pass === ADMIN_TOKEN;
+}
+
+const server = http.createServer((req, res) => {
+  const pathname = new URL(req.url, `http://${req.headers.host || 'localhost'}`).pathname;
+  if (LOCKED_PAGES.has(pathname)) {
+    // /api/track 的 GET 由模块内 isAdmin 处理（兼容 x-admin-token），这里放它过，避免 Basic 挑战挡住 Easycontrol
+    const isTrackApi = pathname === '/api/track';
+    if (!isTrackApi) {
+      if (!ADMIN_TOKEN) {
+        // fail-closed：没配口令一律拒绝，绝不退化成人人可看（轨迹是敏感数据）
+        res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('看板口令(AUTOSLIDE_ADMIN_TOKEN)未配置，已按安全策略拒绝访问。');
+        return;
+      }
+      if (!dashboardAuthOk(req)) {
+        res.writeHead(401, {
+          'WWW-Authenticate': 'Basic realm="AutoSlide Dashboard", charset="UTF-8"',
+          'Content-Type': 'text/plain; charset=utf-8',
+        });
+        res.end('需要登录');
+        return;
+      }
+    }
+  }
+  router.handle(req, res);
+});
 
 server.listen(PORT, '0.0.0.0', () => {
   // 打印实际绑定端口（PORT=0 时由系统分配，测试据此拿到端口）

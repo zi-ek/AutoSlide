@@ -14,6 +14,13 @@ const MANIFEST_FILE = path.join(UPLOAD_DIR, 'index.json');
 const CHAT_FILE = path.join(DATA_DIR, 'chat.json');
 const CHAT_IMAGE_DIR = path.join(DATA_DIR, 'chat-images');
 
+/* 行动轨迹：每台设备一个 JSONL，独立于 stats.json，只在验过口令后按需加载 */
+const TRACKS_DIR = path.join(DATA_DIR, 'tracks');
+/* 轨迹点保留天数，超期清除 */
+const TRACK_RETENTION_DAYS = 7;
+/* 单台设备保留的最大轨迹点数（约一周高频移动的量），超出丢弃最旧的 */
+const TRACK_MAX_POINTS = 5000;
+
 /* 单个频道保留的最近消息条数 */
 const CHAT_MESSAGE_LIMIT = 300;
 /* 反馈消息与图片的保留天数，超期自动清除 */
@@ -23,6 +30,8 @@ const CHAT_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /* 各接口的请求体上限 */
 const LIMIT_JSON_BODY = 64 * 1024;
+/* 轨迹上报体：单点很小，给 8KB 足够，也挡住异常大包 */
+const LIMIT_TRACK_BODY = 8 * 1024;
 const LIMIT_UPLOAD_BODY = 2 * 1024 * 1024;
 const LIMIT_CHAT_BODY = 8 * 1024 * 1024;
 const LIMIT_CHAT_IMAGE = 6 * 1024 * 1024;
@@ -65,7 +74,11 @@ module.exports = {
   CHAT_MESSAGE_LIMIT,
   CHAT_RETENTION_DAYS,
   CHAT_CLEANUP_INTERVAL_MS,
+  TRACKS_DIR,
+  TRACK_RETENTION_DAYS,
+  TRACK_MAX_POINTS,
   LIMIT_JSON_BODY,
+  LIMIT_TRACK_BODY,
   LIMIT_UPLOAD_BODY,
   LIMIT_CHAT_BODY,
   LIMIT_CHAT_IMAGE,
