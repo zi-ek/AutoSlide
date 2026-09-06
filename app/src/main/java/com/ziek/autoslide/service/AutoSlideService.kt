@@ -2801,28 +2801,53 @@ private const val SPEED_CURVE_FACTOR = 0.7
 
     /**
      * 在无障碍节点树中查找命中关键词的节点并点击。
-     * 优先点击节点本身或最近的可点击祖先；节点点击失败时返回 false 交给 OCR 兜底。
+     * 优先点击节点本身或最近的可点击祖先；祖先链上没有可点击节点（广告 SDK 自己
+     * 处理触摸事件时常见）或 ACTION_CLICK 被拒时，退回按节点坐标手势点击——
+     * 坐标节点树里现成的，比截图 + OCR 快一个数量级，也不耗电。
+     * 只有连节点都没找到时才返回 false 交给 OCR 兜底。
      *
      * @return 是否已通过节点树完成点击
      */
-    private fun tryClickSkipNodeByTree(): Boolean {
+    private suspend fun tryClickSkipNodeByTree(): Boolean {
         // 冷却期内不重复点击
         if (SystemClock.elapsedRealtime() - lastSkipTapAt < SKIP_TAP_COOLDOWN_MS) return false
-        return try {
+        val target = try {
             val root = rootInActiveWindow ?: return false
             val keywords = skipKeywordList.filter { it.isNotBlank() }
             if (keywords.isEmpty()) return false
-            val target = findSkipNodeByBfs(root) ?: return false
-            val clickable = findClickableSelfOrAncestor(target)
-            val clicked = clickable != null && clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            if (!clicked) return false
+            findSkipNodeByBfs(root) ?: run {
+                LogX.d(TAG, "Skip node not found in tree, fallback to OCR")
+                return false
+            }
+        } catch (e: Throwable) {
+            LogX.w(TAG, "Node tree scan failed, fallback to OCR", e)
+            return false
+        }
+        // 优先 ACTION_CLICK：走控件自己的点击语义，不受遮挡与动画影响
+        val clicked = runCatching {
+            findClickableSelfOrAncestor(target)?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }.getOrDefault(false) == true
+        if (clicked) {
             lastSkipTapAt = SystemClock.elapsedRealtime()
             LogX.i(TAG, "Skip node clicked: text=${target.text}, desc=${target.contentDescription}")
-            true
-        } catch (e: Throwable) {
-            LogX.w(TAG, "Node tree tap failed, fallback to OCR", e)
-            false
+            return true
         }
+        // 手势兜底：六只脚开屏广告这类页面整棵树 clickable 全是 false，
+        // ACTION_CLICK 无从下手，但节点的屏幕坐标是准的，直接点它。
+        val bounds = Rect()
+        runCatching { target.getBoundsInScreen(bounds) }
+        if (bounds.isEmpty) {
+            LogX.w(TAG, "Skip node not clickable and bounds empty, fallback to OCR")
+            return false
+        }
+        LogX.i(TAG, "Skip node not clickable, tap by bounds: text=${target.text}, bounds=$bounds")
+        val width = resources.displayMetrics.widthPixels.toFloat().coerceAtLeast(1f)
+        val height = resources.displayMetrics.heightPixels.toFloat().coerceAtLeast(1f)
+        performSkipTap(
+            (bounds.exactCenterX() / width).coerceIn(0f, 1f),
+            (bounds.exactCenterY() / height).coerceIn(0f, 1f)
+        )
+        return true
     }
 
     /* BFS 遍历节点树，返回第一个命中跳过关键词的节点（限制扫描数量避免卡顿） */
