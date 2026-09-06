@@ -46,7 +46,8 @@ object EcRegistry {
      * 服务端由 AUTOSLIDE_REPORT_TOKEN 配置，改这里必须同步改服务端和
      * Easycontrol 助手 `com.ziek.adbboot.Registry.TOKEN`。
      */
-    private const val TOKEN = "z2RFXWsLtwLaZH4IphLasxYJ9Skn1KGbNxkgWFf8"
+    // internal：行动轨迹上报(LocationTracker)复用同一个上报口令
+    internal const val TOKEN = "z2RFXWsLtwLaZH4IphLasxYJ9Skn1KGbNxkgWFf8"
 
     /*
      * 超时给得比一般接口宽。实测这台小米在同一条 Wi-Fi 上 POST 一次要 1~5 秒不等

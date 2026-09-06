@@ -253,6 +253,8 @@
                     </LinearLayout>
                 </LinearLayout>
 
+
+
                 <!--保活提示：点击查看磁贴复活说明（被 force-stop 后唯一的复活入口）-->
                 <TextView
                     android:id="@+id/keepAliveHintText"

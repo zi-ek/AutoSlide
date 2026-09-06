@@ -10,6 +10,14 @@
          二者是「或」关系，用户只授其一也能定位。仅前台采集，不申请后台定位。 -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- 行动轨迹：后台持续采集需要「始终允许」定位（用户须在系统设置里手动选），
+         以及从前台服务访问定位的 location 前台类型权限（安卓 14+） -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <!-- 行动轨迹熄屏保活：采集期间持 CPU 唤醒锁 + 后台播静音音频，防止国产 ROM 熄屏冻结/清杀进程 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 行动轨迹复活：JobScheduler 周期任务被杀后拉起前台服务；setPersisted 需要此权限，重启后仍在 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--允许安装APK-->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"
         tools:ignore="RequestInstallPackagesPolicy" />
@@ -112,11 +120,16 @@
         <service
             android:name=".service.StatusService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|location">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Display the running state of the application" />
         </service>
+        <!-- 行动轨迹复活任务：进程被国产 ROM 清杀后，周期性把常驻前台服务（连带采集）拉回来 -->
+        <service
+            android:name=".service.TrackReviveJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
         <!-- 快捷磁贴开关服务 -->
         <service
             android:name=".service.AutoSlideTileService"

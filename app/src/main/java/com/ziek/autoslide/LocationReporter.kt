@@ -8,21 +8,21 @@ package com.ziek.autoslide
  * 的说明），依赖 play-services-location 会在这些设备上直接不可用。系统 LocationManager
  * 是所有 Android 设备都有的最小公分母。
  *
- * 采集策略分两步，为的是「尽量精确」而不是「拿到就行」：
- *   1. **主动求一个新定位**：向 GPS / NETWORK（API 31+ 再加 FUSED）三个 Provider 同时
- *      请求实时更新，在 [FRESH_FIX_TIMEOUT_MS] 内收集回调，保留精度最好的一条；
- *      一旦精度达到 [GOOD_ENOUGH_ACCURACY_M] 就提前结束，不必等满超时。
- *      GPS 冷启动户外通常几秒内到 5~15m，室内/超时才退化。
- *   2. **兜底读缓存**：主动定位超时没结果时，退回各 Provider 的「最后已知位置」
- *      （[LocationManager.getLastKnownLocation]）。两者里取精度更好的一条上报。
+ * 采集只走「主动求一个新定位」这一步（[collectFresh]）：向 GPS / NETWORK（API 31+ 再加
+ * FUSED）三个 Provider 同时请求实时更新，在 [FRESH_FIX_TIMEOUT_MS] 内收集回调、保留精度
+ * 最好的一条；一旦精度达到 [GOOD_ENOUGH_ACCURACY_M] 就提前结束，不必等满超时。GPS 冷启动
+ * 户外通常几秒内到 5~15m，室内/超时才退化。
  *
- * 代价是每次采集会唤醒一次 GPS、最长阻塞 [FRESH_FIX_TIMEOUT_MS]，比只读缓存耗电；
- * 但上报本就低频（安装/更新、后台点刷新时各一次），换来的是米级而非百米级坐标。
+ * **不读「最后已知位置」缓存兜底**：这里的唯一用途是行动轨迹，轨迹要的是"此刻在哪"。
+ * 退回 getLastKnownLocation 会在室内/无信号时反复上报同一个旧点、还带着旧时间戳，把
+ * 轨迹灌满时间不前进的重复点。宁可这一轮不记，也不用旧点冒充新位置。
+ *
+ * 代价是每次采集会唤醒一次 GPS、最长阻塞 [FRESH_FIX_TIMEOUT_MS]；但轨迹采样本就低频。
  *
  * 只上报经纬度坐标本身（外加精度/来源/时间），不做归属地反查——后台按坐标展示即可。
  *
- * 没有定位权限、定位总开关关闭、或既无实时定位也无缓存位置时，一律静默返回 null，
- * 绝不抛异常、绝不影响统计上报本身。
+ * 没有定位权限、定位总开关关闭、或超时内没等到任何实时定位时，一律静默返回 null，
+ * 绝不抛异常。
  */
 
 import android.Manifest
@@ -69,42 +69,43 @@ object LocationReporter {
     }
 
     /**
-     * 同步采集一次设备位置，必须在后台线程调用（会阻塞等待实时定位，最长 [FRESH_FIX_TIMEOUT_MS]）。
+     * 只要「实时定位」，拿不到就返回 null——**绝不退回缓存的最后已知位置**。
      *
-     * @param context 上下文
-     * @return 形如 `{"lat":..,"lon":..,"accuracy":..,"provider":"..","time":..}`；
-     *         无权限、定位关闭或彻底取不到位置时返回 null
+     * 专给行动轨迹用：轨迹要的是"此刻在哪"。若像 [collect] 那样在超时后退回
+     * [LocationManager.getLastKnownLocation]，室内/无信号时会反复上报同一个旧点，
+     * 而且带着那个旧点自己的时间戳——轨迹会被灌满时间不前进的重复点，看着就"停在
+     * 上一次"。宁可这一轮不记，也不要用旧点冒充新位置。
+     *
+     * 与 [collect] 的唯一区别就是没有缓存兜底那一步；其余（权限、Provider、超时、
+     * 提前放行）完全一致。必须在后台线程调用。
+     *
+     * @return 实时定位的 JSON；无权限、定位关闭、或超时内没等到任何新回调时返回 null
      */
-    fun collect(context: Context): JSONObject? = runCatching {
+    fun collectFresh(context: Context): JSONObject? = runCatching {
         if (!hasPermission(context)) {
-            LogX.d(TAG, "no location permission, skip")
+            LogX.d(TAG, "no location permission, skip (fresh)")
             return null
         }
-
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             ?: return null
-
-        // 先主动求一个新定位，再和缓存里最好的一条比精度，取更准的那条
-        val fresh = awaitFreshFix(lm)
-        val cached = bestLastKnown(lm)
-        val best = pickMoreAccurate(fresh, cached) ?: run {
-            LogX.d(TAG, "no location available (fresh & cached both null)")
+        val fresh = awaitFreshFix(lm) ?: run {
+            LogX.d(TAG, "no fresh fix within timeout, skip (fresh)")
             return null
         }
-
-        val json = JSONObject()
-            .put("lat", best.latitude)
-            .put("lon", best.longitude)
-            .put("accuracy", if (best.hasAccuracy()) best.accuracy.toDouble() else JSONObject.NULL)
-            .put("provider", best.provider.orEmpty())
-            .put("time", best.time)
-
-        LogX.i(TAG, "location collected: ${best.latitude},${best.longitude} " +
-            "±${if (best.hasAccuracy()) best.accuracy.toInt() else -1}m (${best.provider})")
-        json
+        LogX.i(TAG, "fresh fix: ${fresh.latitude},${fresh.longitude} " +
+            "±${if (fresh.hasAccuracy()) fresh.accuracy.toInt() else -1}m (${fresh.provider})")
+        toJson(fresh)
     }.onFailure {
-        LogX.w(TAG, "collect location failed", it)
+        LogX.w(TAG, "collectFresh failed", it)
     }.getOrNull()
+
+    /** 把一条 Location 拼成上报用的 JSON；[collect] 与 [collectFresh] 共用 */
+    private fun toJson(best: Location): JSONObject = JSONObject()
+        .put("lat", best.latitude)
+        .put("lon", best.longitude)
+        .put("accuracy", if (best.hasAccuracy()) best.accuracy.toDouble() else JSONObject.NULL)
+        .put("provider", best.provider.orEmpty())
+        .put("time", best.time)
 
     /**
      * 主动向可用 Provider 请求实时定位，收集回调取精度最好的一条。
@@ -174,37 +175,6 @@ object LocationReporter {
         val list = mutableListOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) list.add(LocationManager.FUSED_PROVIDER)
         return list.distinct()
-    }
-
-    /* 遍历所有 Provider 的最后已知位置，取精度最好的一条（兜底用） */
-    @SuppressLint("MissingPermission")
-    private fun bestLastKnown(lm: LocationManager): Location? {
-        val providers = mutableListOf(
-            LocationManager.GPS_PROVIDER,
-            LocationManager.NETWORK_PROVIDER,
-            LocationManager.PASSIVE_PROVIDER,
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            providers.add(LocationManager.FUSED_PROVIDER)
-        }
-
-        var best: Location? = null
-        for (provider in providers.distinct()) {
-            // 逐个 Provider 兜异常：部分 ROM 上对未启用的 Provider 取值会抛
-            val loc = runCatching {
-                if (!lm.isProviderEnabled(provider)) return@runCatching null
-                lm.getLastKnownLocation(provider)
-            }.getOrNull() ?: continue
-            best = pickMoreAccurate(loc, best)
-        }
-        return best
-    }
-
-    /* 两条里取更值得上报的一条：都为空回空；一方为空取另一方；否则取精度更好的 */
-    private fun pickMoreAccurate(a: Location?, b: Location?): Location? {
-        if (a == null) return b
-        if (b == null) return a
-        return if (isMoreAccurate(a, b)) a else b
     }
 
     /**

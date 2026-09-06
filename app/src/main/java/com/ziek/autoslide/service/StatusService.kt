@@ -31,6 +31,7 @@ import androidx.core.content.ContextCompat
 import com.ziek.autoslide.A11yState
 import com.ziek.autoslide.DEFAULT_STATUS_SERVICE_ENABLED
 import com.ziek.autoslide.KEY_STATUS_SERVICE_ENABLED
+import com.ziek.autoslide.LocationTracker
 import com.ziek.autoslide.LogX
 import com.ziek.autoslide.MainActivity
 import com.ziek.autoslide.PREFS_NAME
@@ -61,6 +62,7 @@ class StatusService : Service() {
         }
         isForeground.value = true
         startTextRefreshLoop()
+        LocationTracker.start(this)
     }
 
 
@@ -91,13 +93,21 @@ class StatusService : Service() {
                 isForeground.value = true
                 startTextRefreshLoop()
             }
+        } else {
+            // 已在前台：重跑一次 startForeground 以刷新前台服务类型。
+            // 刚开启行动轨迹时靠这步把 location 类型补上，安卓 14+ 后台定位才合规
+            // （foregroundType() 会依 shouldRun 现况决定带不带 location）。
+            startForegroundInternal(buildNotification(statusText()))
         }
+        // 幂等：开关刚打开或系统重启服务时，把轨迹采集带起来（内部自查开关与权限）
+        LocationTracker.start(this)
         return START_STICKY
     }
 
     override fun onDestroy() {
         isRunning.value = false
         isForeground.value = false
+        LocationTracker.stop()
         scope.cancel()
         super.onDestroy()
     }
@@ -117,12 +127,7 @@ class StatusService : Service() {
             this,
             NOTIFICATION_ID,
             notification,
-            // 与 GKD 一致：交给 manifest 声明的类型，不在代码里写死
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST
-            } else {
-                0
-            }
+            foregroundType()
         )
         true
     } catch (e: Exception) {
@@ -130,6 +135,26 @@ class StatusService : Service() {
         // 这里必须兜底，否则会直接崩掉（GKD: NotificationDispatcher.startForeground 同款处理）
         LogX.e(TAG, "startForeground failed", e)
         false
+    }
+
+    /**
+     * 前台服务类型：按权限动态决定，不再一律用 manifest 类型。
+     *
+     * manifest 声明的是 specialUse|location。但安卓 14+ 若在没有定位权限时用 location 类型
+     * 调 startForeground 会抛 SecurityException——那会把没开轨迹功能的老用户的常驻通知也搞崩。
+     * 因此：满足采集条件（开关开 + 有后台定位）时才带上 location，否则只用 specialUse。
+     */
+    private fun foregroundType(): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0
+        // 安卓 14+ 且不采集时，只声明 specialUse，避开 location 的权限强校验
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            !LocationTracker.shouldRun(this)
+        ) {
+            return ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        }
+        // 其余情况交给 manifest（specialUse|location）：14 以下 location 类型不做权限强校验，
+        // 14+ 走到这里说明已满足采集条件、有定位权限，带 location 合法
+        return ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST
     }
 
     private fun createChannel() {

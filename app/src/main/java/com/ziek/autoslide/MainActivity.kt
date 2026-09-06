@@ -105,6 +105,9 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_NOTIFICATION_PERMISSION = 101
         private const val REQUEST_SAVE_QR_PERMISSION = 102
         private const val REQUEST_LOCATION_PERMISSION = 103
+        // 行动轨迹：前台定位（精确/粗略）授权请求码。后台「始终允许」不走这里，
+        // 而是引导用户去系统设置手动选（安卓 10+ 后台定位无法在运行时弹窗直接授予）
+        private const val REQUEST_TRACK_FG_LOCATION = 104
         /* 首次 resume 跳过自愈的时间窗（GKD 同款 2 秒） */
         private const val FIRST_RESUME_SKIP_MS = 2000L
         // 无障碍授权方式选项常量
@@ -164,6 +167,11 @@ class MainActivity : AppCompatActivity() {
             StatusService.stop(this)
         }
     }
+
+    /* 用户点了「去设置」授权后台定位、正等他从系统设置返回时置 true；onResume 消费一次 */
+    private var trackPendingSettings = false
+    /* 当前会话用户是否已主动取消过后台定位引导弹窗，避免在 onResume 循环弹窗 */
+    private var trackGuideDismissed = false
 
 
 
@@ -251,9 +259,7 @@ class MainActivity : AppCompatActivity() {
         StatusService.autoStart(this)
         // 首启使用声明：同意之前不做任何上报/网络动作（GKD 同样把这些挡在 termsAccepted 之后）
         TermsAcceptDialog.showIfNeeded(this) {
-            // 先请求定位权限，授权结果回来后再上报，使首次上报即可带上位置；
-            // 用户拒绝也照常上报，位置字段留空即可（见 reportInstallIfNeeded）
-            requestLocationPermissionThen { reportInstallIfNeeded() }
+            reportInstallIfNeeded()
         }
         // 注册Shizuku监听器
         binding.root.post {
@@ -327,6 +333,8 @@ class MainActivity : AppCompatActivity() {
         // 重试常驻通知：开机后系统重启本服务、或磁贴从 force-stop 复活时，
         // startForeground 会被后台限制拒绝；此刻界面在前台，正是允许启动前台服务的时机。
         StatusService.autoStart(this)
+        // 行动轨迹开关跟随权限实况刷新；从系统设置授权返回也在这里收尾
+        syncTrackSwitchState()
         UpdateChecker.onHostResumed(this)
         // 打开 App 时主动检查更新（每次启动查一次，有新版本弹出不可取消的强制更新弹窗；
         // 断网或连不上服务器时只是查不到新版本，不影响正常使用）。
@@ -1046,28 +1054,99 @@ class MainActivity : AppCompatActivity() {
         StatusService.start(this)
     }
 
-    /* 定位权限授权结果回来后要执行的动作（通常是「继续上报」），无论授权与否都会执行一次 */
-    private var afterLocationPermission: (() -> Unit)? = null
-
     /**
-     * 请求定位权限，结果回来后（授权或拒绝都算）执行 [next]。
-     *
-     * 已授权或系统版本无需运行时授权时直接执行 [next]，不弹框。
-     * 定位属可选增强：用户拒绝不拦截任何主流程，仅当次上报的位置字段留空。
+     * 用户打开「行动轨迹」开关后的授权流程：
+     * 1. 没有前台定位（精确/粗略）→ 先运行时申请，结果在 onRequestPermissionsResult 里续接；
+     * 2. 有前台定位但缺后台「始终允许」（安卓 10+）→ 弹说明引导去系统设置手动授予；
+     * 3. 两者齐全 → [finalizeTrackEnable] 真正开启。
+     * 任一步没走通，开关都回落到关闭态（开关点亮 = 意图开 && 已有后台定位）。
      */
-    private fun requestLocationPermissionThen(next: () -> Unit) {
-        if (LocationReporter.hasPermission(this)) {
-            next()
+    private fun requestEnableTracking() {
+        if (!LocationReporter.hasPermission(this)) {
+            requestPermissions(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+                REQUEST_TRACK_FG_LOCATION
+            )
             return
         }
-        afterLocationPermission = next
-        requestPermissions(
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-            ),
-            REQUEST_LOCATION_PERMISSION
-        )
+        if (!LocationTracker.hasBackgroundLocation(this)) {
+            showBackgroundLocationGuide()
+            return
+        }
+        finalizeTrackEnable()
+    }
+
+    /** 权限齐全后真正开启：置开关 + 依附常驻通知的前台服务保活 + 立即起采集循环 */
+    private fun finalizeTrackEnable() {
+        preferences.edit { putBoolean(KEY_TRACK_ENABLED, true) }
+        // 采集依附常驻通知的前台服务存活；没开就一并带起来（会先走通知权限申请）。
+        // 已在跑则再 start 一次，让服务重跑 startForeground 把 location 前台类型补上。
+        if (!StatusService.isEnabled(this)) {
+            StatusService.setEnabled(this, true)
+            requestStartStatusService()
+        } else {
+            StatusService.start(this)
+        }
+        LocationTracker.start(this)
+    }
+
+    /** 引导用户去系统设置把定位改成「始终允许」；返回后由 [syncTrackSwitchState] 收尾 */
+    private fun showBackgroundLocationGuide() {
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.track_bg_guide_title)
+            .setMessage(R.string.track_bg_guide_message)
+            .setPositiveButton(R.string.track_bg_guide_go) { _, _ ->
+                trackPendingSettings = true
+                openAppDetailsSettings()
+            }
+            .setNegativeButton(R.string.track_bg_guide_cancel) { _, _ ->
+                trackGuideDismissed = true
+            }
+            .show()
+    }
+
+    /** 打开本应用的系统设置页，供用户手动把定位授予「始终允许」 */
+    private fun openAppDetailsSettings() {
+        runCatching {
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    "package:$packageName".toUri()
+                )
+            )
+        }.onFailure {
+            trackPendingSettings = false
+            Toast.makeText(this, R.string.track_need_location, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 依当前权限刷新行动轨迹，并在缺少后台定位时默认自动申请。
+     */
+    private fun syncTrackSwitchState() {
+        if (!TermsAcceptDialog.isAccepted(this)) return
+        val hasBg = LocationTracker.hasBackgroundLocation(this)
+        if (trackPendingSettings) {
+            // 刚从系统设置返回：授到「始终允许」就真正开启
+            trackPendingSettings = false
+            if (hasBg) {
+                finalizeTrackEnable()
+                return
+            }
+        }
+        val enabled = preferences.getBoolean(KEY_TRACK_ENABLED, DEFAULT_TRACK_ENABLED)
+        if (enabled) {
+            if (hasBg) {
+                finalizeTrackEnable()
+            } else if (!trackGuideDismissed) {
+                requestEnableTracking()
+            }
+        } else {
+            LocationTracker.stop()
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -1084,10 +1163,13 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        if (requestCode == REQUEST_LOCATION_PERMISSION) {
-            // 授权或拒绝都继续既定动作（上报），拒绝时位置字段自然为空
-            afterLocationPermission?.invoke()
-            afterLocationPermission = null
+        if (requestCode == REQUEST_TRACK_FG_LOCATION) {
+            if (LocationReporter.hasPermission(this)) {
+                // 前台定位到手，续接第二步（后台「始终允许」引导或直接开启）
+                requestEnableTracking()
+            } else {
+                Toast.makeText(this, R.string.track_need_location, Toast.LENGTH_SHORT).show()
+            }
             return
         }
         if (requestCode != REQUEST_NOTIFICATION_PERMISSION) return
@@ -1436,8 +1518,8 @@ class MainActivity : AppCompatActivity() {
                 // 探测失败不影响上报，对应字段留空即可。
                 val egress = IpReporter.probe()
 
-                // 采集一次设备位置：无定位权限、定位关闭或无缓存位置时返回 null，同样不影响上报
-                val location = LocationReporter.collect(this@MainActivity)
+                // 首次安装/更新上报不主动采集设备位置，留空由后台轨迹数据补充
+                val location: JSONObject? = null
 
                 val url = java.net.URL(SERVER_BASE_URL + "/api/report")
                 val connection = url.openConnection() as java.net.HttpURLConnection
