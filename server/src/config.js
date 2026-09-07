@@ -32,6 +32,9 @@ const CHAT_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const LIMIT_JSON_BODY = 64 * 1024;
 /* 轨迹上报体：单点很小，给 8KB 足够，也挡住异常大包 */
 const LIMIT_TRACK_BODY = 8 * 1024;
+/* 轨迹批量上报体：离线积压一次冲刷可能几百个点，放宽到 256KB
+   （本地只留 1 天≈最多约 1440 点，客户端还会分批，256KB 有足够余量） */
+const LIMIT_TRACK_BATCH_BODY = 256 * 1024;
 const LIMIT_UPLOAD_BODY = 2 * 1024 * 1024;
 const LIMIT_CHAT_BODY = 8 * 1024 * 1024;
 const LIMIT_CHAT_IMAGE = 6 * 1024 * 1024;
@@ -79,6 +82,7 @@ module.exports = {
   TRACK_MAX_POINTS,
   LIMIT_JSON_BODY,
   LIMIT_TRACK_BODY,
+  LIMIT_TRACK_BATCH_BODY,
   LIMIT_UPLOAD_BODY,
   LIMIT_CHAT_BODY,
   LIMIT_CHAT_IMAGE,

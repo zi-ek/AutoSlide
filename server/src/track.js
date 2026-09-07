@@ -14,6 +14,7 @@ const {
   TRACK_RETENTION_DAYS,
   TRACK_MAX_POINTS,
   LIMIT_TRACK_BODY,
+  LIMIT_TRACK_BATCH_BODY,
   REPORT_TOKEN,
   ADMIN_TOKEN,
 } = require('./config');
@@ -54,6 +55,18 @@ function appendPoint(id, pt) {
   trimIfOversize(id);
 }
 
+/**
+ * 批量追加多个轨迹点（离线积压一次冲刷）。
+ * 一次写入整批、只 trim 一次，比逐点 appendPoint 少很多次 IO。
+ */
+function appendPoints(id, pts) {
+  if (!pts.length) return;
+  ensureDir();
+  const text = pts.map((p) => JSON.stringify(p)).join('\n') + '\n';
+  fs.appendFileSync(trackFile(id), text, 'utf8');
+  trimIfOversize(id);
+}
+
 /* 行数超过上限 + 一截余量时，重写文件只留最近 TRACK_MAX_POINTS 条 */
 function trimIfOversize(id) {
   try {
@@ -88,7 +101,17 @@ function readPoints(id, sinceMs) {
     }
   }
   out.sort((a, b) => a.t - b.t);
-  return out;
+  // 客户端「先发后删」在崩溃/断线时可能把同一批重发一次，按 (时间,经纬度) 去重，
+  // 免得轨迹上落一串完全重合的点。用 Set 认键，不依赖相同点是否相邻。
+  const seen = new Set();
+  const deduped = [];
+  for (const p of out) {
+    const key = `${p.t},${p.lat},${p.lon}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(p);
+  }
+  return deduped;
 }
 
 /* 口令校验：接受 x-admin-token 头（Easycontrol 用）或 Basic Auth（浏览器用），密码都是 ADMIN_TOKEN */
@@ -143,6 +166,57 @@ async function handleIngest(req, res) {
   });
 
   sendJson(res, 200, { ok: true });
+}
+
+/* ============ POST /api/track/batch：设备一次上报多个点（离线积压冲刷用） ============ */
+async function handleIngestBatch(req, res) {
+  if (!REPORT_TOKEN) {
+    return sendJson(res, 503, { ok: false, error: 'report token not configured' });
+  }
+  if (String(req.headers['x-report-token'] || '') !== REPORT_TOKEN) {
+    return sendJson(res, 401, { ok: false, error: 'unauthorized' });
+  }
+  const body = await readJson(req, LIMIT_TRACK_BATCH_BODY);
+  const id = safeId(body.deviceId);
+  if (!id) return sendJson(res, 400, { ok: false, error: 'bad deviceId' });
+
+  const raw = Array.isArray(body.points) ? body.points : null;
+  if (!raw) return sendJson(res, 400, { ok: false, error: 'points required' });
+
+  const now = Date.now();
+  const pts = [];
+  let newest = null; // 最新点，用来覆盖设备「当前位置」
+  for (const item of raw) {
+    const loc = sanitizeLocation(item);
+    if (!loc) continue; // 坏点跳过，不因一个坏点整批 400
+    const t = Number.isFinite(loc.time) && loc.time > 0 ? loc.time : now;
+    const pt = { t, lat: loc.lat, lon: loc.lon };
+    if (loc.accuracy !== undefined) pt.acc = Math.round(loc.accuracy);
+    if (loc.provider) pt.pv = loc.provider;
+    if (item.moving === true || item.moving === 1) pt.mv = 1;
+    pts.push(pt);
+    if (!newest || t > newest.t) newest = { t, loc };
+  }
+
+  if (!pts.length) return sendJson(res, 400, { ok: false, error: 'no valid points' });
+
+  appendPoints(id, pts);
+
+  // 用最新一个点覆盖设备的「当前位置」（与单点上报语义一致）
+  await updateStats((stats) => {
+    touchDevice(stats, id, {
+      location: {
+        lat: newest.loc.lat,
+        lon: newest.loc.lon,
+        accuracy: newest.loc.accuracy,
+        provider: newest.loc.provider,
+        time: newest.t,
+      },
+      locationUpdatedAt: nowCN(),
+    });
+  });
+
+  sendJson(res, 200, { ok: true, accepted: pts.length });
 }
 
 /* ============ GET /api/track?deviceId=|serial= &since=：取某设备轨迹（验口令） ============ */
@@ -333,6 +407,7 @@ function cleanup() {
 
 function register(router) {
   router.on('POST', '/api/track', handleIngest);
+  router.on('POST', '/api/track/batch', handleIngestBatch);
   router.on('GET', '/api/track', handleFetch);
   router.on('GET', '/track', handleMapPage);
   // 启动即清一次，之后每 6 小时一次（与聊天清理同频）

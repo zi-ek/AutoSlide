@@ -45,11 +45,22 @@ object LocationReporter {
 
     private const val TAG = "LocationReporter"
 
-    /* 主动等一个新定位的最长时间：GPS 冷启动可能要十几秒，给足但不至于让上报卡太久 */
-    private const val FRESH_FIX_TIMEOUT_MS = 12_000L
+    /* 主动等一个新定位的最长时间。放宽到 20s：慢定位/冷启动的机器（实测一加 15R 在 12s
+       窗口内 locations=0）多给点时间才有机会等到第一枪 fix；拿到够好的点会提前放行，
+       只有一直没 fix 的坏信号周期才会真的耗满。 */
+    private const val FRESH_FIX_TIMEOUT_MS = 20_000L
 
     /* 精度达到该阈值（米）即认为够好，提前结束等待，不必耗到超时 */
     private const val GOOD_ENOUGH_ACCURACY_M = 30f
+
+    /* 实时定位拿不到时，允许退回「最后已知位置」的最大年龄（毫秒）。超过这个年龄的旧点不用——
+       太旧的位置在移动时会离谱地画错线。15 分钟略大于静止采样间隔（10min），保证静止的
+       机器上一枪 fix 还能在下一轮被兜住。 */
+    private const val MAX_LAST_KNOWN_AGE_MS = 15 * 60 * 1000L
+
+    /* 可接受的最差精度（米）。差于此的一律当垃圾丢弃——既挡掉个别 ROM 的 fused provider
+       冒出来的荒唐精度（实测见过 acc=86400000），也不让街区级粗点污染轨迹。 */
+    private const val MAX_ACCEPTABLE_ACCURACY_M = 2000f
 
     /**
      * 是否已经拿到精确或粗略定位权限中的任意一个。
@@ -69,17 +80,19 @@ object LocationReporter {
     }
 
     /**
-     * 只要「实时定位」，拿不到就返回 null——**绝不退回缓存的最后已知位置**。
+     * 采集一个可用于轨迹的定位点：优先「实时定位」，实时拿不到时**退回一个足够新的
+     * 「最后已知位置」**。
      *
-     * 专给行动轨迹用：轨迹要的是"此刻在哪"。若像 [collect] 那样在超时后退回
-     * [LocationManager.getLastKnownLocation]，室内/无信号时会反复上报同一个旧点，
-     * 而且带着那个旧点自己的时间戳——轨迹会被灌满时间不前进的重复点，看着就"停在
-     * 上一次"。宁可这一轮不记，也不要用旧点冒充新位置。
+     * 历史上这里坚决不退回 last-known，因为室内/无信号会反复上报同一个旧点、还带旧时间戳，
+     * 把轨迹灌满「时间不前进」的重复点。现在这个顾虑已被两道闸消除：
+     *  1. 服务端按 (t,lat,lon) 去重——同一个 last-known 重复上报会被折叠成一个点，不再堆叠；
+     *  2. 新鲜度闸 [MAX_LAST_KNOWN_AGE_MS]——太旧的 last-known 直接不用，移动时不会画错太远。
+     * 外加精度闸 [MAX_ACCEPTABLE_ACCURACY_M] 丢弃荒唐/粗糙的点。
      *
-     * 与 [collect] 的唯一区别就是没有缓存兜底那一步；其余（权限、Provider、超时、
-     * 提前放行）完全一致。必须在后台线程调用。
+     * 这样：户外能锁的机器照旧记实时轨迹；室内/慢定位的机器（实测一加 15R 在 12s 窗口内
+     * locations=0）至少能把「最近所在」兜住记下，而不是颗粒无收。必须在后台线程调用。
      *
-     * @return 实时定位的 JSON；无权限、定位关闭、或超时内没等到任何新回调时返回 null
+     * @return 定位点 JSON；无权限、定位关闭、或连一个够新的点都没有时返回 null
      */
     fun collectFresh(context: Context): JSONObject? = runCatching {
         if (!hasPermission(context)) {
@@ -88,24 +101,60 @@ object LocationReporter {
         }
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
             ?: return null
-        val fresh = awaitFreshFix(lm) ?: run {
-            LogX.d(TAG, "no fresh fix within timeout, skip (fresh)")
-            return null
+
+        // 1) 首选实时定位
+        val live = awaitFreshFix(lm)
+        if (live != null) {
+            LogX.i(TAG, "fresh fix: ${live.latitude},${live.longitude} " +
+                "±${if (live.hasAccuracy()) live.accuracy.toInt() else -1}m (${live.provider})")
+            return@runCatching toJson(live)
         }
-        LogX.i(TAG, "fresh fix: ${fresh.latitude},${fresh.longitude} " +
-            "±${if (fresh.hasAccuracy()) fresh.accuracy.toInt() else -1}m (${fresh.provider})")
-        toJson(fresh)
+
+        // 2) 实时拿不到：退回一个「足够新 + 精度可接受」的最后已知位置
+        val cached = bestLastKnown(lm)
+        if (cached != null) {
+            val ageSec = (System.currentTimeMillis() - cached.time) / 1000
+            LogX.i(TAG, "fallback last-known: ${cached.latitude},${cached.longitude} " +
+                "±${if (cached.hasAccuracy()) cached.accuracy.toInt() else -1}m " +
+                "(${cached.provider}) age=${ageSec}s")
+            return@runCatching toJson(cached)
+        }
+
+        LogX.d(TAG, "no fresh fix and no acceptable last-known, skip")
+        null
     }.onFailure {
         LogX.w(TAG, "collectFresh failed", it)
     }.getOrNull()
 
-    /** 把一条 Location 拼成上报用的 JSON；[collect] 与 [collectFresh] 共用 */
+    /** 把一条 Location 拼成上报用的 JSON；实时点与兜底点共用 */
     private fun toJson(best: Location): JSONObject = JSONObject()
         .put("lat", best.latitude)
         .put("lon", best.longitude)
         .put("accuracy", if (best.hasAccuracy()) best.accuracy.toDouble() else JSONObject.NULL)
         .put("provider", best.provider.orEmpty())
         .put("time", best.time)
+
+    /**
+     * 实时定位拿不到时的兜底：从各 Provider 的「最后已知位置」里挑一个能用的。
+     *
+     * 只接受年龄 ≤ [MAX_LAST_KNOWN_AGE_MS] 且精度 ≤ [MAX_ACCEPTABLE_ACCURACY_M] 的点
+     * （无精度信息的放行）；多个满足时取时间最新的一条；都不满足返回 null。
+     * 必须在后台线程调用。
+     */
+    @SuppressLint("MissingPermission")
+    private fun bestLastKnown(lm: LocationManager): Location? {
+        val now = System.currentTimeMillis()
+        var best: Location? = null
+        for (provider in candidateProviders()) {
+            val loc = runCatching {
+                if (lm.isProviderEnabled(provider)) lm.getLastKnownLocation(provider) else null
+            }.getOrNull() ?: continue
+            if (now - loc.time > MAX_LAST_KNOWN_AGE_MS) continue            // 太旧不要
+            if (loc.hasAccuracy() && loc.accuracy > MAX_ACCEPTABLE_ACCURACY_M) continue // 太差/荒唐不要
+            if (best == null || loc.time > best.time) best = loc
+        }
+        return best
+    }
 
     /**
      * 主动向可用 Provider 请求实时定位，收集回调取精度最好的一条。
@@ -131,6 +180,8 @@ object LocationReporter {
 
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
+                // 精度荒唐的点直接无视（个别 ROM 的 fused 会冒出 acc=天文数字，实测见过 86400000）
+                if (location.hasAccuracy() && location.accuracy > MAX_ACCEPTABLE_ACCURACY_M) return
                 val prev = holder.get()
                 if (prev == null || isMoreAccurate(location, prev)) holder.set(location)
                 // 够准了就别再等，提前放行

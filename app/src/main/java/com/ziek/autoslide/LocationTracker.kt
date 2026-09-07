@@ -12,8 +12,11 @@ package com.ziek.autoslide
  * onCreate/onDestroy 调 [start]/[stop]。没有「始终允许」定位或总开关未开时，[start] 直接跳过。
  *
  * 采点用 [LocationReporter.collectFresh]（系统 LocationManager，不依赖 Google 服务，
- * 只收实时定位、拿不到不上报），
- * 每点 POST 到服务端 /api/track（复用统计上报的口令），坐标为原始 WGS-84。
+ * 只收实时定位、拿不到不上报），坐标为原始 WGS-84。
+ *
+ * 采集与上报解耦：每采到一个点先写本地队列 [TrackBuffer]（离线也不丢），再由 [TrackBuffer.flush]
+ * 在有网时整批冲刷到服务端 /api/track/batch（复用统计上报的口令），成功才删本地。
+ * 无网时点稳稳攒在本地，联网后自动补传。
  */
 
 import android.Manifest
@@ -24,8 +27,6 @@ import android.media.MediaPlayer
 import android.os.Build
 import android.os.PowerManager
 import androidx.core.content.ContextCompat
-import com.ziek.autoslide.ec.EcRegistry
-import com.ziek.autoslide.chat.ChatStorage
 import com.ziek.autoslide.service.TrackReviveJobService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,8 +38,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
 object LocationTracker {
 
@@ -52,10 +51,6 @@ object LocationTracker {
     private const val INTERVAL_STILL_MS = 10 * 60 * 1000L
     /* 采不到点时的重试间隔：别太密，省电 */
     private const val INTERVAL_NO_FIX_MS = 5 * 60 * 1000L
-
-    private const val TRACK_PATH = "/api/track"
-    private const val CONNECT_TIMEOUT_MS = 15000
-    private const val READ_TIMEOUT_MS = 20000
 
     private var scope: CoroutineScope? = null
     private var loopJob: Job? = null
@@ -139,7 +134,7 @@ object LocationTracker {
             }
             var nextDelay = INTERVAL_NO_FIX_MS
             try {
-                // 只收实时定位：拿不到就这一轮不上报（collectFresh 不退回旧缓存点），
+                // 只收实时定位：拿不到就这一轮不记（collectFresh 不退回旧缓存点），
                 // 避免用陈旧的最后已知位置把轨迹灌满时间不前进的重复点
                 val fix = LocationReporter.collectFresh(context)
                 if (fix != null) {
@@ -147,11 +142,15 @@ object LocationTracker {
                     val lon = fix.getDouble("lon")
                     val acc = fix.optDouble("accuracy", Double.NaN)
                     val moving = decideMoving(lat, lon, acc)
-                    upload(context, fix, moving)
+                    // 先写本地队列（离线也不丢），上报交给下面的 flush
+                    TrackBuffer.append(context, buildPoint(fix, moving))
                     lastLat = lat
                     lastLon = lon
                     nextDelay = if (moving) INTERVAL_MOVING_MS else INTERVAL_STILL_MS
                 }
+                // 无论这轮有没有采到点，都尝试把本地积压冲刷出去（无网自动跳过），
+                // 好让离线期间攒下的点在联网后尽快补传
+                TrackBuffer.flush(context)
             } catch (e: Exception) {
                 LogX.w(TAG, "采样一轮出错：$e")
             }
@@ -232,37 +231,18 @@ object LocationTracker {
         return dist >= MOVE_THRESHOLD_M && dist >= accGuard
     }
 
-    /** 把一个轨迹点 POST 到服务端；静默失败，丢一次点无所谓 */
-    private fun upload(context: Context, fix: JSONObject, moving: Boolean) {
-        val body = JSONObject().apply {
-            put("deviceId", ChatStorage.deviceId(context))
+    /**
+     * 采集结果 → 落盘/上报用的一个点。
+     * 字段与批量口一致（deviceId 是设备级常量，冲刷时统一带，不逐点存）；
+     * time 取定位自带的时刻，攒着晚点补传也不会时间错位。
+     */
+    private fun buildPoint(fix: JSONObject, moving: Boolean): JSONObject =
+        JSONObject().apply {
             put("lat", fix.getDouble("lat"))
             put("lon", fix.getDouble("lon"))
             if (!fix.isNull("accuracy")) put("accuracy", fix.optDouble("accuracy"))
             put("provider", fix.optString("provider"))
             put("time", fix.optLong("time", System.currentTimeMillis()))
             put("moving", if (moving) 1 else 0)
-        }.toString()
-
-        var conn: HttpURLConnection? = null
-        try {
-            conn = (URL(SERVER_BASE_URL + TRACK_PATH).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("X-Report-Token", EcRegistry.TOKEN)
-                // 低频请求不复用连接，避免池里的死连接抛 "unexpected end of stream"
-                setRequestProperty("Connection", "close")
-            }
-            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            LogX.i(TAG, "轨迹点上报 ${if (moving) "移动" else "静止"}，服务器返回 $code")
-        } catch (e: Exception) {
-            LogX.w(TAG, "轨迹点上报失败：$e")
-        } finally {
-            conn?.disconnect()
         }
-    }
 }
