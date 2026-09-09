@@ -123,6 +123,8 @@ class TrackRecordService : Service() {
                 delay(60_000)
                 if (!LocationTracker.shouldRun(this@TrackRecordService)) {
                     LogX.i(TAG, "看门狗：轨迹已关闭，停止记录服务")
+                    // 自动关闭时一并撤掉复活任务，避免 job 空转留在后台
+                    TrackReviveJobService.cancel(this@TrackRecordService)
                     stopSelf()
                     break
                 }

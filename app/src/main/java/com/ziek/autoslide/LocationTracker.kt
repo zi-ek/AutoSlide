@@ -11,6 +11,11 @@ package com.ziek.autoslide
  * 事件驱动的好处：信号一到系统就推过来，不再有「20s 等一枪 fix」的空窗；
  * 采样密度完全交给过滤规则（时间/距离/精度/静止漂移），信号好轨迹密，信号差自然稀疏。
  *
+ * 省电（运动门控）：GPS 射频只要在监听就持续通电，是耗电大头（实测约占整机 2%+/小时）。
+ * 因此**不动就给 GPS 断电**——由加速度计判定静止、停稳 [STILL_GRACE_MS] 后 [manageGps] 撤掉
+ * 定位监听；重新移动（加速度计确认，或 GPS 测速刷新）再上电；静止期间每 [GPS_RECHECK_INTERVAL_MS]
+ * 开一个 [GPS_PROBE_MS] 探测窗口，兜住加速度计漏判的平稳移动（高铁/电梯）。加速度计始终在跑当门铃。
+ *
  * 采集与上报解耦不变：落点先写本地队列 [TrackBuffer]（离线不丢），由 [TrackBuffer.flush]
  * 每 [FLUSH_INTERVAL_MS] 整批冲刷到服务端 /api/track/batch。
  *
@@ -56,16 +61,16 @@ object LocationTracker {
 
     /* ==================== 采样（对齐两只脚 LocationRecordService） ==================== */
 
-    /* GPS 常驻监听的最小更新间隔（两只脚: requestLocationUpdates("gps", 500ms, 0m, listener)） */
-    private const val GPS_MIN_TIME_MS = 500L
+    /* GPS 常驻监听的最小更新间隔（两只脚: requestLocationUpdates("gps", 5000ms, 0m, listener)） */
+    private const val GPS_MIN_TIME_MS = 5000L
 
-    /* 网络兜底监听间隔（两只脚 LocationHelper 同款 2000ms）：城市峡谷/隧道里 GPS 失锁时
+    /* 网络兜底监听间隔（两只脚 LocationHelper 同款 5000ms）：城市峡谷/隧道里 GPS 失锁时
        兜住「至少还有一条」，过不过得了过滤规则另说（精度闸一视同仁） */
-    private const val NET_MIN_TIME_MS = 2000L
+    private const val NET_MIN_TIME_MS = 5000L
 
-    /* 定时选优落点周期（两只脚: Timer period = mMinTimeAllow 默认 2000ms）：
+    /* 定时选优落点周期（两只脚: Timer period = mMinTimeAllow 默认 10000ms）：
        每周期从缓冲挑精度最好的一个点 → 过过滤 → 落点 → 清空缓冲 */
-    private const val TICK_MS = 2000L
+    private const val TICK_MS = 15000L
 
     /* 缓冲上限：GPS 500ms 下 2s 最多 4~5 条，给足余量防止异常时无限膨胀 */
     private const val MAX_PENDING = 32
@@ -99,6 +104,24 @@ object LocationTracker {
     /* 持续低于阈值这么久（2.5s）才确认静止 */
     private const val STATIONARY_CONFIRM_MS = 2500L
 
+    /* ==================== 运动门控 GPS（省电核心：不动就给 GPS 断电） ==================== */
+
+    /* 停止移动后仍保持 GPS 开启的缓冲期：红灯、短暂驻足不至于立刻断电又重连（避免抖动） */
+    private const val STILL_GRACE_MS = 60 * 1000L
+    /* GPS 断电后，每隔这么久开一个探测窗口，接住加速度计漏判的平稳移动（高铁/电梯） */
+    private const val GPS_RECHECK_INTERVAL_MS = 5 * 60 * 1000L
+    /* 每个探测窗口的时长：给足暖启动拿到一两枪 fix，仍静止就再断电 */
+    private const val GPS_PROBE_MS = 45 * 1000L
+    /* GPS 测速高于此（1 m/s≈3.6km/h）视为「确实在动」：即便加速度计误判静止也据此保持 GPS */
+    private const val MOVING_SPEED_MPS = 1.0f
+
+    /* ==================== 静止自动关闭 ==================== */
+
+    /* 连续静止（加速度计确认无有效移动）超过该时长，主动关掉轨迹开关：
+       静止期间 GPS 已被运动门控断电，这一步进一步把整个前台服务/唤醒锁/加速度计也收掉；
+       关掉后由服务看门狗收尾停服务 */
+    private const val AUTO_OFF_STILL_MS = 30 * 60 * 1000L
+
     /* ==================== 上报节流 ==================== */
 
     /* 本地积压冲刷周期：每 30s 尝试一次批量上报（旧版 1~10min；改密后轨迹更实时，
@@ -125,6 +148,13 @@ object LocationTracker {
 
     /* 由加速度计实时维护：当前是否已确认静止 */
     @Volatile private var isStationary = false
+
+    /* 最后移动时刻（elapsedRealtime）；连续静止超过 [AUTO_OFF_STILL_MS] 时自动关开关 */
+    @Volatile private var lastMoveTime = 0L
+
+    /* 运动门控：GPS 断电的时刻 / 当前探测窗口的开始时刻（0 = 不在对应状态） */
+    @Volatile private var gpsOffSince = 0L
+    @Volatile private var gpsProbeStart = 0L
 
     /* 落点回调（TrackRecordService 用来刷新记录通知）；从采集协程线程调用 */
     @Volatile private var onPoint: ((JSONObject) -> Unit)? = null
@@ -197,6 +227,9 @@ object LocationTracker {
         lastPoint = null
         lastAddTime = 0L
         isStationary = false
+        lastMoveTime = 0L
+        gpsOffSince = 0L
+        gpsProbeStart = 0L
         onPoint = null
         pending.clear()
         unregister()
@@ -205,10 +238,18 @@ object LocationTracker {
 
     /* ==================== 主循环（对齐两只脚 TimerTask：每 TICK 选优落点） ==================== */
 
+    /** 写入轨迹总开关（主界面开关与「静止自动关闭」共用同一把锁） */
+    fun setTrackEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_TRACK_ENABLED, enabled).apply()
+    }
+
     private suspend fun loop(context: Context) {
         registerLocationListeners(context)
         registerAccelerometer(context)
         var lastFlush = 0L
+        // 启动时刻视为「刚移动过」，防止开局把 lastMoveTime=0 误判成已静止 30 分钟
+        lastMoveTime = SystemClock.elapsedRealtime()
         try {
             while (scope?.let { it.isActive } == true) {
                 // 采集期间用户可能关掉开关或撤销权限，每轮复查一次
@@ -216,10 +257,25 @@ object LocationTracker {
                     LogX.d(TAG, "运行中检测到开关关闭/权限撤销，停止采集")
                     break
                 }
+                // 静止自动关闭：有移动就刷新最后移动时刻；
+                // 连续静止超过 30 分钟 → 主动关掉轨迹开关（服务看门狗随后收尾停服务）
+                val now = SystemClock.elapsedRealtime()
+                if (!isStationary) {
+                    lastMoveTime = now
+                } else if (now - lastMoveTime >= AUTO_OFF_STILL_MS) {
+                    LogX.i(TAG, "已连续静止 ${AUTO_OFF_STILL_MS / 60_000} 分钟，自动关闭行动轨迹开关")
+                    setTrackEnabled(context, false)
+                    break
+                }
+                // 运动门控：不动就给 GPS 断电，动了/探测到再上电（省电核心）
+                manageGps(context, now)
                 try {
                     // 1) 从缓冲挑精度最好的一个点（两只脚 getBestAccuracyLocation）
                     val best = pickBestFromPending()
                     if (best != null) {
+                        // GPS 测速确认在动 → 刷新移动时刻，接住加速度计误判静止的平稳移动（高铁/电梯），
+                        // 让门控继续给 GPS 供电
+                        if (best.hasSpeed() && best.speed > MOVING_SPEED_MPS) lastMoveTime = now
                         // 2) 过过滤规则（两只脚 filteredLocationChanged → locationFilter）
                         if (locationFilter(best)) {
                             val moving = if (isStationary) 0 else 1
@@ -240,7 +296,6 @@ object LocationTracker {
                     }
 
                     // 上报节流：每 FLUSH_INTERVAL_MS 冲刷一次本地积压（无网自动跳过）
-                    val now = SystemClock.elapsedRealtime()
                     if (now - lastFlush >= FLUSH_INTERVAL_MS) {
                         TrackBuffer.flush(context)
                         lastFlush = now
@@ -296,18 +351,69 @@ object LocationTracker {
         LogX.i(TAG, "GPS(${GPS_MIN_TIME_MS}ms) + NETWORK(${NET_MIN_TIME_MS}ms) 常驻监听已注册")
     }
 
+    /** 只给定位监听（GPS/NETWORK）下电，保留加速度计继续当门卫；门控与全量停止共用 */
+    private fun unregisterLocationListeners() {
+        val l = locationListener ?: return
+        runCatching { lm?.removeUpdates(l) }
+        lm = null
+        locationListener = null
+        LogX.i(TAG, "GPS/NETWORK 监听已下电")
+    }
+
     private fun unregister() {
-        val l = locationListener
-        if (l != null) {
-            runCatching { lm?.removeUpdates(l) }
-            lm = null
-            locationListener = null
-        }
+        unregisterLocationListeners()
         val a = accelListener
         if (a != null) {
             runCatching { sensorManager?.unregisterListener(a) }
             sensorManager = null
             accelListener = null
+        }
+    }
+
+    /* ==================== 运动门控（省电核心：不动就给 GPS 断电） ==================== */
+
+    /**
+     * 按「是否在动」给 GPS/NETWORK 监听上下电，省掉静止时的 GPS 射频功耗
+     * （射频瞬时功率是硬件定死的，只能靠减少通电时长来省）。
+     *
+     * - 在动（加速度计确认，或 GPS 测速刷新了 [lastMoveTime]）→ 保持监听开启；
+     * - 刚停下 [STILL_GRACE_MS] 内 → 仍保持开启（红灯/驻足不来回抖动）；
+     * - 静止够久 → 断电；此后每隔 [GPS_RECHECK_INTERVAL_MS] 开一个 [GPS_PROBE_MS] 的探测窗口，
+     *   接住加速度计漏判的平稳移动，仍静止就再断电。
+     *
+     * 加速度计始终在跑（近乎不耗电），是唯一的「有人来了」门铃。
+     */
+    private fun manageGps(context: Context, now: Long) {
+        val isOn = locationListener != null
+        val movingRecently = !isStationary || (now - lastMoveTime) < STILL_GRACE_MS
+        if (movingRecently) {
+            if (!isOn) {
+                registerLocationListeners(context)
+                LogX.i(TAG, "检测到移动，GPS 上电")
+            }
+            gpsProbeStart = 0L
+            gpsOffSince = 0L
+            return
+        }
+        // 静止够久
+        if (isOn) {
+            val probing = gpsProbeStart != 0L
+            if (!probing || now - gpsProbeStart >= GPS_PROBE_MS) {
+                // 移动缓冲期刚过、或探测窗口结束仍静止 → 断电
+                unregisterLocationListeners()
+                pending.clear()
+                gpsProbeStart = 0L
+                gpsOffSince = now
+            }
+            // 否则：探测窗口内，保持开
+        } else {
+            // GPS 已断电：到点开一个探测窗口，核对是否在平稳移动
+            if (gpsOffSince != 0L && now - gpsOffSince >= GPS_RECHECK_INTERVAL_MS) {
+                registerLocationListeners(context)
+                gpsProbeStart = now
+                gpsOffSince = 0L
+                LogX.d(TAG, "静止探测：临时开 GPS 核对是否在平稳移动")
+            }
         }
     }
 
