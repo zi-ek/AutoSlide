@@ -50,6 +50,8 @@ class TrackCommandActivity : Activity() {
             return "无法远程开启行动轨迹：通知权限未授予"
         }
         prefs().edit().putBoolean(KEY_TRACK_ENABLED, true).apply()
+        // 用户远程打开 → 重置静止自动关计时，避免用上次遗留的陈旧时刻一开就秒关
+        LocationTracker.markUserEnabled(this)
         TrackRecordService.start(this)
         return "行动轨迹已远程开启"
     }

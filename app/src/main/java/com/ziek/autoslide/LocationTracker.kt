@@ -259,21 +259,37 @@ object LocationTracker {
             .edit().putLong(KEY_LAST_MOVE_AT, atMs).apply()
     }
 
+    /**
+     * 用户「手动/远程打开」轨迹开关时调用：把自动关计时基准重置为现在。
+     *
+     * 与「进程复活」区分开——复活时 [loop] 会沿用持久化的旧值继续累积静止时长；
+     * 而用户是刚主动打开，必须重新开始 30 分钟计时，否则会用上次遗留的陈旧时刻导致「一开就秒关」。
+     */
+    fun markUserEnabled(context: Context) {
+        val now = System.currentTimeMillis()
+        lastRecordedMoveAt = now
+        persistLastMove(context, now)
+        LogX.i(TAG, "用户开启轨迹，重置静止自动关计时")
+    }
+
     private suspend fun loop(context: Context) {
         registerLocationListeners(context)
         registerAccelerometer(context)
         var lastFlush = 0L
         // 启动时刻视为「刚移动过」，防止开局把 lastMoveTime=0 误判成已静止 30 分钟
         lastMoveTime = SystemClock.elapsedRealtime()
-        // 自动关计时基准：读持久化值——进程被杀重启后接着算，不归零。
-        // 但若没有记录、或已过旧（≥自动关阈值）则以现在为准：既避免开局立刻误判静止 30 分钟，
-        // 也让「用户重新打开开关」不会因为上次的陈旧值而秒关。
+        // 自动关计时基准：读持久化值——进程被国产 ROM 杀了重启后接着算、不归零，
+        // 这样「静止满 30 分钟」能跨进程复活累积（否则 vivo 频繁杀进程，每次复活都从头算，永不触发）。
+        // 只有从没记录过（首次）才以现在为准；「用户重新打开开关」的重置交给 markUserEnabled，不在这里做。
         run {
-            val nowWall = System.currentTimeMillis()
             val saved = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getLong(KEY_LAST_MOVE_AT, 0L)
-            lastRecordedMoveAt = if (saved == 0L || nowWall - saved >= AUTO_OFF_STILL_MS) nowWall else saved
-            persistLastMove(context, lastRecordedMoveAt)
+            if (saved == 0L) {
+                lastRecordedMoveAt = System.currentTimeMillis()
+                persistLastMove(context, lastRecordedMoveAt)
+            } else {
+                lastRecordedMoveAt = saved
+            }
         }
         try {
             while (scope?.let { it.isActive } == true) {
@@ -309,9 +325,13 @@ object LocationTracker {
                             TrackBuffer.append(context, pt)
                             lastPoint = best
                             lastAddTime = best.time
-                            // 真实位移落点 → 刷新并持久化自动关计时基准
-                            lastRecordedMoveAt = best.time
-                            persistLastMove(context, best.time)
+                            // 只有加速度计也确认在动(!isStationary)时，才把这个落点当「真实移动」推进自动关计时。
+                            // 静止时 GPS 漂移也会落点(3~5m 噪声过得了 3m 距离闸)，若一并推进就会反复清零计时器、
+                            // 让自动关永不触发——这正是上一版没生效的根因之一。
+                            if (!isStationary) {
+                                lastRecordedMoveAt = best.time
+                                persistLastMove(context, best.time)
+                            }
                             onPoint?.invoke(pt)
                             LogX.i(TAG, "轨迹落点(${best.provider} ±${best.accuracy}m, " +
                                 "moving=$moving): ${best.latitude},${best.longitude}")

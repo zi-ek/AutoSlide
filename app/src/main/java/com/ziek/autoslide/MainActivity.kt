@@ -1097,6 +1097,8 @@ class MainActivity : AppCompatActivity() {
     /** 权限齐全后真正开启：置开关 + 启动独立进程的轨迹记录前台服务（对齐两只脚） */
     private fun finalizeTrackEnable() {
         preferences.edit { putBoolean(KEY_TRACK_ENABLED, true) }
+        // 用户主动打开 → 重置静止自动关计时，避免用上次遗留的陈旧时刻一开就秒关
+        LocationTracker.markUserEnabled(this)
         // 轨迹记录服务自带记录通知（channel track_record），不再依附常驻状态通知；
         // 通知权限没给时先申请，授权结果回来后再真正拉起（见 onRequestPermissionsResult）。
         requestStartTrackService()
