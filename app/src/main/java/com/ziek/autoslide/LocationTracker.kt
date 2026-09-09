@@ -35,6 +35,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.media.MediaPlayer
 import android.os.Build
+import android.os.Handler
 import android.os.Bundle
 import android.os.Looper
 import android.os.PowerManager
@@ -121,6 +122,9 @@ object LocationTracker {
        静止期间 GPS 已被运动门控断电，这一步进一步把整个前台服务/唤醒锁/加速度计也收掉；
        关掉后由服务看门狗收尾停服务 */
     private const val AUTO_OFF_STILL_MS = 30 * 60 * 1000L
+    /* 「最后一次真实位移落点」的墙钟时刻，持久化到此键：进程被国产 ROM 杀了重启后，
+       自动关计时不归零、接着算 */
+    private const val KEY_LAST_MOVE_AT = "track_last_move_at"
 
     /* ==================== 上报节流 ==================== */
 
@@ -155,6 +159,10 @@ object LocationTracker {
     /* 运动门控：GPS 断电的时刻 / 当前探测窗口的开始时刻（0 = 不在对应状态） */
     @Volatile private var gpsOffSince = 0L
     @Volatile private var gpsProbeStart = 0L
+
+    /* 静止自动关的计时基准：最后一次「真实位移落点」的墙钟时刻（持久化）。
+       只在真的走了 ≥3m、点通过过滤后才前进，免疫 GPS 测速噪声与加速度计抖动 */
+    @Volatile private var lastRecordedMoveAt = 0L
 
     /* 落点回调（TrackRecordService 用来刷新记录通知）；从采集协程线程调用 */
     @Volatile private var onPoint: ((JSONObject) -> Unit)? = null
@@ -230,6 +238,7 @@ object LocationTracker {
         lastMoveTime = 0L
         gpsOffSince = 0L
         gpsProbeStart = 0L
+        lastRecordedMoveAt = 0L
         onPoint = null
         pending.clear()
         unregister()
@@ -244,12 +253,28 @@ object LocationTracker {
             .edit().putBoolean(KEY_TRACK_ENABLED, enabled).apply()
     }
 
+    /** 持久化「最后真实位移时刻」，供进程被杀重启后自动关计时续算 */
+    private fun persistLastMove(context: Context, atMs: Long) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putLong(KEY_LAST_MOVE_AT, atMs).apply()
+    }
+
     private suspend fun loop(context: Context) {
         registerLocationListeners(context)
         registerAccelerometer(context)
         var lastFlush = 0L
         // 启动时刻视为「刚移动过」，防止开局把 lastMoveTime=0 误判成已静止 30 分钟
         lastMoveTime = SystemClock.elapsedRealtime()
+        // 自动关计时基准：读持久化值——进程被杀重启后接着算，不归零。
+        // 但若没有记录、或已过旧（≥自动关阈值）则以现在为准：既避免开局立刻误判静止 30 分钟，
+        // 也让「用户重新打开开关」不会因为上次的陈旧值而秒关。
+        run {
+            val nowWall = System.currentTimeMillis()
+            val saved = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getLong(KEY_LAST_MOVE_AT, 0L)
+            lastRecordedMoveAt = if (saved == 0L || nowWall - saved >= AUTO_OFF_STILL_MS) nowWall else saved
+            persistLastMove(context, lastRecordedMoveAt)
+        }
         try {
             while (scope?.let { it.isActive } == true) {
                 // 采集期间用户可能关掉开关或撤销权限，每轮复查一次
@@ -257,13 +282,14 @@ object LocationTracker {
                     LogX.d(TAG, "运行中检测到开关关闭/权限撤销，停止采集")
                     break
                 }
-                // 静止自动关闭：有移动就刷新最后移动时刻；
-                // 连续静止超过 30 分钟 → 主动关掉轨迹开关（服务看门狗随后收尾停服务）
                 val now = SystemClock.elapsedRealtime()
-                if (!isStationary) {
-                    lastMoveTime = now
-                } else if (now - lastMoveTime >= AUTO_OFF_STILL_MS) {
-                    LogX.i(TAG, "已连续静止 ${AUTO_OFF_STILL_MS / 60_000} 分钟，自动关闭行动轨迹开关")
+                // 运动门控用的移动时刻：加速度计一动就刷新，供 manageGps 的缓冲期判断（可以噪声敏感）
+                if (!isStationary) lastMoveTime = now
+                // 静止自动关闭：以「最后一次真实位移落点」的墙钟时刻计时——
+                // 它只在真走了 ≥3m 落点时才前进，免疫 GPS 测速噪声/加速度计抖动，且跨进程重启不归零；
+                // 再要求当前加速度计确认静止，避免室内无 GPS 的移动被误判成静止而误关。
+                if (isStationary && System.currentTimeMillis() - lastRecordedMoveAt >= AUTO_OFF_STILL_MS) {
+                    LogX.i(TAG, "已连续静止 ${AUTO_OFF_STILL_MS / 60_000} 分钟无位移，自动关闭行动轨迹开关")
                     setTrackEnabled(context, false)
                     break
                 }
@@ -283,6 +309,9 @@ object LocationTracker {
                             TrackBuffer.append(context, pt)
                             lastPoint = best
                             lastAddTime = best.time
+                            // 真实位移落点 → 刷新并持久化自动关计时基准
+                            lastRecordedMoveAt = best.time
+                            persistLastMove(context, best.time)
                             onPoint?.invoke(pt)
                             LogX.i(TAG, "轨迹落点(${best.provider} ±${best.accuracy}m, " +
                                 "moving=$moving): ${best.latitude},${best.longitude}")
@@ -447,8 +476,11 @@ object LocationTracker {
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
         runCatching {
-            // 回调走注册线程（采集协程的 IO 线程）；监听器只做轻量计算 + 写 volatile，无需主线程
-            sm.registerListener(listener, acc, SensorManager.SENSOR_DELAY_NORMAL)
+            // 回调走主线程 Looper：必须带 Handler，否则无 Looper 线程注册会抛异常导致静止判定整个失效（过去在 IO 协程中注册无法回调）；
+            // 监听器只做轻量计算 + 写 volatile，主线程不卡
+            sm.registerListener(
+                listener, acc, SensorManager.SENSOR_DELAY_NORMAL, Handler(Looper.getMainLooper())
+            )
         }.onSuccess {
             sensorManager = sm
             accelListener = listener
