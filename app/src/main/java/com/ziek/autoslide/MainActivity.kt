@@ -1096,9 +1096,11 @@ class MainActivity : AppCompatActivity() {
 
     /** 权限齐全后真正开启：置开关 + 启动独立进程的轨迹记录前台服务（对齐两只脚） */
     private fun finalizeTrackEnable() {
+        // 仅在「关→开」的真正开启时重置静止自动关计时；打开 App 的例行同步（此时已是开）不重置，
+        // 否则用户每次打开 App 都会把 30 分钟计时清零，自动关几乎永远等不到。
+        val wasEnabled = TrackState.isEnabled(this)
         TrackState.setEnabled(this, true)
-        // 用户主动打开 → 重置静止自动关计时，避免用上次遗留的陈旧时刻一开就秒关
-        LocationTracker.markUserEnabled(this)
+        if (!wasEnabled) LocationTracker.markUserEnabled(this)
         // 轨迹记录服务自带记录通知（channel track_record），不再依附常驻状态通知；
         // 通知权限没给时先申请，授权结果回来后再真正拉起（见 onRequestPermissionsResult）。
         requestStartTrackService()
