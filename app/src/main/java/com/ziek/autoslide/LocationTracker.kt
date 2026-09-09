@@ -122,9 +122,6 @@ object LocationTracker {
        静止期间 GPS 已被运动门控断电，这一步进一步把整个前台服务/唤醒锁/加速度计也收掉；
        关掉后由服务看门狗收尾停服务 */
     private const val AUTO_OFF_STILL_MS = 30 * 60 * 1000L
-    /* 「最后一次真实位移落点」的墙钟时刻，持久化到此键：进程被国产 ROM 杀了重启后，
-       自动关计时不归零、接着算 */
-    private const val KEY_LAST_MOVE_AT = "track_last_move_at"
 
     /* ==================== 上报节流 ==================== */
 
@@ -167,11 +164,9 @@ object LocationTracker {
     /* 落点回调（TrackRecordService 用来刷新记录通知）；从采集协程线程调用 */
     @Volatile private var onPoint: ((JSONObject) -> Unit)? = null
 
-    /** 总开关 + 权限都满足时才算「应当采集」 */
+    /** 总开关 + 权限都满足时才算「应当采集」。开关走跨进程一致的 [TrackState]（见其说明）。 */
     fun shouldRun(context: Context): Boolean {
-        val enabled = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_TRACK_ENABLED, DEFAULT_TRACK_ENABLED)
-        return enabled && hasBackgroundLocation(context)
+        return TrackState.isEnabled(context) && hasBackgroundLocation(context)
     }
 
     /**
@@ -247,16 +242,14 @@ object LocationTracker {
 
     /* ==================== 主循环（对齐两只脚 TimerTask：每 TICK 选优落点） ==================== */
 
-    /** 写入轨迹总开关（主界面开关与「静止自动关闭」共用同一把锁） */
+    /** 写入轨迹总开关（跨进程一致存储；静止自动关在 :trackrecord 里调用它也能被主进程立即看到） */
     fun setTrackEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit().putBoolean(KEY_TRACK_ENABLED, enabled).apply()
+        TrackState.setEnabled(context, enabled)
     }
 
-    /** 持久化「最后真实位移时刻」，供进程被杀重启后自动关计时续算 */
+    /** 持久化「最后真实位移时刻」，供进程被杀重启后自动关计时续算（跨进程一致存储） */
     private fun persistLastMove(context: Context, atMs: Long) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit().putLong(KEY_LAST_MOVE_AT, atMs).apply()
+        TrackState.setLastMoveAt(context, atMs)
     }
 
     /**
@@ -282,8 +275,7 @@ object LocationTracker {
         // 这样「静止满 30 分钟」能跨进程复活累积（否则 vivo 频繁杀进程，每次复活都从头算，永不触发）。
         // 只有从没记录过（首次）才以现在为准；「用户重新打开开关」的重置交给 markUserEnabled，不在这里做。
         run {
-            val saved = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getLong(KEY_LAST_MOVE_AT, 0L)
+            val saved = TrackState.lastMoveAt(context)
             if (saved == 0L) {
                 lastRecordedMoveAt = System.currentTimeMillis()
                 persistLastMove(context, lastRecordedMoveAt)

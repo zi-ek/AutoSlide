@@ -175,7 +175,7 @@ class MainActivity : AppCompatActivity() {
             requestEnableTracking()
         } else {
             // 关闭：撤开关、停轨迹服务（onDestroy 杀 :trackrecord 进程；复活任务随 stop 自撤）
-            preferences.edit { putBoolean(KEY_TRACK_ENABLED, false) }
+            TrackState.setEnabled(this, false)
             TrackRecordService.stop(this)
         }
     }
@@ -1096,7 +1096,7 @@ class MainActivity : AppCompatActivity() {
 
     /** 权限齐全后真正开启：置开关 + 启动独立进程的轨迹记录前台服务（对齐两只脚） */
     private fun finalizeTrackEnable() {
-        preferences.edit { putBoolean(KEY_TRACK_ENABLED, true) }
+        TrackState.setEnabled(this, true)
         // 用户主动打开 → 重置静止自动关计时，避免用上次遗留的陈旧时刻一开就秒关
         LocationTracker.markUserEnabled(this)
         // 轨迹记录服务自带记录通知（channel track_record），不再依附常驻状态通知；
@@ -1166,7 +1166,7 @@ class MainActivity : AppCompatActivity() {
                 return
             }
         }
-        val enabled = preferences.getBoolean(KEY_TRACK_ENABLED, DEFAULT_TRACK_ENABLED)
+        val enabled = TrackState.isEnabled(this)
         // 开关 UI 跟随实际意图刷新（updateSwitchState 防回调循环）
         updateSwitchState(binding.minePanel.trackEnabledSwitch, enabled, trackEnabledSwitchListener)
         if (enabled) {
@@ -1200,7 +1200,7 @@ class MainActivity : AppCompatActivity() {
                 requestEnableTracking()
             } else {
                 // 定位权限被拒：开关回滚关闭态，避免「看着开了其实没权限」
-                preferences.edit { putBoolean(KEY_TRACK_ENABLED, false) }
+                TrackState.setEnabled(this, false)
                 updateSwitchState(binding.minePanel.trackEnabledSwitch, false, trackEnabledSwitchListener)
                 Toast.makeText(this, R.string.track_need_location, Toast.LENGTH_SHORT).show()
             }
@@ -1219,7 +1219,7 @@ class MainActivity : AppCompatActivity() {
             if (trackPendingNotification) {
                 // 开轨迹时通知权限被拒：轨迹前台服务没有通知兜底，退回关闭态
                 trackPendingNotification = false
-                preferences.edit { putBoolean(KEY_TRACK_ENABLED, false) }
+                TrackState.setEnabled(this, false)
                 TrackRecordService.stop(this)
                 updateSwitchState(binding.minePanel.trackEnabledSwitch, false, trackEnabledSwitchListener)
             } else {
