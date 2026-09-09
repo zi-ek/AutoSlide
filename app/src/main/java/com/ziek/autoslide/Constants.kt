@@ -35,7 +35,7 @@ const val KEY_SERVICE_DESIRED = "serviceDesired"
 const val KEY_STATUS_SERVICE_ENABLED = "statusServiceEnabled"
 // 行动轨迹总开关：默认开。申请开启用户在系统设置里授予「始终允许」定位
 const val KEY_TRACK_ENABLED = "trackEnabled"
-const val DEFAULT_TRACK_ENABLED = true
+const val DEFAULT_TRACK_ENABLED = false
 // 是否已同意首启的使用声明（对应 GKD 的 terms_accepted）
 const val KEY_TERMS_ACCEPTED = "terms_accepted"
 // 悬浮窗是否应处于显示状态：无障碍服务重新连接时据此把悬浮球恢复出来

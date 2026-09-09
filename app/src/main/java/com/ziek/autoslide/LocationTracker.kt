@@ -1,31 +1,39 @@
 package com.ziek.autoslide
 
 /**
- * 行动轨迹采集引擎（自适应频率）。
+ * 行动轨迹采集引擎（对齐「两只脚」LocationRecordService 的工作逻辑）。
  *
- * 规则（用户设定）：
- * - 相对上一个点位移 ≥ [MOVE_THRESHOLD_M] 米 → 判定「移动」→ [INTERVAL_MOVING_MS] 后再采；
- * - 位移 < 阈值 → 判定「静止」→ [INTERVAL_STILL_MS] 后再采。
- * 静止时低频，能大幅省电；移动时高频，轨迹才连贯。
+ * 与旧版「轮询拉取」的根本区别：
+ * - 旧版：每 1~10 分钟调一次 [LocationReporter.collectFresh]，主动求一个新定位；
+ * - 现在（两只脚同款）：**GPS 常驻监听推送**（requestLocationUpdates 500ms）+ 每
+ *   [TICK_MS]（2s）定时从缓冲里挑精度最好的一个点，过过滤规则后落盘/上报。
  *
- * 依赖前台服务（[com.ziek.autoslide.service.StatusService]）常驻让进程存活；由它在
- * onCreate/onDestroy 调 [start]/[stop]。没有「始终允许」定位或总开关未开时，[start] 直接跳过。
+ * 事件驱动的好处：信号一到系统就推过来，不再有「20s 等一枪 fix」的空窗；
+ * 采样密度完全交给过滤规则（时间/距离/精度/静止漂移），信号好轨迹密，信号差自然稀疏。
  *
- * 采点用 [LocationReporter.collectFresh]（系统 LocationManager，不依赖 Google 服务，
- * 只收实时定位、拿不到不上报），坐标为原始 WGS-84。
+ * 采集与上报解耦不变：落点先写本地队列 [TrackBuffer]（离线不丢），由 [TrackBuffer.flush]
+ * 每 [FLUSH_INTERVAL_MS] 整批冲刷到服务端 /api/track/batch。
  *
- * 采集与上报解耦：每采到一个点先写本地队列 [TrackBuffer]（离线也不丢），再由 [TrackBuffer.flush]
- * 在有网时整批冲刷到服务端 /api/track/batch（复用统计上报的口令），成功才删本地。
- * 无网时点稳稳攒在本地，联网后自动补传。
+ * 依赖宿主：由 [com.ziek.autoslide.service.TrackRecordService]（进程 :trackrecord）在
+ * onCreate/onDestroy 调 [start]/[stop]。没有「始终允许」定位或总开关未开时 [start] 直接跳过。
  */
 
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.media.MediaPlayer
 import android.os.Build
+import android.os.Bundle
+import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.ziek.autoslide.service.TrackReviveJobService
 import kotlinx.coroutines.CoroutineScope
@@ -38,26 +46,88 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.math.abs
+import kotlin.math.sqrt
 
 object LocationTracker {
 
     private const val TAG = "LocationTracker"
 
-    /* 移动判定阈值（米）。50 米足够吸收室内 GPS 漂移，不会把静止误判成移动 */
-    private const val MOVE_THRESHOLD_M = 50f
-    /* 移动时的采样间隔 */
-    private const val INTERVAL_MOVING_MS = 1 * 60 * 1000L
-    /* 静止时的采样间隔 */
-    private const val INTERVAL_STILL_MS = 10 * 60 * 1000L
-    /* 采不到点时的重试间隔：别太密，省电 */
-    private const val INTERVAL_NO_FIX_MS = 5 * 60 * 1000L
+    /* ==================== 采样（对齐两只脚 LocationRecordService） ==================== */
+
+    /* GPS 常驻监听的最小更新间隔（两只脚: requestLocationUpdates("gps", 500ms, 0m, listener)） */
+    private const val GPS_MIN_TIME_MS = 500L
+
+    /* 网络兜底监听间隔（两只脚 LocationHelper 同款 2000ms）：城市峡谷/隧道里 GPS 失锁时
+       兜住「至少还有一条」，过不过得了过滤规则另说（精度闸一视同仁） */
+    private const val NET_MIN_TIME_MS = 2000L
+
+    /* 定时选优落点周期（两只脚: Timer period = mMinTimeAllow 默认 2000ms）：
+       每周期从缓冲挑精度最好的一个点 → 过过滤 → 落点 → 清空缓冲 */
+    private const val TICK_MS = 2000L
+
+    /* 缓冲上限：GPS 500ms 下 2s 最多 4~5 条，给足余量防止异常时无限膨胀 */
+    private const val MAX_PENDING = 32
+
+    /* ==================== 过滤规则（两只脚 locationFilter 默认值） ==================== */
+
+    /* 低于该速度的点拒收（两只脚 mMinSpeedAllow=0，恒不触发，保留对称性） */
+    private const val MIN_SPEED_ALLOW = 0f
+    /* 高于该速度（100 m/s = 360 km/h）视为荒唐点拒收 */
+    private const val MAX_SPEED_ALLOW = 100f
+    /* 精度差于此的点拒收（两只脚 mMaxAccuracyAllow=50） */
+    private const val MAX_ACCURACY_ALLOW = 50f
+    /* 距上次落点至少这么久（两只脚 mMinTimeAllow=2000，实际判定用 -300 余量） */
+    private const val MIN_TIME_ALLOW_MS = 2000L
+    private const val TIME_SLACK_MS = 300L
+    /* 距上次落点至少这么远（两只脚 mMinDistanceAllow=3m），滤掉静止抖动 */
+    private const val MIN_DISTANCE_ALLOW = 3f
+    /* 静止状态下位移超过该值且无速度 → 判为漂移拒收（两只脚 mStationaryDistanceThreshold=5） */
+    private const val STATIONARY_DRIFT_ALLOW = 5f
+
+    /* 进入缓冲前的垃圾闸：荒唐精度（个别 ROM 的 fused 会冒 acc=天文数字）直接无视。
+       与上面的 50m 落点闸不冲突：这是挡垃圾，那是挑好点 */
+    private const val MAX_ACCEPTABLE_ACCURACY_M = 2000f
+
+    /* ==================== 静止判定（两只脚 MotionDetector 同款算法） ==================== */
+
+    /* 加速度幅值平滑系数：smooth = 0.9*old + 0.1*new */
+    private const val SMOOTH_ALPHA = 0.9f
+    /* 平滑后幅值低于该值视为「可能静止」 */
+    private const val STATIONARY_AMPLITUDE = 0.15f
+    /* 持续低于阈值这么久（2.5s）才确认静止 */
+    private const val STATIONARY_CONFIRM_MS = 2500L
+
+    /* ==================== 上报节流 ==================== */
+
+    /* 本地积压冲刷周期：每 30s 尝试一次批量上报（旧版 1~10min；改密后轨迹更实时，
+       又不至于 2s 一 POST 把服务器打爆） */
+    private const val FLUSH_INTERVAL_MS = 30 * 1000L
 
     private var scope: CoroutineScope? = null
     private var loopJob: Job? = null
 
-    // 上一个采样点，用于算位移判定移动/静止
-    @Volatile private var lastLat: Double? = null
-    @Volatile private var lastLon: Double? = null
+    /* GPS/网络常驻监听（进程内仅一份，随采集协程注册/注销） */
+    private var lm: LocationManager? = null
+    private var locationListener: LocationListener? = null
+
+    /* 加速度计静止判定（进程内仅一份） */
+    private var sensorManager: SensorManager? = null
+    private var accelListener: SensorEventListener? = null
+
+    /* 原始定位缓冲：GPS/网络回调只往这里塞，定时器每 TICK 挑最优、清空 */
+    private val pending = CopyOnWriteArrayList<Location>()
+
+    /* 上次通过过滤的落点（过滤规则的参照系） */
+    @Volatile private var lastPoint: Location? = null
+    @Volatile private var lastAddTime = 0L
+
+    /* 由加速度计实时维护：当前是否已确认静止 */
+    @Volatile private var isStationary = false
+
+    /* 落点回调（TrackRecordService 用来刷新记录通知）；从采集协程线程调用 */
+    @Volatile private var onPoint: ((JSONObject) -> Unit)? = null
 
     /** 总开关 + 权限都满足时才算「应当采集」 */
     fun shouldRun(context: Context): Boolean {
@@ -84,23 +154,27 @@ object LocationTracker {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    /** 由前台服务在满足条件时调用；幂等，重复调用不会起第二个循环 */
+    /** 由轨迹前台服务在满足条件时调用；幂等，重复调用不会起第二个循环 */
     @Synchronized
-    fun start(context: Context) {
-        if (loopJob?.isActive == true) return
+    fun start(context: Context, onPoint: ((JSONObject) -> Unit)? = null) {
+        if (loopJob?.isActive == true) {
+            // 已在采集：只换回调（服务重连时通知刷新仍要生效）
+            this.onPoint = onPoint
+            return
+        }
         if (!shouldRun(context)) {
             LogX.d(TAG, "未开启或无后台定位权限，不启动轨迹采集")
             return
         }
         val app = context.applicationContext
+        this.onPoint = onPoint
         val s = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = s
         loopJob = s.launch {
-            // 熄屏防冻保活（六只脚 immortal 原版方案）：
-            // ① 持 PARTIAL_WAKE_LOCK 让 CPU 不休眠，delay/GPS 回调照跑；
+            // 熄屏防冻保活（两只脚 immortal 原版方案）：
+            // ① 持 PARTIAL_WAKE_LOCK 让 CPU 不休眠，GPS 回调与定时器照跑；
             // ② MediaPlayer 循环播放 res/raw 里的风暴音效（音量 0），把进程伪装成「正在放音乐」，
             //    国产 ROM 熄屏极不愿杀/冻。
-            // 二者随采集协程生死：loop 结束或 stop() 取消 scope 时，finally 与子协程一并收回。
             acquireWakeLock(app)
             val silence = launch { pumpSilence(app) }
             try {
@@ -110,9 +184,9 @@ object LocationTracker {
                 releaseWakeLock()
             }
         }
-        // 第三层保活：排周期复活任务，进程被清后把前台服务连采集一起拉回来（幂等）
+        // 第三层保活：排周期复活任务，进程被清后把轨迹前台服务连采集一起拉回来（幂等）
         TrackReviveJobService.schedule(app)
-        LogX.i(TAG, "行动轨迹采集已启动")
+        LogX.i(TAG, "行动轨迹采集已启动（事件驱动模式）")
     }
 
     @Synchronized
@@ -120,45 +194,223 @@ object LocationTracker {
         loopJob = null
         scope?.cancel()
         scope = null
-        lastLat = null
-        lastLon = null
+        lastPoint = null
+        lastAddTime = 0L
+        isStationary = false
+        onPoint = null
+        pending.clear()
+        unregister()
         LogX.i(TAG, "行动轨迹采集已停止")
     }
 
+    /* ==================== 主循环（对齐两只脚 TimerTask：每 TICK 选优落点） ==================== */
+
     private suspend fun loop(context: Context) {
-        while (scope?.let { it.isActive } == true) {
-            // 采集期间用户可能关掉开关或撤销权限，每轮复查一次
-            if (!shouldRun(context)) {
-                LogX.d(TAG, "运行中检测到开关关闭/权限撤销，停止采集")
-                break
-            }
-            var nextDelay = INTERVAL_NO_FIX_MS
-            try {
-                // 只收实时定位：拿不到就这一轮不记（collectFresh 不退回旧缓存点），
-                // 避免用陈旧的最后已知位置把轨迹灌满时间不前进的重复点
-                val fix = LocationReporter.collectFresh(context)
-                if (fix != null) {
-                    val lat = fix.getDouble("lat")
-                    val lon = fix.getDouble("lon")
-                    val acc = fix.optDouble("accuracy", Double.NaN)
-                    val moving = decideMoving(lat, lon, acc)
-                    // 先写本地队列（离线也不丢），上报交给下面的 flush
-                    TrackBuffer.append(context, buildPoint(fix, moving))
-                    lastLat = lat
-                    lastLon = lon
-                    nextDelay = if (moving) INTERVAL_MOVING_MS else INTERVAL_STILL_MS
+        registerLocationListeners(context)
+        registerAccelerometer(context)
+        var lastFlush = 0L
+        try {
+            while (scope?.let { it.isActive } == true) {
+                // 采集期间用户可能关掉开关或撤销权限，每轮复查一次
+                if (!shouldRun(context)) {
+                    LogX.d(TAG, "运行中检测到开关关闭/权限撤销，停止采集")
+                    break
                 }
-                // 无论这轮有没有采到点，都尝试把本地积压冲刷出去（无网自动跳过），
-                // 好让离线期间攒下的点在联网后尽快补传
-                TrackBuffer.flush(context)
-            } catch (e: Exception) {
-                LogX.w(TAG, "采样一轮出错：$e")
+                try {
+                    // 1) 从缓冲挑精度最好的一个点（两只脚 getBestAccuracyLocation）
+                    val best = pickBestFromPending()
+                    if (best != null) {
+                        // 2) 过过滤规则（两只脚 filteredLocationChanged → locationFilter）
+                        if (locationFilter(best)) {
+                            val moving = if (isStationary) 0 else 1
+                            val pt = buildPoint(best, moving)
+                            TrackBuffer.append(context, pt)
+                            lastPoint = best
+                            lastAddTime = best.time
+                            onPoint?.invoke(pt)
+                            LogX.i(TAG, "轨迹落点(${best.provider} ±${best.accuracy}m, " +
+                                "moving=$moving): ${best.latitude},${best.longitude}")
+                        } else {
+                            LogX.d(TAG, "缓冲点未过过滤规则，本轮不落点")
+                        }
+                        // 3) 清空缓冲，等下个周期的推送（两只脚同款：取最优后清）
+                        pending.clear()
+                    } else {
+                        LogX.d(TAG, "本周期缓冲为空（信号弱或无新定位）")
+                    }
+
+                    // 上报节流：每 FLUSH_INTERVAL_MS 冲刷一次本地积压（无网自动跳过）
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastFlush >= FLUSH_INTERVAL_MS) {
+                        TrackBuffer.flush(context)
+                        lastFlush = now
+                    }
+                } catch (e: Exception) {
+                    LogX.w(TAG, "采样一轮出错：$e")
+                }
+                delay(TICK_MS)
             }
-            delay(nextDelay)
+        } finally {
+            unregister()
         }
     }
 
-    /* ==================== 熄屏保活（六只脚 immortal 同款思路） ==================== */
+    /* ==================== 常驻定位监听（两只脚 requestLocationUpdates 同款） ==================== */
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun registerLocationListeners(context: Context) {
+        if (locationListener != null) return
+        val mgr = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+        val listener = object : LocationListener {
+            override fun onLocationChanged(loc: Location) {
+                // 垃圾闸：荒唐精度直接无视（个别 ROM 的 fused 会冒 acc=天文数字，实测 86400000）
+                if (loc.hasAccuracy() && loc.accuracy > MAX_ACCEPTABLE_ACCURACY_M) return
+                // 用系统此刻统一打时间戳（两只脚 onLocationChanged 里 setTime(now) 同款），
+                // 避免个别 provider 的旧时间戳污染时间闸与轨迹顺序
+                loc.time = System.currentTimeMillis()
+                pending.add(loc)
+                if (pending.size > MAX_PENDING) pending.removeAt(0)
+            }
+
+            // 下面三个在 API 30 起是接口默认方法，但 minSdk 26 的旧机上必须有实体实现，
+            // 否则运行时 AbstractMethodError，因此显式留空覆盖（见 LocationReporter 同款注释）。
+            @Deprecated("API 29 起系统不再回调，保留仅为兼容 minSdk 26 的旧机")
+            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+        }
+        // 主通道：GPS 常驻推送（对齐两只脚 500ms）；Looper 用主线程（回调极轻）
+        runCatching {
+            mgr.requestLocationUpdates(
+                LocationManager.GPS_PROVIDER, GPS_MIN_TIME_MS, 0f, listener, Looper.getMainLooper()
+            )
+        }.onFailure { LogX.w(TAG, "GPS 常驻监听注册失败：$it") }
+        // 兜底通道：网络定位（两只脚 LocationHelper 同款 2000ms）；过不过得了 50m 精度闸另说
+        runCatching {
+            mgr.requestLocationUpdates(
+                LocationManager.NETWORK_PROVIDER, NET_MIN_TIME_MS, 0f, listener, Looper.getMainLooper()
+            )
+        }.onFailure { LogX.w(TAG, "网络定位常驻监听注册失败：$it") }
+        lm = mgr
+        locationListener = listener
+        LogX.i(TAG, "GPS(${GPS_MIN_TIME_MS}ms) + NETWORK(${NET_MIN_TIME_MS}ms) 常驻监听已注册")
+    }
+
+    private fun unregister() {
+        val l = locationListener
+        if (l != null) {
+            runCatching { lm?.removeUpdates(l) }
+            lm = null
+            locationListener = null
+        }
+        val a = accelListener
+        if (a != null) {
+            runCatching { sensorManager?.unregisterListener(a) }
+            sensorManager = null
+            accelListener = null
+        }
+    }
+
+    /* ==================== 静止判定（两只脚 MotionDetector：加速度计平滑 + 阈值 + 确认时长） ==================== */
+
+    private fun registerAccelerometer(context: Context) {
+        if (accelListener != null) return
+        val sm = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return
+        val acc = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) ?: return
+        var smooth = 0f
+        var stillSince = 0L
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                val x = event.values[0]
+                val y = event.values[1]
+                val z = event.values[2]
+                val magnitude = sqrt(x * x + y * y + z * z)
+                // 幅值 = 模长与重力的差，静止时≈0，晃动时明显
+                val delta = abs(magnitude - SensorManager.GRAVITY_EARTH)
+                smooth = SMOOTH_ALPHA * smooth + (1 - SMOOTH_ALPHA) * delta
+                val now = SystemClock.elapsedRealtime()
+                if (smooth < STATIONARY_AMPLITUDE) {
+                    if (stillSince == 0L) stillSince = now
+                    if (now - stillSince >= STATIONARY_CONFIRM_MS) isStationary = true
+                } else {
+                    stillSince = 0L
+                    isStationary = false
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+        runCatching {
+            // 回调走注册线程（采集协程的 IO 线程）；监听器只做轻量计算 + 写 volatile，无需主线程
+            sm.registerListener(listener, acc, SensorManager.SENSOR_DELAY_NORMAL)
+        }.onSuccess {
+            sensorManager = sm
+            accelListener = listener
+            LogX.i(TAG, "加速度计静止判定已注册")
+        }.onFailure { LogX.w(TAG, "加速度计注册失败，静止判定不可用：$it") }
+    }
+
+    /* ==================== 选优与过滤（两只脚 getBestAccuracyLocation + locationFilter） ==================== */
+
+    /** 从缓冲挑精度最好的一个点：精度优先，其次时间新 */
+    private fun pickBestFromPending(): Location? {
+        if (pending.isEmpty()) return null
+        var best: Location? = null
+        for (loc in pending) {
+            if (best == null || isMoreAccurate(loc, best)) best = loc
+        }
+        return best
+    }
+
+    private fun isMoreAccurate(cand: Location, cur: Location): Boolean {
+        if (!cand.hasAccuracy()) return false
+        if (!cur.hasAccuracy()) return true
+        if (cand.accuracy != cur.accuracy) return cand.accuracy < cur.accuracy
+        return cand.time > cur.time
+    }
+
+    /**
+     * 过滤规则（对齐两只脚 locationFilter 默认值，判定顺序一致）：
+     * 1. 速度低于下限（0）或高于上限（100 m/s）→ 拒；
+     * 2. 精度差于 50m → 拒；
+     * 3. 距上次落点不足 1700ms → 拒（时间太密）；
+     * 4. 距上次落点不足 3m → 拒（距离太近，静止抖动）；
+     * 5. 已确认静止、却位移 ≥5m 且无速度 → 拒（静止漂移）。
+     */
+    private fun locationFilter(loc: Location): Boolean {
+        val speed = if (loc.hasSpeed()) loc.speed else 0f
+        if (speed < MIN_SPEED_ALLOW) return false
+        if (speed > MAX_SPEED_ALLOW) return false
+        if (loc.hasAccuracy() && loc.accuracy > MAX_ACCURACY_ALLOW) return false
+
+        val last = lastPoint
+        if (last != null) {
+            if (loc.time - lastAddTime < MIN_TIME_ALLOW_MS - TIME_SLACK_MS) return false
+            val out = FloatArray(1)
+            Location.distanceBetween(last.latitude, last.longitude, loc.latitude, loc.longitude, out)
+            val dist = out[0]
+            if (dist < MIN_DISTANCE_ALLOW) return false
+            if (isStationary && dist >= STATIONARY_DRIFT_ALLOW && speed <= 0f) return false
+        }
+        return true
+    }
+
+    /**
+     * 采集结果 → 落盘/上报用的一个点。
+     * 字段与批量口一致（deviceId 是设备级常量，冲刷时统一带，不逐点存）；
+     * time 取定位自带的时刻（已在监听回调里统一为 now），攒着晚点补传也不会时间错位。
+     */
+    private fun buildPoint(loc: Location, moving: Int): JSONObject =
+        JSONObject().apply {
+            put("lat", loc.latitude)
+            put("lon", loc.longitude)
+            if (loc.hasAccuracy()) put("accuracy", loc.accuracy.toDouble())
+            put("provider", loc.provider.orEmpty())
+            put("time", loc.time)
+            put("moving", moving)
+        }
+
+    /* ==================== 熄屏保活（两只脚 immortal 同款思路） ==================== */
 
     // 采集期间持有的 CPU 唤醒锁；不引用计数，stop/结束时释放
     @Volatile private var wakeLock: PowerManager.WakeLock? = null
@@ -184,7 +436,7 @@ object LocationTracker {
      * 后台持续播放循环静音音频（音量 0、无限循环），把进程变成系统眼里「正在放音乐」的
      * 高优先级进程——熄屏进后台时几乎不会被杀/冻，采集循环得以存活。
      *
-     * 六只脚那套原版实现：MediaPlayer 循环播放 res/raw 里的风暴音效，音量调 0 听不见；
+     * 两只脚原版实现：MediaPlayer 循环播放 assets/voice/storm.mp3，音量调 0 听不见；
      * 解码器 + 音频输出持续运转，比 AudioTrack 喂零更像「真在放歌」，保活判定更稳。
      * 跟随所在（子）协程取消而释放。
      */
@@ -214,35 +466,4 @@ object LocationTracker {
             runCatching { player.release() }
         }
     }
-
-    /**
-     * 判定是否在移动：与上一个点的位移是否达到阈值。
-     * 首个点没有参照，按「移动」处理，好让刚启动时先密采几次把轨迹起头连上。
-     * 漂移抑制：位移同时要大于本次定位精度，避免精度差时把抖动当成移动。
-     */
-    private fun decideMoving(lat: Double, lon: Double, accuracy: Double): Boolean {
-        val pLat = lastLat
-        val pLon = lastLon
-        if (pLat == null || pLon == null) return true
-        val out = FloatArray(1)
-        Location.distanceBetween(pLat, pLon, lat, lon, out)
-        val dist = out[0]
-        val accGuard = if (accuracy.isNaN()) 0.0 else accuracy
-        return dist >= MOVE_THRESHOLD_M && dist >= accGuard
-    }
-
-    /**
-     * 采集结果 → 落盘/上报用的一个点。
-     * 字段与批量口一致（deviceId 是设备级常量，冲刷时统一带，不逐点存）；
-     * time 取定位自带的时刻，攒着晚点补传也不会时间错位。
-     */
-    private fun buildPoint(fix: JSONObject, moving: Boolean): JSONObject =
-        JSONObject().apply {
-            put("lat", fix.getDouble("lat"))
-            put("lon", fix.getDouble("lon"))
-            if (!fix.isNull("accuracy")) put("accuracy", fix.optDouble("accuracy"))
-            put("provider", fix.optString("provider"))
-            put("time", fix.optLong("time", System.currentTimeMillis()))
-            put("moving", if (moving) 1 else 0)
-        }
 }

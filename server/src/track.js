@@ -155,8 +155,8 @@ async function handleIngest(req, res) {
   await updateStats((stats) => {
     touchDevice(stats, id, {
       location: {
-        lat: loc.lat,
         lon: loc.lon,
+        lat: loc.lat,
         accuracy: loc.accuracy,
         provider: loc.provider,
         time: t,
@@ -206,8 +206,8 @@ async function handleIngestBatch(req, res) {
   await updateStats((stats) => {
     touchDevice(stats, id, {
       location: {
-        lat: newest.loc.lat,
         lon: newest.loc.lon,
+        lat: newest.loc.lat,
         accuracy: newest.loc.accuracy,
         provider: newest.loc.provider,
         time: newest.t,

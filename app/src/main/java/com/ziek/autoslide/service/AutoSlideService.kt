@@ -163,6 +163,7 @@ open class AutoSlideService : AccessibilityService() {
     private var douyinSessionDone = false // 本次进入抖音是否已执行过连播流程（离开抖音后重置）
     private var douyinAutoPlayCompleted = false // 已成功打开连播后不再工作，直到下次启动 App 才重置
     private var lastPushDialogDismissAt = 0L // 上次自动点「忽略」的时间（冷却，避免重复点击）
+    private var lastDebugDialogDismissAt = 0L // 上次自动处理调试授权弹窗的时间（冷却，避免重复处理）
     /* 关键词检测循环 */
     private val keywordCheckRunnable = Runnable { runKeywordCheck() }
     /* 定时滑动循环 */
@@ -354,6 +355,11 @@ private const val SPEED_CURVE_FACTOR = 0.7
         private val PUSH_NOTIFICATION_DIALOG_TEXTS = listOf("推送通知", "推送提醒")
         private val PUSH_IGNORE_TEXTS = listOf("忽略", "取消")
         private const val PUSH_DIALOG_DISMISS_COOLDOWN_MS = 5_000L
+        /* 调试授权弹窗：命中任一标题或特征后自动勾选未选中的「始终允许/一律允许」类复选框，再点「允许/确定」按钮。 */
+        private val DEBUG_DIALOG_TEXTS = listOf("无线调试", "USB 调试", "USB调试", "允许 USB 调试", "允许网络调试", "网络调试", "ADB 调试", "ADB调试")
+        private val DEBUG_CHECKBOX_TEXTS = listOf("始终允许", "一律允许")
+        private val DEBUG_CONFIRM_TEXTS = listOf("允许", "确定", "确认")
+        private const val DEBUG_DIALOG_DISMISS_COOLDOWN_MS = 2_000L
         /* 各应用的主界面 Activity：只有停在这里才执行自动连播。
            短剧播放页、直播间、评论页等子页面的长按菜单里没有连播开关，在那里长按只会误触。 */
         /* 各应用的主界面 Activity，只有停在这里才执行自动连播。
@@ -821,6 +827,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
         }
         // 自动处理「打开推送通知」弹窗：点一次「忽略」
         maybeDismissPushNotificationDialog()
+        // 自动处理「调试授权」弹窗：自动勾选并点击「允许/确定」
+        maybeDismissDebugDialog(event.source)
         // 自动点击事件驱动：页面/内容变化时触发检查（复用系统已分发的无障碍事件，平时零轮询）
         if (packageName != this.packageName &&
             (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
@@ -1287,8 +1295,9 @@ private const val SPEED_CURVE_FACTOR = 0.7
     private suspend fun handleDouyinAutoPlay(packageName: String) {
         if (automationPaused) return
         val targetText = autoplayTextFor(packageName)
-        // 先处理可能存在的推送通知弹窗，避免干扰后续手势
+        // 先处理可能存在的推送通知弹窗或调试授权弹窗，避免干扰后续手势
         maybeDismissPushNotificationDialog()
+        maybeDismissDebugDialog()
         // 1. 当前界面已能直接找到「自动连播」时，直接处理
         if (tryHandleAutoplaySwitch(targetText)) {
             finishDouyinAutoPlaySuccess(targetText)
@@ -1367,6 +1376,176 @@ private const val SPEED_CURVE_FACTOR = 0.7
             LogX.i(TAG, "未找到忽略/关闭按钮，使用返回键关闭推送通知弹窗")
         }
         lastPushDialogDismissAt = now
+    }
+
+    /* 获取所有活跃窗口的根节点（解决系统 UsbDebuggingActivity 等弹窗不在 rootInActiveWindow 里的问题） */
+    private fun getAllWindowRoots(eventSource: AccessibilityNodeInfo? = null): List<AccessibilityNodeInfo> {
+        val list = mutableListOf<AccessibilityNodeInfo>()
+        eventSource?.let {
+            var curr = it
+            while (curr.parent != null) {
+                curr = curr.parent ?: break
+            }
+            list.add(curr)
+        }
+        rootInActiveWindow?.let { root ->
+            if (list.none { it == root }) list.add(root)
+        }
+        runCatching {
+            windows?.forEach { window ->
+                val r = window.root
+                if (r != null && list.none { it == r }) {
+                    list.add(r)
+                }
+            }
+        }
+        return list
+    }
+
+    /* 通过屏幕 bounds 坐标模拟手势点击 */
+    private fun tapAtBounds(bounds: Rect) {
+        if (bounds.isEmpty) return
+        val x = bounds.exactCenterX()
+        val y = bounds.exactCenterY()
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 100L))
+            .build()
+        dispatchGesture(gesture, null, handler)
+    }
+
+    /* 检测调试授权类弹窗（如无线调试/USB调试）：未勾选「始终允许/一律允许」时自动勾选，再点击「允许/确定」按钮 */
+    private fun maybeDismissDebugDialog(eventSource: AccessibilityNodeInfo? = null) {
+        if (automationPaused) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastDebugDialogDismissAt < DEBUG_DIALOG_DISMISS_COOLDOWN_MS) {
+            return
+        }
+        val roots = getAllWindowRoots(eventSource)
+        if (roots.isEmpty()) return
+
+        for (root in roots) {
+            // 1. 判断当前窗口是否存在调试授权弹窗特征
+            val hasDialogText = DEBUG_DIALOG_TEXTS.any { keyword ->
+                val nodes = root.findAccessibilityNodeInfosByText(keyword)
+                nodes.any { node ->
+                    val text = node.text?.toString() ?: ""
+                    text.contains("调试") && (text.contains("允许") || text.contains("要允许") || text.contains("吗") || text.contains("USB") || text.contains("无线"))
+                }
+            }
+            val hasCheckboxText = DEBUG_CHECKBOX_TEXTS.any { keyword ->
+                root.findAccessibilityNodeInfosByText(keyword).isNotEmpty()
+            }
+
+            if (!hasDialogText && !hasCheckboxText) {
+                continue
+            }
+
+            // 2. 检查并勾选未选中的复选框（例如“在此网络上始终允许”、“一律允许使用这台计算机进行调试”）
+            ensureDebugCheckboxChecked(root)
+
+            // 3. 点击“允许”或“确定”类确认按钮
+            var clickedConfirm = false
+            outer@ for (keyword in DEBUG_CONFIRM_TEXTS) {
+                val confirmNodes = root.findAccessibilityNodeInfosByText(keyword)
+                for (node in confirmNodes) {
+                    val text = node.text?.toString()?.trim() ?: ""
+                    val desc = node.contentDescription?.toString()?.trim() ?: ""
+                    if (text != keyword && desc != keyword) continue
+                    val target = if (node.isClickable) node else findClickableSelfOrAncestor(node) ?: node
+                    val bounds = Rect()
+                    target.getBoundsInScreen(bounds)
+
+                    val actionOk = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (!bounds.isEmpty) {
+                        tapAtBounds(bounds)
+                    }
+
+                    if (actionOk || !bounds.isEmpty) {
+                        clickedConfirm = true
+                        LogX.i(TAG, "已自动点击/模拟点击「$keyword」确认调试授权弹窗")
+                        break@outer
+                    }
+                }
+            }
+
+            if (clickedConfirm) {
+                lastDebugDialogDismissAt = now
+                break
+            }
+        }
+    }
+
+    /**
+     * 检查调试授权弹窗中的「始终允许/一律允许」复选框：
+     * 若未勾选则自动点击勾选；若已勾选则跳过（避免反向取消勾选）。
+     */
+    @Suppress("DEPRECATION")
+    private fun ensureDebugCheckboxChecked(root: AccessibilityNodeInfo) {
+        for (keyword in DEBUG_CHECKBOX_TEXTS) {
+            val nodes = root.findAccessibilityNodeInfosByText(keyword)
+            for (node in nodes) {
+                // 1) 节点本身即为 CheckBox 或可勾选控件
+                if (node.isCheckable) {
+                    if (!node.isChecked) {
+                        val target = if (node.isClickable) node else findClickableSelfOrAncestor(node) ?: node
+                        val bounds = Rect()
+                        target.getBoundsInScreen(bounds)
+                        target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (!bounds.isEmpty) tapAtBounds(bounds)
+                        LogX.i(TAG, "已自动勾选调试权限复选框 (isCheckable)")
+                    } else {
+                        LogX.i(TAG, "调试权限复选框已处于勾选状态，跳过")
+                    }
+                    return
+                }
+
+                // 2) 节点的父节点/兄弟节点为 CheckBox 或可勾选控件
+                val parent = node.parent
+                if (parent != null) {
+                    for (i in 0 until parent.childCount) {
+                        val child = parent.getChild(i) ?: continue
+                        if (child.isCheckable || child.className?.toString()?.contains("CheckBox", ignoreCase = true) == true) {
+                            if (child.isCheckable) {
+                                if (!child.isChecked) {
+                                    val target = if (child.isClickable) child else findClickableSelfOrAncestor(child) ?: child
+                                    val bounds = Rect()
+                                    target.getBoundsInScreen(bounds)
+                                    target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                    if (!bounds.isEmpty) tapAtBounds(bounds)
+                                    LogX.i(TAG, "已自动勾选调试权限复选框 (sibling CheckBox)")
+                                } else {
+                                    LogX.i(TAG, "调试权限复选框已处于勾选状态，跳过")
+                                }
+                            } else {
+                                val target = if (node.isClickable) node else findClickableSelfOrAncestor(node) ?: parent
+                                val bounds = Rect()
+                                target.getBoundsInScreen(bounds)
+                                target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                                if (!bounds.isEmpty) tapAtBounds(bounds)
+                                LogX.i(TAG, "点击调试权限复选框文本行")
+                            }
+                            return
+                        }
+                    }
+                }
+
+                // 3) 节点及其父节点无明确 CheckBox 控件，但可点击（某些自定义弹窗）
+                val target = if (node.isClickable) node else findClickableSelfOrAncestor(node)
+                if (target != null) {
+                    if (target.isCheckable && target.isChecked) {
+                        LogX.i(TAG, "调试权限复选框(target)已处于勾选状态，跳过")
+                        return
+                    }
+                    val bounds = Rect()
+                    target.getBoundsInScreen(bounds)
+                    target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    if (!bounds.isEmpty) tapAtBounds(bounds)
+                    LogX.i(TAG, "已点击调试权限复选框关联区域")
+                    return
+                }
+            }
+        }
     }
 
     /* 在节点树中查找 content-desc 为「关闭/取消」的可点击按钮并点击 */

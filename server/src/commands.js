@@ -21,7 +21,7 @@
 //   同一台手机上不同应用的 ANDROID_ID 并不相同（按签名分配），所以 adbboot 只报
 //   serial，不报 deviceId——它那个 ANDROID_ID 和 AutoSlide 的对不上，报了反而错。
 
-const { REPORT_TOKEN, LIMIT_JSON_BODY } = require('./config');
+const { REPORT_TOKEN, ADMIN_TOKEN, LIMIT_JSON_BODY } = require('./config');
 const { readFields, sendJson } = require('./http');
 const { nowCN, sanitizeLocation } = require('./util');
 const { readStats, updateStats } = require('./stats');
@@ -225,9 +225,98 @@ function handleAddressQuery(req, res, url) {
   });
 }
 
+/*
+ * 设备指令域（server 中转）：管理侧下发一条待执行指令，设备侧周期拉取执行。
+ *
+ * 解决的问题：ADB 通道失联时（adbd 5555 被系统关掉、跨网络连不上）还想远程让设备
+ * 重开 tcpip——只能靠设备自己醒过来。adbboot 本来就有 15 分钟一次的 JobScheduler
+ * 上报周期，指令通道搭在它上面，醒来先拉指令再执行，零额外唤醒成本。
+ *
+ * 接口分工：
+ *   POST /api/device/command           下发指令（需 AUTOSLIDE_ADMIN_TOKEN）
+ *   GET  /api/device/command/poll      设备拉取（需 AUTOSLIDE_REPORT_TOKEN）
+ *
+ * 为什么下发用 admin 口令、拉取用 report 口令：
+ *   下发是「改写别人的设备状态」，和地址上报的写权限不在一个量级——report token
+ *   在 AutoSlide 里是硬编码的，泄露面大，它只够设备自己报地址/拉指令，不够指挥设备。
+ *
+ * 指令白名单制：目前只有无伤害的「tcpip」（重开 adbd 无线调试），
+ * 绝不开放任意命令执行——谁拿到 admin token 也只推得动白名单里的这几件事。
+ */
+
+/** 管理侧口令校验：没配置一律拒绝（fail closed） */
+function checkAdminToken(req, res) {
+  if (!ADMIN_TOKEN) {
+    sendJson(res, 503, { ok: false, error: 'admin token not configured' });
+    return false;
+  }
+  if (String(req.headers['x-admin-token'] || '') !== ADMIN_TOKEN) {
+    sendJson(res, 401, { ok: false, error: 'unauthorized' });
+    return false;
+  }
+  return true;
+}
+
+const COMMAND_WHITELIST = new Set(['tcpip']);
+
+/**
+ * POST /api/device/command
+ *
+ * body: { serial, cmd }
+ * cmd 必须是白名单内的值。同一设备未消费的同种指令只保留最新一条（覆盖式入队），
+ * 设备侧拉取即删，天然幂等。
+ */
+async function handleCommandPush(req, res) {
+  if (!checkAdminToken(req, res)) return undefined;
+  const field = await readFields(req, LIMIT_JSON_BODY);
+  const serial = cleanSerial(field('serial'));
+  const cmd = String(field('cmd') || '').trim();
+  if (!serial || !COMMAND_WHITELIST.has(cmd)) {
+    return sendJson(res, 400, { ok: false, error: 'serial and whitelisted cmd required' });
+  }
+
+  let ok = false;
+  await updateStats((stats) => {
+    const device = (stats.devices || []).find((d) => d.ecSerial === serial);
+    if (!device) return;
+    ok = true;
+    device.command = { cmd, at: nowCN() };
+  });
+  if (!ok) return sendJson(res, 404, { ok: false, error: 'device not found' });
+  return sendJson(res, 200, { ok: true, cmd });
+}
+
+/**
+ * GET /api/device/command/poll?serial=..
+ *
+ * 设备侧周期拉取；有指令就返回并当场删除（取走即删，重复拉取拿不到同一条）。
+ * 设备不认识白名单之外的 cmd 时直接忽略，不返回错误——兼容未来指令集扩展。
+ */
+async function handleCommandPoll(req, res, url) {
+  if (!checkReportToken(req, res)) return undefined;
+  const serial = cleanSerial(url.searchParams.get('serial'));
+  if (!serial) return sendJson(res, 400, { ok: false, error: 'serial required' });
+
+  let cmd = null;
+  let found = false;
+  await updateStats((stats) => {
+    const device = (stats.devices || []).find((d) => d.ecSerial === serial);
+    if (!device) return;
+    found = true;
+    if (device.command) {
+      cmd = device.command.cmd;
+      delete device.command;
+    }
+  });
+  if (!found) return sendJson(res, 404, { ok: false, error: 'device not found' });
+  return sendJson(res, 200, { ok: true, cmd });
+}
+
 function register(router) {
   router.on('POST', '/api/report/network', handleNetworkReport);
   router.on('GET', '/api/device/address', handleAddressQuery);
+  router.on('POST', '/api/device/command', handleCommandPush);
+  router.on('GET', '/api/device/command/poll', handleCommandPoll);
 }
 
 module.exports = { register };

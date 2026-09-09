@@ -13,13 +13,14 @@ import com.ziek.autoslide.LogX
  * 行动轨迹熄屏保活的第三层：定时「复活」。
  *
  * 唤醒锁 + 静音音频（见 [com.ziek.autoslide.LocationTracker]）主要防冻结、降低被杀概率；
- * 万一 MIUI/ColorOS 仍把进程整个清掉，靠这个周期任务把常驻前台服务（连带轨迹采集）重新拉起来。
+ * 万一 MIUI/ColorOS 仍把进程整个清掉，靠这个周期任务把轨迹前台服务（连带采集）重新拉起来。
  *
- * 局限说清楚：
- * - **安卓 12+（API 31）默认禁止从后台启动前台服务**，而 JobService 正是后台上下文。
- *   唯一稳妥的豁免是「应用已被加入电池优化白名单」——所以这一层必须配合用户放行电池优化才真正生效；
- *   起不来时（抛 ForegroundServiceStartNotAllowedException）静默跳过，等下一轮，绝不崩。
- * - **周期下限被系统卡在 15 分钟**，这是兜底而非主力：主力是让进程压根别被杀（前两层）。
+ * 与「两只脚」ImmortalJobService 对齐点：
+ * - 本 JobService 与 [TrackRecordService] 同在 `:trackrecord` 进程（Manifest android:process）；
+ *   进程被清后 JobScheduler 到点会重新创建该进程执行 onStartJob，再拉起前台服务。
+ * - 两只脚在 API 31+ 不再从 JobService 里直接拉前台服务（后台启动前台服务被系统禁止），
+ *   与本实现的处理一致：起不来时静默跳过，等下一轮，绝不崩。
+ * - 周期下限被系统卡在 15 分钟，这是兜底而非主力：主力是让进程压根别被杀（前两层）。
  *
  * 生命周期：采集一启动就在 [LocationTracker.start] 里排上（幂等）；某轮任务发现采集已关
  * （用户关开关 / 撤权限）就 [cancel] 掉自己，避免每 15 分钟空跑。
@@ -33,10 +34,10 @@ class TrackReviveJobService : JobService() {
                 cancel(this)
                 return false
             }
-            // 该采集、但前台服务没在跑 → 拉起来（StatusService.start 内部走 startForegroundService）
-            if (!StatusService.isForeground.value) {
-                LogX.i(TAG, "复活任务：采集应运行但前台服务不在，尝试拉起")
-                StatusService.start(this)
+            // 该采集、但轨迹前台服务没在跑 → 拉起来（TrackRecordService.start 内部走 startForegroundService）
+            if (!TrackRecordService.isForeground.value) {
+                LogX.i(TAG, "复活任务：采集应运行但轨迹前台服务不在，尝试拉起")
+                TrackRecordService.start(this)
             }
         } catch (e: Exception) {
             // 安卓 12+ 未豁免电池优化时从后台起前台服务会抛，属预期；跳过等下轮
