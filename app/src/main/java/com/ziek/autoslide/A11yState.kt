@@ -20,14 +20,18 @@ package com.ziek.autoslide
 import android.content.ComponentName
 import android.content.Context
 import android.database.ContentObserver
+import android.os.PowerManager
 import android.provider.Settings
 import com.google.android.accessibility.selecttospeak.SelectToSpeakService
 import com.ziek.autoslide.priv.PrivilegeGrant
+import com.ziek.autoslide.service.AutoSlideService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -45,6 +49,10 @@ object A11yState {
     /* 加回组件后等待系统完成绑定的时间（GKD: A11Y_AWAIT_START_TIME） */
     private const val A11Y_AWAIT_START_TIME = 2000L
 
+    /* 看门狗巡检间隔；连续探活失败多少次才判定「崩溃/僵尸态」（防亮屏瞬间/安全界面的误判） */
+    private const val WATCHDOG_INTERVAL_MS = 20_000L
+    private const val UNHEALTHY_CONFIRM = 2
+
     private var appContext: Context? = null
 
     /* 对应 GKD 的 appScope */
@@ -55,6 +63,10 @@ object A11yState {
 
     /* 对应 GKD 的 syncStateMutex */
     private val syncStateMutex = Mutex()
+
+    /* 崩溃看门狗：巡检协程 + 连续探活失败计数 */
+    private var watchdogJob: Job? = null
+    private var unhealthyCount = 0
 
     /**
      * 无障碍服务是否在运行。
@@ -94,6 +106,7 @@ object A11yState {
             )
             servicesObserver = observer
         }.onFailure { LogX.w(TAG, "register a11y observer failed", it) }
+        startWatchdog()
     }
 
     /* 持有强引用，避免被回收后系统静默停止回调 */
@@ -209,6 +222,80 @@ object A11yState {
         } else {
             LogX.i(TAG, "a11y service restarted, broken=$a11yBroken")
         }
+    }
+
+    // ==================== 崩溃看门狗（补 GKD 没有的「僵尸态」自愈）====================
+
+    /**
+     * 亮屏周期看门狗：修复「无障碍已崩溃但 [a11yRunningFlow] 仍为 true」的僵尸态。
+     *
+     * 背景：进程崩过一次后，系统会把无障碍服务记进 crashed 列表，服务实例还会被重启（onCreate 又跑、
+     * a11yRunningFlow 置 true），但它 rootInActiveWindow 恒 null、收不到事件、下发不了手势——静默空转
+     * （见 FloatingWindowService.safeUpdateViewLayout 注释）。此时 [fixA11yService] 的
+     * `if (a11yRunningFlow.value) return` 会误以为一切正常而跳过，常规自愈救不回来。
+     *
+     * 这里用 [AutoSlideService.looksHealthy] 做真实探活，连续失败即绕过运行标记强制重开。
+     * 在 [init]（Application.onCreate）里启动；幂等。
+     */
+    fun startWatchdog() {
+        val app = appContext ?: return
+        if (watchdogJob?.isActive == true) return
+        watchdogJob = scope.launch {
+            while (isActive) {
+                delay(WATCHDOG_INTERVAL_MS)
+                runCatching { watchdogTick(app) }
+                    .onFailure { LogX.w(TAG, "watchdog tick failed", it) }
+            }
+        }
+    }
+
+    private suspend fun watchdogTick(app: Context) {
+        // 用户没要开、或没有改写权限 → 不管（也重置计数）
+        if (!isServiceDesired() || !app.hasWriteSecureSettingsPermission()) {
+            unhealthyCount = 0
+            return
+        }
+        // 只在亮屏时判定：熄屏时 rootInActiveWindow 本就可能为 null、也没有事件，避免误判误重开
+        val pm = app.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        if (pm?.isInteractive != true) {
+            unhealthyCount = 0
+            return
+        }
+        // 被 ROM 移出启用列表 → 立即加回（这条 fixA11yService 也能处理，但它会被运行标记挡住，故直接强制重绑）
+        if (!getSecureA11yServices().contains(a11yComponent)) {
+            unhealthyCount = 0
+            forceRebindA11yService()
+            return
+        }
+        // 在启用列表里：探活。能拿到窗口根 / 近期有事件 = 正常
+        if (AutoSlideService.looksHealthy()) {
+            unhealthyCount = 0
+            return
+        }
+        unhealthyCount++
+        LogX.w(TAG, "无障碍探活失败 $unhealthyCount/$UNHEALTHY_CONFIRM（亮屏、仍在启用列表 → 疑似僵尸态）")
+        if (unhealthyCount >= UNHEALTHY_CONFIRM) {
+            unhealthyCount = 0
+            forceRebindA11yService()
+        }
+    }
+
+    /**
+     * 强制重开无障碍：**不看 [a11yRunningFlow]**（僵尸态下它恒为 true），直接摘除+加回强制系统重绑。
+     * 专治「已崩溃但运行标记仍为 true」——常规 [fixA11yService] 对这种态会直接 return。
+     */
+    private fun forceRebindA11yService() = modifyA11yRun {
+        val app = appContext ?: return@modifyA11yRun
+        if (!app.hasWriteSecureSettingsPermission()) return@modifyA11yRun
+        LogX.w(TAG, "无障碍疑似崩溃（僵尸态），强制重开")
+        val names = getSecureA11yServices()
+        names.remove(a11yComponent)
+        putSecureA11yServices(names)
+        delay(A11Y_AWAIT_FIX_TIME)
+        names.add(a11yComponent)
+        putSecureA11yServices(names)
+        delay(A11Y_AWAIT_START_TIME)
+        LogX.i(TAG, "无障碍强制重开完成，healthy=${AutoSlideService.looksHealthy()}")
     }
 
     // ==================== 系统设置读写 ====================

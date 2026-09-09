@@ -389,6 +389,28 @@ private const val SPEED_CURVE_FACTOR = 0.7
          */
         @JvmStatic
         fun getInstance(): AutoSlideService? = instance
+
+        /* 无障碍事件心跳：收到任一事件即刷新（elapsedRealtime）。僵尸态收不到事件，此值一直变旧。 */
+        @Volatile
+        private var lastEventAt = 0L
+
+        /* 判「近期收到过事件」的时间窗：亮屏时系统 UI（状态栏时钟等）至少每分钟发一次内容变化事件 */
+        private const val HEALTH_EVENT_WINDOW_MS = 90_000L
+
+        /**
+         * 探活：无障碍连接正常时，能拿到活动窗口根节点、或近期收到过事件；
+         * 进程崩过被系统记入 crashed 列表后重启的「僵尸实例」两者皆不满足
+         * （rootInActiveWindow 恒 null、收不到事件，见 FloatingWindowService.safeUpdateViewLayout 注释）。
+         * 供 [com.ziek.autoslide.A11yState] 的看门狗判断是否需要强制重开。
+         */
+        @JvmStatic
+        fun looksHealthy(): Boolean {
+            val inst = instance ?: return false
+            val rootOk = runCatching { inst.rootInActiveWindow != null }.getOrDefault(false)
+            val eventFresh = lastEventAt != 0L &&
+                SystemClock.elapsedRealtime() - lastEventAt < HEALTH_EVENT_WINDOW_MS
+            return rootOk || eventFresh
+        }
     }
 
     /**
@@ -812,6 +834,8 @@ private const val SPEED_CURVE_FACTOR = 0.7
      * 离开抖音时重置会话标记；进入抖音时尝试触发连播检测（内部有冷却和去重，不会频繁执行）。
      */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // 心跳：收到任一事件即证明无障碍连接正常（供 A11yState 看门狗探活；僵尸态收不到事件）
+        lastEventAt = SystemClock.elapsedRealtime()
         if (automationPaused) return
         val packageName = event?.packageName?.toString() ?: return
         // 先记住当前 Activity，再判断连播——顺序不能反，否则用的是上一个页面的名字
