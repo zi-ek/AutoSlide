@@ -17,6 +17,19 @@ const statsStore = new JsonStore(STATS_FILE, () => ({
 }));
 
 /**
+ * 把 nowCN() 的本地化时间串解析成时间戳用于比较/排序。
+ *
+ * lastSeen / firstInstall 存的是 "2026/9/12 03:15:28" 这种**月份日期不补零**的字符串。
+ * 排序绝不能按字符串比较——"2026/9/9…" 会比 "2026/9/12…" 还"大"（逐字符到 '9' > '1'），
+ * 于是 9 号的设备被排到 12 号前面，看板首页就像"停在 9 号"。解析成时间戳再比就对了。
+ * 解析失败返回 0（排最后）。
+ */
+function tsOf(s) {
+  const t = Date.parse(String(s || '').replace(/-/g, '/'));
+  return Number.isFinite(t) ? t : 0;
+}
+
+/**
  * 设备去重：同一设备 ID 视为同一台设备（ANDROID_ID 固定签名下保持稳定）。
  * 只按 deviceId 合并，绝不按品牌/型号合并。
  */
@@ -34,15 +47,17 @@ function dedupeDevices(stats) {
     const installs = (existing.installs || 0) + (d.installs || 0);
     const prefer = (d.installs || 0) > (existing.installs || 0) ? d : existing;
     const merged = { ...prefer, installs };
-    if (String(d.firstInstall || '').localeCompare(String(existing.firstInstall || '')) < 0) {
+    const dFirst = tsOf(d.firstInstall);
+    const eFirst = tsOf(existing.firstInstall);
+    if (dFirst && (!eFirst || dFirst < eFirst)) {
       merged.firstInstall = d.firstInstall;
     }
-    if (String(d.lastSeen || '').localeCompare(String(existing.lastSeen || '')) > 0) {
+    if (tsOf(d.lastSeen) > tsOf(existing.lastSeen)) {
       merged.lastSeen = d.lastSeen;
     }
     map.set(idKey, merged);
   }
-  stats.devices = [...map.values()].sort((a, b) => String(b.lastSeen).localeCompare(String(a.lastSeen)));
+  stats.devices = [...map.values()].sort((a, b) => tsOf(b.lastSeen) - tsOf(a.lastSeen));
   stats.unique_devices = stats.devices.length;
   return stats;
 }
@@ -129,7 +144,7 @@ async function handleReport(req, res) {
         incoming.firstInstall = now;
         devices.push(incoming);
       }
-      devices.sort((a, b) => String(b.lastSeen).localeCompare(String(a.lastSeen)));
+      devices.sort((a, b) => tsOf(b.lastSeen) - tsOf(a.lastSeen));
       stats.devices = devices;
       stats.unique_devices = devices.length;
     }
