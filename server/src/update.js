@@ -261,7 +261,23 @@ function appsPageHtml(apps) {
     '.dl:active{opacity:.85}.dl-name{font-size:22px;font-weight:700}',
     '.dl-sz{font-size:13px;opacity:.9}',
     '.dl-empty{background:#e5e5ea;color:#8e8e93}',
+    // 微信内打开的引导遮罩：微信禁止直接下载 apk，需引导到系统浏览器
+    '#wxmask{display:none;position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.82);color:#fff}',
+    '.wx-arrow{position:absolute;top:4px;right:20px;font-size:64px;line-height:1}',
+    '.wx-tip{padding:118px 30px 0;text-align:center;line-height:1.95;font-size:17px}',
+    '.wx-title{font-size:19px;font-weight:700;margin:0 0 12px}',
+    '.wx-tip b{color:#5ac8fa}',
+    '.wx-dismiss{color:#aaa;font-size:13px;margin-top:28px}',
   ].join('');
+  const wxMask =
+    '<div id="wxmask"><div class="wx-arrow">↗</div>' +
+    '<div class="wx-tip"><p class="wx-title">微信里无法直接下载安装包</p>' +
+    '<p>请点击右上角 <b>···</b> 按钮<br>选择「<b>在浏览器打开</b>」后再下载安装</p>' +
+    '<p class="wx-dismiss">（点任意处关闭本提示）</p></div></div>';
+  const wxScript =
+    '<script>(function(){var m=document.getElementById("wxmask");' +
+    'if(/micromessenger/i.test(navigator.userAgent||"")){m.style.display="block";}' +
+    'm.addEventListener("click",function(){m.style.display="none";});})();</script>';
   return (
     '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
@@ -269,7 +285,7 @@ function appsPageHtml(apps) {
     '<body><div class="card"><h1>应用下载</h1>' +
     '<p class="sub">点击下方按钮下载对应安装包</p>' +
     button('apk1', '应用一') + button('apk2', '应用二') +
-    '</div></body></html>'
+    '</div>' + wxMask + wxScript + '</body></html>'
   );
 }
 
