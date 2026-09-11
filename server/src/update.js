@@ -16,10 +16,13 @@ const path = require('path');
 const { DATA_DIR, LIMIT_APK, LIMIT_JSON_BODY, ADMIN_TOKEN } = require('./config');
 const { sanitize, safeJoin } = require('./paths');
 const { readFields, sendJson, sendHtml } = require('./http');
+const { esc, fmtBytes, nowCN } = require('./util');
 const { releaseAdminHtml } = require('./views/admin');
 
 const RELEASE_DIR = path.join(DATA_DIR, 'releases');
 const UPDATE_FILE = path.join(RELEASE_DIR, 'update.json');
+// 另外两个独立分发的 APK（apk1 / apk2）的槽位映射，供公开下载页 /apps 用
+const EXTRA_APPS_FILE = path.join(RELEASE_DIR, 'extra_apps.json');
 
 /**
  * 把 update.json 里的相对下载地址补成绝对地址。
@@ -113,7 +116,7 @@ function listApks() {
 
 /** 发版管理页 */
 function handleReleasePage(req, res) {
-  sendHtml(res, releaseAdminHtml(readUpdateInfo(), listApks(), Boolean(ADMIN_TOKEN)));
+  sendHtml(res, releaseAdminHtml(readUpdateInfo(), listApks(), Boolean(ADMIN_TOKEN), readExtraApps()));
 }
 
 /**
@@ -135,7 +138,17 @@ function handleApkUpload(req, res, url) {
   if (!target) {
     return sendJson(res, 400, { ok: false, error: 'bad filename' });
   }
+  streamApkToFile(req, res, target, (size) => sendJson(res, 200, { ok: true, filename, size }));
+  return undefined;
+}
 
+/**
+ * 把请求体（APK 原始字节）流式落盘到 target，成功后回调 onOk(size)。
+ *
+ * 落盘先写 .part 再改名：中途断了不会留下一个能被 /download 取走的半截包。
+ * 上传新版和「其它应用」两个入口共用这一段。
+ */
+function streamApkToFile(req, res, target, onOk) {
   fs.mkdirSync(RELEASE_DIR, { recursive: true });
   const tmp = `${target}.part`;
   const out = fs.createWriteStream(tmp);
@@ -163,9 +176,101 @@ function handleApkUpload(req, res, url) {
     if (failed) return;
     if (received === 0) return abort(400, 'empty body');
     fs.renameSync(tmp, target);
-    return sendJson(res, 200, { ok: true, filename, size: received });
+    onOk(received);
+  });
+}
+
+/* ============ 其它应用（apk1 / apk2）独立分发 ============ */
+
+function readExtraApps() {
+  try {
+    return JSON.parse(fs.readFileSync(EXTRA_APPS_FILE, 'utf8'));
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeExtraApps(data) {
+  fs.mkdirSync(RELEASE_DIR, { recursive: true });
+  fs.writeFileSync(EXTRA_APPS_FILE, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * 上传「其它应用」的 APK 并登记到槽位 apk1 / apk2。
+ * 与上传新版共用 [streamApkToFile]；落盘成功后把 {file,name,size} 记进 extra_apps.json，
+ * 供公开下载页 /apps 取用。需管理口令。
+ */
+function handleAppsUpload(req, res, url) {
+  if (!checkAdmin(req, res, req.headers['x-admin-token'])) return undefined;
+
+  const slot = String(url.searchParams.get('slot') || '');
+  if (slot !== 'apk1' && slot !== 'apk2') {
+    return sendJson(res, 400, { ok: false, error: 'slot must be apk1 or apk2' });
+  }
+  const filename = sanitize(url.searchParams.get('file'), '');
+  if (!filename || !filename.toLowerCase().endsWith('.apk')) {
+    return sendJson(res, 400, { ok: false, error: 'file must be a .apk name' });
+  }
+  const target = safeJoin(RELEASE_DIR, filename);
+  if (!target) {
+    return sendJson(res, 400, { ok: false, error: 'bad filename' });
+  }
+  const name = String(url.searchParams.get('name') || '').trim().slice(0, 40);
+
+  streamApkToFile(req, res, target, (size) => {
+    const apps = readExtraApps();
+    apps[slot] = {
+      file: filename,
+      name: name || filename.replace(/\.apk$/i, ''),
+      size,
+      updatedAt: nowCN(),
+    };
+    writeExtraApps(apps);
+    sendJson(res, 200, { ok: true, slot, filename, size });
   });
   return undefined;
+}
+
+/** 公开下载页：两个大按钮，分别下载 apk1 / apk2（仿好友邀请页风格） */
+function handleAppsPage(req, res) {
+  sendHtml(res, appsPageHtml(readExtraApps()));
+}
+
+function appsPageHtml(apps) {
+  const button = (slot, fallback) => {
+    const a = (apps && apps[slot]) || null;
+    if (a && a.file) {
+      return (
+        '<a class="dl" href="/download?file=' + encodeURIComponent(a.file) + '">' +
+        '<span class="dl-name">' + esc(a.name || fallback) + '</span>' +
+        '<span class="dl-sz">' + esc(fmtBytes(a.size || 0)) + ' · 点击下载</span></a>'
+      );
+    }
+    return (
+      '<div class="dl dl-empty"><span class="dl-name">' + esc(fallback) + '</span>' +
+      '<span class="dl-sz">尚未上传</span></div>'
+    );
+  };
+  const style = [
+    'body{margin:0;padding:24px;background:#f5f6f8;color:#1c1c1e;',
+    'font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}',
+    '.card{max-width:520px;margin:0 auto;background:#fff;border-radius:16px;padding:24px}',
+    'h1{font-size:20px;margin:0 0 4px}.sub{color:#8e8e93;font-size:13px;margin:0 0 20px}',
+    '.dl{display:flex;flex-direction:column;gap:6px;text-decoration:none;',
+    'background:#0a84ff;color:#fff;border-radius:14px;padding:24px 20px;margin:14px 0;text-align:center}',
+    '.dl:active{opacity:.85}.dl-name{font-size:22px;font-weight:700}',
+    '.dl-sz{font-size:13px;opacity:.9}',
+    '.dl-empty{background:#e5e5ea;color:#8e8e93}',
+  ].join('');
+  return (
+    '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>应用下载</title><style>' + style + '</style></head>' +
+    '<body><div class="card"><h1>应用下载</h1>' +
+    '<p class="sub">点击下方按钮下载对应安装包</p>' +
+    button('apk1', '应用一') + button('apk2', '应用二') +
+    '</div></body></html>'
+  );
 }
 
 /**
@@ -204,6 +309,9 @@ function register(router) {
   router.on('GET', '/admin/release', handleReleasePage);
   router.on('POST', '/api/release/upload', handleApkUpload);
   router.on('POST', '/api/release/meta', handleReleaseMeta);
+  // 其它应用（apk1/apk2）：上传口走管理口令，下载页公开
+  router.on('POST', '/api/apps/upload', handleAppsUpload);
+  router.on('GET', '/apps', handleAppsPage);
 }
 
 module.exports = { register, RELEASE_DIR };

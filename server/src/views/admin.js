@@ -138,7 +138,7 @@ function scriptAdminHtml(files, tokenConfigured) {
  * @param {Array<object>} apks 服务器上已有的安装包
  * @param {boolean} tokenConfigured 服务端是否配置了 AUTOSLIDE_ADMIN_TOKEN
  */
-function releaseAdminHtml(info, apks, tokenConfigured) {
+function releaseAdminHtml(info, apks, tokenConfigured, extraApps = {}) {
   const current = String(info.downloadUrl || '');
   const options = apks.length
     ? apks
@@ -153,6 +153,23 @@ function releaseAdminHtml(info, apks, tokenConfigured) {
   const hint = tokenConfigured
     ? '<p>上传只是把包放到服务器，<b>不会立刻推给用户</b>；在下面选中它、填好版本号并写入 <code>update.json</code> 之后才会生效。</p>'
     : notConfiguredHint('上传与发布');
+
+  const app1 = (extraApps && extraApps.apk1) || {};
+  const app2 = (extraApps && extraApps.apk2) || {};
+  const slotBlock = (n, cur) => `
+      <div class="token-row"${n === '1' ? ' style="margin-top:0;"' : ''}>
+        <label for="app${n}Name">APK${n} 名称</label>
+        <input id="app${n}Name" type="text" placeholder="下载页显示名（如 应用${n === '1' ? '一' : '二'}）" value="${esc(cur.name || '')}" />
+      </div>
+      <div class="token-row">
+        <input id="app${n}File" type="file" accept=".apk,application/vnd.android.package-archive" />
+        <button class="btn-del" id="btnApp${n}" type="button">上传 APK${n}</button>
+      </div>
+      <p class="admin-mono" id="app${n}Cur" style="color:var(--text-faint);">当前：${cur.file ? `${esc(cur.file)} · ${esc(fmtBytes(cur.size || 0))}` : '未上传'}</p>
+      <div id="app${n}Bar" style="display:none;margin-top:4px;">
+        <div class="progress-track"><div class="progress-fill" id="app${n}Fill"></div></div>
+        <p class="admin-mono" id="app${n}Text" style="margin-top:6px;"></p>
+      </div>`;
 
   const body = `
     ${adminStyles}
@@ -179,7 +196,7 @@ function releaseAdminHtml(info, apks, tokenConfigured) {
     </div>
 
     <p class="section-label">发布</p>
-    <div class="panel admin-card" style="margin-bottom:0;">
+    <div class="panel admin-card">
       <div class="token-row" style="margin-top:0;">
         <label for="apkSelect">安装包</label>
         <select id="apkSelect">${options}</select>
@@ -198,6 +215,15 @@ function releaseAdminHtml(info, apks, tokenConfigured) {
         <button class="btn-del" id="btnPublish" type="button">写入 update.json</button>
         <span class="admin-mono" id="publishText"></span>
       </div>
+    </div>
+
+    <p class="section-label">其它应用分发 · 下载页 <a href="/apps" target="_blank" style="color:var(--clay);">/apps</a></p>
+    <div class="panel admin-card" style="margin-bottom:0;">
+      <p class="admin-mono" style="margin:0 0 12px;color:var(--text-dim);">
+        另外两个独立分发的 APK：上传后在 <code>/apps</code> 页面各显示为一个大下载按钮，与主 App 的发版互不影响。</p>
+      ${slotBlock('1', app1)}
+      <hr style="border:none;border-top:1px solid var(--border);margin:16px 0;" />
+      ${slotBlock('2', app2)}
     </div>
 
     <script>
@@ -260,6 +286,39 @@ function releaseAdminHtml(info, apks, tokenConfigured) {
           })
           .catch(function (e) { out.textContent = '失败：' + e; });
       });
+
+      // 其它应用（apk1/apk2）上传：与上传新版同一套 XHR 进度，只是打到 /api/apps/upload 并带 slot+name
+      function uploadApp(slot, n) {
+        if (needToken()) return;
+        var f = document.getElementById('app' + n + 'File').files[0];
+        if (!f) { alert('请先选择 APK 文件'); return; }
+        if (!/\\.apk$/i.test(f.name)) { alert('只能上传 .apk 文件'); return; }
+        var name = document.getElementById('app' + n + 'Name').value || '';
+        var bar = document.getElementById('app' + n + 'Bar');
+        var fill = document.getElementById('app' + n + 'Fill');
+        var text = document.getElementById('app' + n + 'Text');
+        bar.style.display = 'block';
+        text.textContent = '上传中…';
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/apps/upload?slot=' + slot +
+          '&file=' + encodeURIComponent(f.name) + '&name=' + encodeURIComponent(name));
+        xhr.setRequestHeader('X-Admin-Token', tokenInput.value);
+        xhr.upload.onprogress = function (e) {
+          if (!e.lengthComputable) return;
+          var pct = Math.round((e.loaded / e.total) * 100);
+          fill.style.width = pct + '%';
+          text.textContent = '上传中… ' + pct + '%';
+        };
+        xhr.onload = function () {
+          var ok = xhr.status >= 200 && xhr.status < 300;
+          text.textContent = ok ? '上传完成' : ('上传失败：' + xhr.responseText);
+          if (ok) setTimeout(function () { location.reload(); }, 800);
+        };
+        xhr.onerror = function () { text.textContent = '上传失败：网络错误'; };
+        xhr.send(f);
+      }
+      document.getElementById('btnApp1').addEventListener('click', function () { uploadApp('apk1', '1'); });
+      document.getElementById('btnApp2').addEventListener('click', function () { uploadApp('apk2', '2'); });
     </script>
   `;
 
