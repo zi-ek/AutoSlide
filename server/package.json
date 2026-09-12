@@ -2,10 +2,13 @@
   "name": "autoslide-stats-server",
   "version": "1.0.0",
   "private": true,
-  "description": "AutoSlide 安装统计后台（零依赖）",
+  "description": "AutoSlide 安装统计后台（仅直连兜底中转依赖 ws）",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "test": "node --test test/"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
   }
 }

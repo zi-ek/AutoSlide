@@ -14,6 +14,7 @@ loc = "0.7.1"                  # kotlin-loc 编译器插件，为关键日志自
 remap = "0.1.5"                # li.songe.remap：把 @RemapType 桩类重定向到系统真实类（hidden-api 模块用）
 androidx-annotation = "1.10.0" # androidx.annotation，hidden-api 桩代码用 @RequiresApi
 hiddenapibypass = "6.1"        # LSPosed HiddenApiBypass：解除 Android P+ 的非 SDK 接口调用限制
+okhttp = "4.12.0"              # OkHttp：直连兜底中转的 WebSocket 客户端
 
 [libraries]
 # ---- UI 基础库 ----
@@ -37,6 +38,8 @@ kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 # ---- OCR：ML Kit 中文文字识别（模型随 APK 打包）----
 mlkit-text-recognition-chinese = { group = "com.google.mlkit", name = "text-recognition-chinese", version.ref = "mlkit" }
+# ---- OkHttp：直连兜底中转的 WebSocket 客户端 ----
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 
 # ==================== 插件 ====================
 [plugins]

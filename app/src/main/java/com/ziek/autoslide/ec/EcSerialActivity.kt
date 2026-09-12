@@ -36,6 +36,8 @@ class EcSerialActivity : Activity() {
             // 用户刚部署完却在服务器上查不到这台设备，会以为整件事没生效
             EcNetworkWatcher.start(applicationContext)
             EcNetworkWatcher.reportNow("收到序列号")
+            // 序列号到手后，直连兜底的中转 agent 也一并启用
+            RelayAgent.start(applicationContext)
             Toast.makeText(this, R.string.ec_serial_saved, Toast.LENGTH_LONG).show()
         } else {
             LogX.w(EcRegistry.TAG, "收到的序列号无效，未启用地址上报")

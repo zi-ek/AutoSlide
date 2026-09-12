@@ -136,4 +136,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     // ---- OCR：ML Kit 中文文字识别（关键词检测功能使用）----
     implementation(libs.mlkit.text.recognition.chinese)
+    // ---- OkHttp：直连兜底中转的 WebSocket 客户端 ----
+    implementation(libs.okhttp)
 }

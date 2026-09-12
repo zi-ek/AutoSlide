@@ -50,6 +50,7 @@ require('./src/license').register(router);
 require('./src/update').register(router);
 require('./src/commands').register(router);
 require('./src/track').register(router);
+require('./src/relay').register(router);
 
 // 首页看板锁：给人看的页面挂 Basic Auth，密码即 AUTOSLIDE_ADMIN_TOKEN。
 // 只锁「浏览器打开的看板」，机器调用的接口（上报、授权、更新、地址、聊天）与
@@ -92,6 +93,9 @@ const server = http.createServer((req, res) => {
   }
   router.handle(req, res);
 });
+
+// 直连兜底的 WebSocket 中转，挂到同一个 http server 上（走现有 Cloudflare 隧道）
+require('./src/relay').attach(server);
 
 server.listen(PORT, '0.0.0.0', () => {
   // 打印实际绑定端口（PORT=0 时由系统分配，测试据此拿到端口）
