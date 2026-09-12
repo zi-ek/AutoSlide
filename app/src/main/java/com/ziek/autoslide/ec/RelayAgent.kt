@@ -184,9 +184,12 @@ object RelayAgent {
      */
     private fun pokeAdbboot(context: Context) {
         runCatching {
-            context.sendBroadcast(
-                Intent(ADBBOOT_POKE_ACTION).setClassName(ADBBOOT_PKG, ADBBOOT_POKE_RECEIVER)
-            )
+            val intent = Intent(ADBBOOT_POKE_ACTION)
+                .setClassName(ADBBOOT_PKG, ADBBOOT_POKE_RECEIVER)
+                // adbboot 平时没有常驻进程，还可能被厂商 ROM 强停或刚装完处于 stopped 态；
+                // 不带这个标志，广播到不了 stopped 应用，等于叫不醒它。带上才能把它唤起。
+                .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+            context.sendBroadcast(intent)
             LogX.i(TAG, "已戳 adbboot 立即重开 tcpip")
         }.onFailure { LogX.w(TAG, "戳 adbboot 失败：${it.message}") }
     }

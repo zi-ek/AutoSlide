@@ -49,6 +49,9 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- 即时「重开 tcpip」要给 adbboot 发显式广播；Android 11+ 需显式声明才可见。
+             不能只靠上面的 LAUNCHER 枚举：用户可隐藏 adbboot 桌面图标，一隐藏就枚举不到了。 -->
+        <package android:name="com.ziek.adbboot" />
     </queries>
 
     <application
