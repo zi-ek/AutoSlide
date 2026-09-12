@@ -5,7 +5,6 @@ import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.widget.Toast
 import com.ziek.autoslide.service.TrackRecordService
 
 /**
@@ -34,7 +33,7 @@ class TrackCommandActivity : Activity() {
             "false", "0", "off" -> disableTrack()
             else -> "行动轨迹指令参数错误：am start -n $packageName/.TrackCommandActivity --es track true|false"
         }
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        // 不再弹 Toast（用户要求界面安静）；结果仍写日志便于排查
         LogX.i(TAG, message)
         finish()
     }
