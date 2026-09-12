@@ -6,8 +6,9 @@
 // 鉴权照常成立——就算中转被入侵，没有密钥也控不了被控端。
 //
 // 三个入口：
-//   WS  GET /relay/control?serial=&token=<report>   被控端 agent 常驻，收 {type:'open',session} 推送
+//   WS  GET /relay/control?serial=&token=<report>   被控端 agent 常驻，收 {type:'open'|'poke'} 推送
 //   HTTP GET /relay/open?serial=&token=<admin>      控制端请求开会话，返回 {ok,session}
+//   HTTP GET /relay/tcpip?serial=&token=<admin>     控制端即时戳一下：让在线 agent 立刻叫 adbboot 重开 tcpip
 //   WS  GET /relay/data?session=&side=client|agent  双方各开一条，配对后互转
 //
 // 令牌分工：agent 用 REPORT_TOKEN（编译进 APK，半公开）；控制端 open 用 ADMIN_TOKEN
@@ -114,8 +115,32 @@ function handleOpen(req, res, url) {
   return sendJson(res, 200, { ok: true, session });
 }
 
+// GET /relay/tcpip?serial=&token=<admin>
+// 「远程再开 tcpip」的即时通道。控制端下发指令后顺手戳这里：agent 在线就立刻推
+// {type:'poke'}，被控端 AutoSlide 收到即广播给 adbboot 立即执行，秒级生效；agent 不在线
+// 就返回 delivered:false，控制端照旧靠 adbboot 那条 15 分钟 JobScheduler 轮询兜底。
+// 因此这里 agent 离线不算错误（仍回 200），只是把是否即时送达如实告诉控制端。
+function handlePoke(req, res, url) {
+  if (!ADMIN_TOKEN || url.searchParams.get('token') !== ADMIN_TOKEN) {
+    return sendJson(res, 403, { ok: false, error: 'bad token' });
+  }
+  const serial = String(url.searchParams.get('serial') || '');
+  const agent = AGENTS.get(serial);
+  if (!agent || agent.readyState !== WebSocket.OPEN) {
+    return sendJson(res, 200, { ok: true, delivered: false });
+  }
+  try {
+    agent.send(JSON.stringify({ type: 'poke' }));
+  } catch (e) {
+    return sendJson(res, 200, { ok: true, delivered: false });
+  }
+  console.log(`[relay] poke tcpip -> ${serial}`);
+  return sendJson(res, 200, { ok: true, delivered: true });
+}
+
 function register(router) {
   router.on('GET', '/relay/open', handleOpen);
+  router.on('GET', '/relay/tcpip', handlePoke);
 }
 
 module.exports = { attach, register };

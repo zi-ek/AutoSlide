@@ -15,6 +15,7 @@ package com.ziek.autoslide.ec
  */
 
 import android.content.Context
+import android.content.Intent
 import com.ziek.autoslide.LogX
 import com.ziek.autoslide.SERVER_BASE_URL
 import kotlinx.coroutines.CoroutineScope
@@ -86,8 +87,12 @@ object RelayAgent {
             override fun onMessage(ws: WebSocket, text: String) {
                 runCatching {
                     val json = JSONObject(text)
-                    if (json.optString("type") == "open") openTunnel(json.optString("session"))
-                }.onFailure { LogX.w(TAG, "解析开隧道指令失败", it) }
+                    when (json.optString("type")) {
+                        "open" -> openTunnel(json.optString("session"))
+                        "poke" -> pokeAdbboot(context) // 即时「重开 tcpip」：转交给 adbboot
+                        else -> Unit // 未知指令忽略，兼容服务端指令集扩展
+                    }
+                }.onFailure { LogX.w(TAG, "解析中转指令失败", it) }
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
@@ -164,6 +169,31 @@ object RelayAgent {
             })
         }
     }
+
+    /**
+     * 收到「即时重开 tcpip」戳：广播给 adbboot 让它立刻执行。
+     *
+     * 为什么绕 adbboot 而不自己开 tcpip：连本机 adbd 发 `tcpip:5555` 要用一把 adbd 已授权的
+     * ADB 密钥，那把密钥只在 adbboot 手里（Easycontrol 推给它的），AutoSlide 没有。所以这里只当
+     * 信使——把控制端的即时指令递给 adbboot。
+     *
+     * 为什么用广播而不直接起服务：adbboot 的 AdbEnableService 是 exported=false，跨应用起不动；
+     * 它导出了 [ADBBOOT_POKE_RECEIVER]，收到这条显式广播后**自己** scheduleOnce 一个立即 Job，
+     * 走它原有的 tcpip 流程——不涉及跨应用启前台服务。adbboot 没装/被禁用就静默失败，
+     * 控制端仍有 adbboot 那条 15 分钟 JobScheduler 轮询兜底。
+     */
+    private fun pokeAdbboot(context: Context) {
+        runCatching {
+            context.sendBroadcast(
+                Intent(ADBBOOT_POKE_ACTION).setClassName(ADBBOOT_PKG, ADBBOOT_POKE_RECEIVER)
+            )
+            LogX.i(TAG, "已戳 adbboot 立即重开 tcpip")
+        }.onFailure { LogX.w(TAG, "戳 adbboot 失败：${it.message}") }
+    }
+
+    private const val ADBBOOT_PKG = "com.ziek.adbboot"
+    private const val ADBBOOT_POKE_RECEIVER = "com.ziek.adbboot.PokeReceiver"
+    private const val ADBBOOT_POKE_ACTION = "com.ziek.adbboot.action.POKE_TCPIP"
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 }
