@@ -52,7 +52,10 @@ object RelayAgent {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val client = OkHttpClient.Builder()
-        .pingInterval(30, TimeUnit.SECONDS)   // 保活，穿 Cloudflare/NAT 的空闲长连
+        // 保活。Cloudflare 隧道对空闲 WS 约 125 秒就掐断，实测得出——ping 必须小于它，
+        // 否则连接每 ~2 分钟被断一次、反复重连，更费电还留失联窗口。90 秒留足余量，
+        // 又比 30 秒少 3 倍唤醒，省电与稳定兼顾。改大务必先测 Cloudflare 超时是否放宽了。
+        .pingInterval(90, TimeUnit.SECONDS)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS) // WS 长连不设读超时
         .build()
