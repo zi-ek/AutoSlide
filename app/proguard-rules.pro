@@ -57,3 +57,14 @@
 # ML Kit OCR
 -keep class com.google.mlkit.vision.text.** { *; }
 -keep class com.google.mlkit.vision.common.** { *; }
+
+# OkHttp / okio：直连兜底中转的 RelayAgent WebSocket 客户端。OkHttp 自带 consumer 混淆规则，
+# 这里再显式补一遍 dontwarn，挡住 R8 因其可选平台依赖(Conscrypt/BouncyCastle/OpenJSSE)缺类而告警/失败。
+# RelayAgent 是 object，被 App.onCreate / EcSerialActivity 直接引用，属可达代码，R8 会保留，无需 keep。
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn javax.annotation.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-keepnames class okhttp3.internal.publicsuffix.PublicSuffixDatabase
