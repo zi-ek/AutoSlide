@@ -58,3 +58,7 @@
 ## 许可证
 
 本项目采用 [Apache License 2.0](LICENSE)
+
+## Easycontrol 联动迁移
+
+实时地址、中转及行动轨迹已移至 Easycontrol 的 adbboot 助手。AutoSlide 不再承担这些服务；升级保留一次性旧轨迹队列补传。详情见 [迁移说明](../Easycontrol-master/docs/adbboot-migration.md)。

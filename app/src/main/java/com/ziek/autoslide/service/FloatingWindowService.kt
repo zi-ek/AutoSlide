@@ -413,12 +413,19 @@ class FloatingWindowService : Service() {
             AutoSlideService.getInstance()?.stopSlide()
             stopSelf()
         }
-        // 关闭按钮⌈点击⌋事件绑定
-        // 收起按钮：把面板收成小圆球，不退出悬浮窗；
-        // 彻底关闭悬浮窗只由主界面的「关闭悬浮窗」按钮负责
-        rootView.findViewById<View>(R.id.floating_close_button).setOnClickListener {
+        // 收起按钮（底部右侧）：把面板收成小圆球，不退出悬浮窗
+        rootView.findViewById<View>(R.id.floating_collapse_button).setOnClickListener {
             AutoSlideService.getInstance()?.stopSlide()
             minimize()
+        }
+        // 关闭悬浮球按钮（第一行右侧）：彻底关掉悬浮球，语义与主界面的「关闭悬浮窗」按钮一致
+        // （见 MainActivity.setupStartButton）——先把「期望显示」记成 false，
+        // 这样进程被复活时不会再把悬浮球自动拉回来。
+        rootView.findViewById<View>(R.id.floating_close_button).setOnClickListener {
+            setFloatingDesired(false)
+            AutoSlideService.getInstance()?.stopSlide()
+            Toast.makeText(this, R.string.toast_floating_closed, Toast.LENGTH_SHORT).show()
+            stopSelf()
         }
         // 录制按钮：先弹命名窗口，输入名称后开始录制
         rootView.findViewById<View>(R.id.floating_record_button).setOnClickListener {

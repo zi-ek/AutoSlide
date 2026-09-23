@@ -3,20 +3,12 @@
     xmlns:tools="http://schemas.android.com/tools">
     <!--允许应用访问网络(主要用于检查更新)-->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- 读网络状态：监听网络变化（切 Wi-Fi / 掉到蜂窝）以便及时把本机地址报给 Easycontrol，
-         同时也让设备信息里的 IP 走「当前默认网络」而不是遍历全部网卡 -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 采集设备大致位置随统计上报：粗略走基站/WiFi 即可，精确用于有 GPS 缓存时提高精度。
          二者是「或」关系，用户只授其一也能定位。仅前台采集，不申请后台定位。 -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <!-- 行动轨迹：后台持续采集需要「始终允许」定位（用户须在系统设置里手动选），
-         以及从前台服务访问定位的 location 前台类型权限（安卓 14+） -->
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
-    <!-- 行动轨迹熄屏保活：采集期间持 CPU 唤醒锁 + 后台播静音音频，防止国产 ROM 熄屏冻结/清杀进程 -->
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- 行动轨迹复活：JobScheduler 周期任务被杀后拉起前台服务；setPersisted 需要此权限，重启后仍在 -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--允许安装APK-->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"
@@ -49,9 +41,7 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
-        <!-- 即时「重开 tcpip」要给 adbboot 发显式广播；Android 11+ 需显式声明才可见。
-             不能只靠上面的 LAUNCHER 枚举：用户可隐藏 adbboot 桌面图标，一隐藏就枚举不到了。 -->
-        <package android:name="com.ziek.adbboot" />
+
     </queries>
 
     <application
@@ -86,34 +76,7 @@
             android:name=".ImportSettingsActivity"
             android:exported="false"
             android:theme="@style/Theme.AutoSlide.Translucent" />
-
-        <!--
-          接收 Easycontrol 推来的设备序列号，开启网络变化时的地址上报。
-          必须导出，否则 Easycontrol 那边的 am start 调不到它；
-          导出不构成提权，外部最多写进来一个错的设备标识（见 EcSerialActivity 的说明）。
-        -->
-        <activity
-            android:name=".ec.EcSerialActivity"
-            android:excludeFromRecents="true"
-            android:exported="true"
-            android:noHistory="true"
-            android:taskAffinity=""
-            android:theme="@android:style/Theme.NoDisplay" />
-
-        <!--
-          接收 Easycontrol 的 ADB 指令，远程切换「行动轨迹」开关。
-          必须导出，否则 Easycontrol 那边的 am start 调不到它；
-          导出不构成提权，外部最多开关本机轨迹（见 TrackCommandActivity 的说明）。
-        -->
-        <activity
-            android:name=".TrackCommandActivity"
-            android:excludeFromRecents="true"
-            android:exported="true"
-            android:noHistory="true"
-            android:taskAffinity=""
-            android:theme="@android:style/Theme.NoDisplay" />
-
-        <service
+<service
             android:name="com.google.android.accessibility.selecttospeak.SelectToSpeakService"
             android:enabled="true"
             android:exported="false"
@@ -142,22 +105,7 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Display the running state of the application" />
         </service>
-        <!-- 行动轨迹记录前台服务（对齐两只脚 RecordService）：
-             独立进程 :trackrecord，location 前台类型，自带记录通知（距离/用时/点数），
-             进程被清后由 TrackReviveJobService 周期拉起 -->
-        <service
-            android:name=".service.TrackRecordService"
-            android:exported="false"
-            android:foregroundServiceType="location"
-            android:process=":trackrecord" />
-        <!-- 行动轨迹复活任务：与 TrackRecordService 同在 :trackrecord 进程；进程被国产 ROM 清杀后，
-             JobScheduler 到点重建该进程执行本任务，把轨迹前台服务（连带采集）拉回来 -->
-        <service
-            android:name=".service.TrackReviveJobService"
-            android:exported="false"
-            android:permission="android.permission.BIND_JOB_SERVICE"
-            android:process=":trackrecord" />
-        <!-- 快捷磁贴开关服务 -->
+<!-- 快捷磁贴开关服务 -->
         <service
             android:name=".service.AutoSlideTileService"
             android:label="@string/tile_label"
@@ -186,6 +134,10 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <service android:name=".LegacyMigrationJob" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE" />
+        <receiver android:name=".LegacyMigrationReceiver" android:exported="false">
+            <intent-filter><action android:name="android.intent.action.MY_PACKAGE_REPLACED" /></intent-filter>
+        </receiver>
     </application>
 
 </manifest>

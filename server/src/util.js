@@ -39,7 +39,7 @@ function sanitizeLocation(raw) {
   if (!Number.isFinite(lat) || lat < -90 || lat > 90) return null;
   if (!Number.isFinite(lon) || lon < -180 || lon > 180) return null;
 
-  const out = { lon, lat };
+  const out = { lat, lon };
 
   const acc = Number(raw.accuracy);
   if (Number.isFinite(acc) && acc >= 0) out.accuracy = acc;

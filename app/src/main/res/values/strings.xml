@@ -33,12 +33,15 @@
     <string name="desc_slide_left">向左滑动</string>
     <string name="desc_slide_right">向右滑动</string>
     <string name="desc_settings">设置</string>
-    <string name="desc_close">关闭</string>
+    <string name="desc_close">关闭悬浮球</string>
+    <string name="desc_collapse">收起悬浮窗</string>
     <string name="desc_expand">展开</string>
-    <!-- 悬浮窗底部三个按钮的文字标签（短，跟在图标下面） -->
+    <!-- 悬浮窗按钮的文字标签（短，跟在图标下面） -->
     <string name="label_play">回放</string>
-    <string name="label_close">收起</string>
+    <string name="label_close">关闭</string>
     <string name="label_record">录制</string>
+    <string name="label_collapse">收起</string>
+    <string name="toast_floating_closed">悬浮球已关闭</string>
     <string name="desc_pause_all">暂停所有自动功能</string>
     <string name="desc_resume_all">恢复所有自动功能</string>
     <string name="automation_paused">已暂停所有自动功能</string>
@@ -128,20 +131,7 @@
     <string name="status_service_switch">常驻通知开关</string>
     <string name="status_service_need_notification">需要通知权限才能显示常驻通知</string>
     <!--行动轨迹开关-->
-    <string name="track_title">行动轨迹</string>
-    <string name="track_subtitle">后台记录位置轨迹，需「始终允许」定位</string>
-    <string name="track_switch">行动轨迹开关</string>
-    <string name="track_need_location">需要定位权限才能记录行动轨迹</string>
-    <string name="track_bg_guide_title">开启行动轨迹</string>
-    <string name="track_bg_guide_message">行动轨迹需要在后台持续定位。请在系统设置里，把本应用的定位权限改成「始终允许」；否则息屏或切到后台就会停止记录。\n\n记录期间会常驻一条「记录」通知（显示距离/用时），用于息屏保活，不影响「常驻通知」开关。</string>
-    <string name="track_bg_guide_go">去设置</string>
-    <string name="track_bg_guide_cancel">取消</string>
     <!--行动轨迹记录前台服务的通知（对齐两只脚：记录通知实时显示 距离/用时/点数）-->
-    <string name="track_record_channel_name">行动轨迹记录</string>
-    <string name="track_record_channel_desc">记录行动轨迹期间常驻显示，息屏保活必需</string>
-    <string name="track_record_notify_title">滑屏距离</string>
-    <string name="track_record_notify_waiting">正在记录…</string>
-    <string name="track_record_notify_text">距离 %1$s · 用时 %2$s · %3$d 个点</string>
     <!--磁贴复活引导：被 force-stop 后系统不会自动拉起，磁贴绑定是唯一的复活入口-->
     <string name="add_tile">添加快捷磁贴</string>
     <string name="add_tile_unsupported">请在通知栏下拉两次，点右上角“编辑”图标（铅笔），把“自动滑动”磁贴拖入快捷开关区域。添加后，被系统清理时下拉通知栏即可快速复活。</string>
@@ -279,6 +269,4 @@
     <string name="license_blocked_toast">试用已结束，请在 App 内分享获取使用时长</string>
 
     <!-- Easycontrol 地址上报：由 Easycontrol 部署时 am start 推来序列号，见 ec/EcSerialActivity -->
-    <string name="ec_serial_saved">已接入 Easycontrol：网络变化时会自动上报本机地址</string>
-    <string name="ec_serial_invalid">Easycontrol 传来的设备标识无效，未开启地址上报</string>
 </resources>

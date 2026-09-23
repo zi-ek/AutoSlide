@@ -163,7 +163,6 @@ open class AutoSlideService : AccessibilityService() {
     private var douyinSessionDone = false // 本次进入抖音是否已执行过连播流程（离开抖音后重置）
     private var douyinAutoPlayCompleted = false // 已成功打开连播后不再工作，直到下次启动 App 才重置
     private var lastPushDialogDismissAt = 0L // 上次自动点「忽略」的时间（冷却，避免重复点击）
-    private var lastDebugDialogDismissAt = 0L // 上次自动处理调试授权弹窗的时间（冷却，避免重复处理）
     /* 关键词检测循环 */
     private val keywordCheckRunnable = Runnable { runKeywordCheck() }
     /* 定时滑动循环 */
@@ -231,6 +230,16 @@ private data class OcrLineInfo(
     val top: Float,
     val right: Float,
     val bottom: Float
+)
+
+/* 节点树扫描结果：命中的节点，外加两个诊断计数。
+   invisibleCandidates = 「看着像跳过按钮、却被可见性挡下」的节点数，用来区分检测延迟的两种原因：
+   为 0 说明跳过节点还没进树（广告 SDK 延迟插入），大于 0 说明节点已在树里、只是被判为不可见。 */
+private data class SkipScanResult(
+    val node: AccessibilityNodeInfo?,
+    val matchKind: String?,
+    val invisibleCandidates: Int,
+    val invisibleKind: String?
 )
 
 /* 整屏 OCR 快照：一次截图 + 识别供多个连续动作复用，避免系统截图频率限制 */
@@ -356,10 +365,6 @@ private const val SPEED_CURVE_FACTOR = 0.7
         private val PUSH_IGNORE_TEXTS = listOf("忽略", "取消")
         private const val PUSH_DIALOG_DISMISS_COOLDOWN_MS = 5_000L
         /* 调试授权弹窗：命中任一标题或特征后自动勾选未选中的「始终允许/一律允许」类复选框，再点「允许/确定」按钮。 */
-        private val DEBUG_DIALOG_TEXTS = listOf("无线调试", "USB 调试", "USB调试", "允许 USB 调试", "允许网络调试", "网络调试", "ADB 调试", "ADB调试")
-        private val DEBUG_CHECKBOX_TEXTS = listOf("始终允许", "一律允许")
-        private val DEBUG_CONFIRM_TEXTS = listOf("允许", "确定", "确认")
-        private const val DEBUG_DIALOG_DISMISS_COOLDOWN_MS = 2_000L
         /* 各应用的主界面 Activity：只有停在这里才执行自动连播。
            短剧播放页、直播间、评论页等子页面的长按菜单里没有连播开关，在那里长按只会误触。 */
         /* 各应用的主界面 Activity，只有停在这里才执行自动连播。
@@ -852,7 +857,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         // 自动处理「打开推送通知」弹窗：点一次「忽略」
         maybeDismissPushNotificationDialog()
         // 自动处理「调试授权」弹窗：自动勾选并点击「允许/确定」
-        maybeDismissDebugDialog(event.source)
+
         // 自动点击事件驱动：页面/内容变化时触发检查（复用系统已分发的无障碍事件，平时零轮询）
         if (packageName != this.packageName &&
             (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
@@ -1321,7 +1326,7 @@ private const val SPEED_CURVE_FACTOR = 0.7
         val targetText = autoplayTextFor(packageName)
         // 先处理可能存在的推送通知弹窗或调试授权弹窗，避免干扰后续手势
         maybeDismissPushNotificationDialog()
-        maybeDismissDebugDialog()
+
         // 1. 当前界面已能直接找到「自动连播」时，直接处理
         if (tryHandleAutoplaySwitch(targetText)) {
             finishDouyinAutoPlaySuccess(targetText)
@@ -1438,141 +1443,6 @@ private const val SPEED_CURVE_FACTOR = 0.7
         dispatchGesture(gesture, null, handler)
     }
 
-    /* 检测调试授权类弹窗（如无线调试/USB调试）：未勾选「始终允许/一律允许」时自动勾选，再点击「允许/确定」按钮 */
-    private fun maybeDismissDebugDialog(eventSource: AccessibilityNodeInfo? = null) {
-        if (automationPaused) return
-        val now = SystemClock.elapsedRealtime()
-        if (now - lastDebugDialogDismissAt < DEBUG_DIALOG_DISMISS_COOLDOWN_MS) {
-            return
-        }
-        val roots = getAllWindowRoots(eventSource)
-        if (roots.isEmpty()) return
-
-        for (root in roots) {
-            // 1. 判断当前窗口是否存在调试授权弹窗特征
-            val hasDialogText = DEBUG_DIALOG_TEXTS.any { keyword ->
-                val nodes = root.findAccessibilityNodeInfosByText(keyword)
-                nodes.any { node ->
-                    val text = node.text?.toString() ?: ""
-                    text.contains("调试") && (text.contains("允许") || text.contains("要允许") || text.contains("吗") || text.contains("USB") || text.contains("无线"))
-                }
-            }
-            val hasCheckboxText = DEBUG_CHECKBOX_TEXTS.any { keyword ->
-                root.findAccessibilityNodeInfosByText(keyword).isNotEmpty()
-            }
-
-            if (!hasDialogText && !hasCheckboxText) {
-                continue
-            }
-
-            // 2. 检查并勾选未选中的复选框（例如“在此网络上始终允许”、“一律允许使用这台计算机进行调试”）
-            ensureDebugCheckboxChecked(root)
-
-            // 3. 点击“允许”或“确定”类确认按钮
-            var clickedConfirm = false
-            outer@ for (keyword in DEBUG_CONFIRM_TEXTS) {
-                val confirmNodes = root.findAccessibilityNodeInfosByText(keyword)
-                for (node in confirmNodes) {
-                    val text = node.text?.toString()?.trim() ?: ""
-                    val desc = node.contentDescription?.toString()?.trim() ?: ""
-                    if (text != keyword && desc != keyword) continue
-                    val target = if (node.isClickable) node else findClickableSelfOrAncestor(node) ?: node
-                    val bounds = Rect()
-                    target.getBoundsInScreen(bounds)
-
-                    val actionOk = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    if (!bounds.isEmpty) {
-                        tapAtBounds(bounds)
-                    }
-
-                    if (actionOk || !bounds.isEmpty) {
-                        clickedConfirm = true
-                        LogX.i(TAG, "已自动点击/模拟点击「$keyword」确认调试授权弹窗")
-                        break@outer
-                    }
-                }
-            }
-
-            if (clickedConfirm) {
-                lastDebugDialogDismissAt = now
-                break
-            }
-        }
-    }
-
-    /**
-     * 检查调试授权弹窗中的「始终允许/一律允许」复选框：
-     * 若未勾选则自动点击勾选；若已勾选则跳过（避免反向取消勾选）。
-     */
-    @Suppress("DEPRECATION")
-    private fun ensureDebugCheckboxChecked(root: AccessibilityNodeInfo) {
-        for (keyword in DEBUG_CHECKBOX_TEXTS) {
-            val nodes = root.findAccessibilityNodeInfosByText(keyword)
-            for (node in nodes) {
-                // 1) 节点本身即为 CheckBox 或可勾选控件
-                if (node.isCheckable) {
-                    if (!node.isChecked) {
-                        val target = if (node.isClickable) node else findClickableSelfOrAncestor(node) ?: node
-                        val bounds = Rect()
-                        target.getBoundsInScreen(bounds)
-                        target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        if (!bounds.isEmpty) tapAtBounds(bounds)
-                        LogX.i(TAG, "已自动勾选调试权限复选框 (isCheckable)")
-                    } else {
-                        LogX.i(TAG, "调试权限复选框已处于勾选状态，跳过")
-                    }
-                    return
-                }
-
-                // 2) 节点的父节点/兄弟节点为 CheckBox 或可勾选控件
-                val parent = node.parent
-                if (parent != null) {
-                    for (i in 0 until parent.childCount) {
-                        val child = parent.getChild(i) ?: continue
-                        if (child.isCheckable || child.className?.toString()?.contains("CheckBox", ignoreCase = true) == true) {
-                            if (child.isCheckable) {
-                                if (!child.isChecked) {
-                                    val target = if (child.isClickable) child else findClickableSelfOrAncestor(child) ?: child
-                                    val bounds = Rect()
-                                    target.getBoundsInScreen(bounds)
-                                    target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                                    if (!bounds.isEmpty) tapAtBounds(bounds)
-                                    LogX.i(TAG, "已自动勾选调试权限复选框 (sibling CheckBox)")
-                                } else {
-                                    LogX.i(TAG, "调试权限复选框已处于勾选状态，跳过")
-                                }
-                            } else {
-                                val target = if (node.isClickable) node else findClickableSelfOrAncestor(node) ?: parent
-                                val bounds = Rect()
-                                target.getBoundsInScreen(bounds)
-                                target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                                if (!bounds.isEmpty) tapAtBounds(bounds)
-                                LogX.i(TAG, "点击调试权限复选框文本行")
-                            }
-                            return
-                        }
-                    }
-                }
-
-                // 3) 节点及其父节点无明确 CheckBox 控件，但可点击（某些自定义弹窗）
-                val target = if (node.isClickable) node else findClickableSelfOrAncestor(node)
-                if (target != null) {
-                    if (target.isCheckable && target.isChecked) {
-                        LogX.i(TAG, "调试权限复选框(target)已处于勾选状态，跳过")
-                        return
-                    }
-                    val bounds = Rect()
-                    target.getBoundsInScreen(bounds)
-                    target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    if (!bounds.isEmpty) tapAtBounds(bounds)
-                    LogX.i(TAG, "已点击调试权限复选框关联区域")
-                    return
-                }
-            }
-        }
-    }
-
-    /* 在节点树中查找 content-desc 为「关闭/取消」的可点击按钮并点击 */
     private fun tryClickCloseButton(root: AccessibilityNodeInfo): Boolean {
         val queue = java.util.ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
@@ -3015,11 +2885,24 @@ private const val SPEED_CURVE_FACTOR = 0.7
         // 冷却期内不重复点击
         if (SystemClock.elapsedRealtime() - lastSkipTapAt < SKIP_TAP_COOLDOWN_MS) return false
         val target = try {
-            val root = rootInActiveWindow ?: return false
+            // 拿不到活动窗口就本轮放弃节点树，但要留下痕迹：这条路径原来是完全静默的，
+            // 排查「广告没被点掉」时看不到任何线索。丢掉节点树后仍会往下走 OCR 兜底。
+            val root = rootInActiveWindow ?: run {
+                LogX.d(TAG, "No active window, skip node tree this round")
+                return false
+            }
             val keywords = skipKeywordList.filter { it.isNotBlank() }
             if (keywords.isEmpty()) return false
-            findSkipNodeByBfs(root) ?: run {
-                LogX.d(TAG, "Skip node not found in tree, fallback to OCR")
+            val scan = findSkipNodeByBfs(root)
+            scan.node ?: run {
+                // 顺带打出诊断计数：invisibleCandidates=0 说明跳过节点还没进树（广告 SDK 延迟插入，
+                // 客户端无从优化）；大于 0 说明节点已在树里、只是被判为「对用户不可见」，
+                // 那就该去放宽可见性判定了。kind 是它本该走哪条匹配路径。
+                LogX.d(
+                    TAG, "Skip node not found in tree, fallback to OCR" +
+                        " (invisibleCandidates=${scan.invisibleCandidates}" +
+                        (scan.invisibleKind?.let { ", kind=$it" } ?: "") + ")"
+                )
                 return false
             }
         } catch (e: Throwable) {
@@ -3053,64 +2936,78 @@ private const val SPEED_CURVE_FACTOR = 0.7
         return true
     }
 
-    /* BFS 遍历节点树，返回第一个命中跳过关键词的节点（限制扫描数量避免卡顿） */
-    private fun findSkipNodeByBfs(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+    /* BFS 遍历节点树，返回第一个命中跳过关键词的节点（限制扫描数量避免卡顿）。
+       顺带统计「看着像跳过按钮、却被可见性挡下」的候选数，供调用方判断检测延迟的原因。 */
+    private fun findSkipNodeByBfs(root: AccessibilityNodeInfo): SkipScanResult {
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
         var scanned = 0
+        var invisibleCandidates = 0
+        var invisibleKind: String? = null
         while (queue.isNotEmpty() && scanned < SKIP_NODE_SCAN_LIMIT) {
             val node = queue.removeFirst()
             scanned++
-            if (matchesSkipNode(node)) return node
+            val kind = skipMatchKind(node, requireVisible = true)
+            if (kind != null) return SkipScanResult(node, kind, invisibleCandidates, invisibleKind)
+            // 严格判定没过，但放宽可见性后能命中 → 只可能是可见性把它挡下的
+            val loose = skipMatchKind(node, requireVisible = false)
+            if (loose != null) {
+                invisibleCandidates++
+                if (invisibleKind == null) invisibleKind = loose
+            }
             val childCount = runCatching { node.childCount }.getOrDefault(0)
             for (i in 0 until childCount) {
                 val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
                 queue.add(child)
             }
         }
-        return null
+        return SkipScanResult(null, null, invisibleCandidates, invisibleKind)
     }
 
     /**
-     * 节点是否命中跳过关键词（GKD 同款匹配规则）：
-     * 1) 文本/描述含关键词，且长度 < 10、对用户可见、尺寸像按钮（防正文长句误触）
-     * 2) 关键词含「跳过/skip」语义时，控件 id 是 SDK 跳过按钮（如穿山甲 tt_splash_skip_btn）也算命中
-     * 3) 命中排除词清单的节点直接跳过（搜索框/设置项/下一步等）
+     * 节点命中跳过关键词的判定（GKD 同款匹配规则），返回命中方式：
+     * 1) "text" 文本含关键词，且长度 < 10、尺寸像按钮（防正文长句误触）
+     * 2) "desc" 描述含关键词，且长度 < 10
+     * 3) "id"   关键词含「跳过/skip」语义时，控件 id 是 SDK 跳过按钮（如穿山甲 tt_splash_skip_btn）也算命中
+     * 命中排除词清单的节点直接判不命中（搜索框/设置项/下一步等）。
+     *
+     * @param requireVisible false 时跳过「对用户可见」这一关，仅供诊断使用——
+     *        借它把「跳过节点还没进树」和「节点在树里但被判为不可见」区分开
+     * @return 命中方式；不命中返回 null
      */
-    private fun matchesSkipNode(node: AccessibilityNodeInfo): Boolean {
+    private fun skipMatchKind(node: AccessibilityNodeInfo, requireVisible: Boolean): String? {
         val text = runCatching { node.text?.toString() }.getOrNull()
         val desc = runCatching { node.contentDescription?.toString() }.getOrNull()
         // 排除词：搜索框、设置项、正文引导等，即使含关键词也不算跳过按钮
-        if (text != null && SKIP_EXCLUDE_WORDS.any { text.contains(it) }) return false
-        if (desc != null && SKIP_EXCLUDE_WORDS.any { desc.contains(it) }) return false
-        val visible = runCatching { node.isVisibleToUser }.getOrDefault(false)
-        if (!visible) return false
+        if (text != null && SKIP_EXCLUDE_WORDS.any { text.contains(it) }) return null
+        if (desc != null && SKIP_EXCLUDE_WORDS.any { desc.contains(it) }) return null
+        if (requireVisible && !runCatching { node.isVisibleToUser }.getOrDefault(false)) return null
 
         // 文本匹配：含关键词 + 长度 < 10 + 尺寸像按钮
         if (text != null && text.length < SKIP_TEXT_MAX_LENGTH &&
             skipKeywordList.any { text.lowercase().contains(it.lowercase()) } &&
             isSkipButtonSize(node)
         ) {
-            return true
+            return "text"
         }
         // 描述匹配：含关键词 + 长度 < 10
         if (desc != null && desc.length < SKIP_TEXT_MAX_LENGTH &&
             skipKeywordList.any { desc.lowercase().contains(it.lowercase()) }
         ) {
-            return true
+            return "desc"
         }
         // id 匹配：关键词含跳过/skip 时，SDK 跳过按钮 id 也算命中
         if (isSkipIntentKeyword()) {
-            val id = runCatching { node.viewIdResourceName }.getOrNull() ?: return false
+            val id = runCatching { node.viewIdResourceName }.getOrNull() ?: return null
             val lowerId = id.lowercase()
             if (lowerId.endsWith("tt_splash_skip_btn") ||
                 (lowerId.contains("skip") &&
                     !lowerId.contains("video") && !lowerId.contains("head") && !lowerId.contains("tail"))
             ) {
-                return true
+                return "id"
             }
         }
-        return false
+        return null
     }
 
     /* 用户关键词是否包含「跳过/skip」语义（决定是否启用控件 id 匹配） */
@@ -3159,8 +3056,14 @@ private const val SPEED_CURVE_FACTOR = 0.7
     /* 当前前台窗口是否属于 AutoSlide 自己（主界面/聊天室/录制回放悬浮窗等），是则跳过广告检测 */
     private fun isAutoSlideWindow(): Boolean {
         val pkg = rootInActiveWindow?.packageName?.toString()
-        // 无法确定当前窗口时也跳过，避免误点
-        return pkg == null || pkg == packageName
+        // 拿不到活动窗口时不能当成「自己的界面」直接放弃：窗口切换的那一刻正是开屏广告出现的
+        // 时刻，这里返回 true 会把整轮检测（连不依赖节点树的 OCR 兜底一起）静默跳过，
+        // 表现就是「广告挂了很久，日志里看不到任何有效尝试」。只有明确是自己包名才跳过。
+        if (pkg == null) {
+            LogX.d(TAG, "Active window unknown, keep scanning")
+            return false
+        }
+        return pkg == packageName
     }
 
     /**

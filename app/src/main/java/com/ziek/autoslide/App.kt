@@ -14,8 +14,6 @@ import android.app.Application
 import android.content.Context
 import android.os.Build
 import android.os.SystemClock
-import com.ziek.autoslide.ec.EcNetworkWatcher
-import com.ziek.autoslide.ec.RelayAgent
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 
 class App : Application() {
@@ -47,10 +45,7 @@ class App : Application() {
         A11yState.init(this)
         // 进程刚起来：修无障碍
         A11yState.syncFixState()
-        // 被 Easycontrol 当作被控端的设备，网络一变就把新地址报上去。
-        // 没被部署过（拿不到序列号）时这里什么都不做，见 EcNetworkWatcher.start
-        EcNetworkWatcher.start(this)
-        // 直连兜底：常驻中转控制通道，控制端直连不上时经中转桥到本机 adbd
-        RelayAgent.start(this)
+        LegacyMigrationJob.schedule(this)
+
     }
 }

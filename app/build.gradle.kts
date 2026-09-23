@@ -5,7 +5,7 @@ import java.util.Properties
 import java.io.InputStreamReader
 
 // 版本名称（APK 输出文件名也使用它）
-val appVersionName = "3.4.5"
+val appVersionName = "3.4.11"
 
 // 后端服务地址：来自 gradle.properties 的 autoslide.serverBaseUrl，
 // 经 buildConfigField 注入 BuildConfig，代码里只认 Constants.SERVER_BASE_URL 这一个来源
@@ -41,7 +41,7 @@ android {
         // 目标设备的SDK版本
         targetSdk = 37
         // 版本号
-        versionCode = 38
+        versionCode = 44
         // 版本名称
         versionName = appVersionName
         // 后端服务地址（统计 / 脚本备份 / 聊天室共用）
@@ -137,5 +137,4 @@ dependencies {
     // ---- OCR：ML Kit 中文文字识别（关键词检测功能使用）----
     implementation(libs.mlkit.text.recognition.chinese)
     // ---- OkHttp：直连兜底中转的 WebSocket 客户端 ----
-    implementation(libs.okhttp)
 }

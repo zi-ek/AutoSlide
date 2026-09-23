@@ -11,7 +11,7 @@ package com.ziek.autoslide.service
  *   **没有定时刷新**，也不在这里做定时自检；
  * - 通知**没有「停止」按钮**（GKD 的 status 通知 stopService 为 null）；
  * - 不重写 onStartCommand 的采集逻辑——**轨迹采集已迁出本服务**，由独立进程的
- *   [TrackRecordService]（:trackrecord）承载（对齐两只脚：记录服务与状态服务互不牵连）。
+ *   adbboot 的独立轨迹服务承载。
  */
 
 import android.Manifest
@@ -135,7 +135,7 @@ class StatusService : Service() {
      * 前台服务类型：状态服务只声明 specialUse（对齐 GKD）。
      *
      * 旧版这里会按「是否在采集轨迹」动态决定是否带 location 类型——轨迹已迁到独立进程的
-     * [TrackRecordService]（manifest 声明 location 类型），本服务不再需要 location 类型。
+     * adbboot 中实现，本服务不需要 location 类型。
      */
     private fun foregroundType(): Int {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0

@@ -22,6 +22,8 @@ const { readJson, sendJson, sendHtml, sendText } = require('./http');
 const { sanitizeLocation, nowCN, esc } = require('./util');
 const { readStats, updateStats, touchDevice } = require('./stats');
 
+const { resolveDevice, trackIdFor, safeTrackId } = require('./identity');
+
 const RETENTION_MS = TRACK_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 
 /* deviceId 直接进文件名，必须收窄成安全字符，挡掉路径穿越（../ 之类） */
@@ -136,8 +138,9 @@ async function handleIngest(req, res) {
     return sendJson(res, 401, { ok: false, error: 'unauthorized' });
   }
   const body = await readJson(req, LIMIT_TRACK_BODY);
-  const id = safeId(body.deviceId);
-  if (!id) return sendJson(res, 400, { ok: false, error: 'bad deviceId' });
+  const serial = cleanSerial(body.serial);
+  const legacyId = safeId(body.deviceId);
+  if (!serial && !legacyId) return sendJson(res, 400, { ok: false, error: 'deviceId or serial required' });
 
   const loc = sanitizeLocation(body);
   if (!loc) return sendJson(res, 400, { ok: false, error: 'bad location' });
@@ -149,14 +152,15 @@ async function handleIngest(req, res) {
   if (loc.provider) pt.pv = loc.provider;
   if (body.moving === true || body.moving === 1) pt.mv = 1;
 
+  const { id, deviceId } = await resolveTrackIdentity(serial, legacyId);
   appendPoint(id, pt);
 
   // 覆盖设备的「当前位置」：轨迹最新点就是当前位置，不再另存一份单点
   await updateStats((stats) => {
-    touchDevice(stats, id, {
+    touchDevice(stats, deviceId, {
       location: {
-        lon: loc.lon,
         lat: loc.lat,
+        lon: loc.lon,
         accuracy: loc.accuracy,
         provider: loc.provider,
         time: t,
@@ -177,8 +181,9 @@ async function handleIngestBatch(req, res) {
     return sendJson(res, 401, { ok: false, error: 'unauthorized' });
   }
   const body = await readJson(req, LIMIT_TRACK_BATCH_BODY);
-  const id = safeId(body.deviceId);
-  if (!id) return sendJson(res, 400, { ok: false, error: 'bad deviceId' });
+  const serial = cleanSerial(body.serial);
+  const legacyId = safeId(body.deviceId);
+  if (!serial && !legacyId) return sendJson(res, 400, { ok: false, error: 'deviceId or serial required' });
 
   const raw = Array.isArray(body.points) ? body.points : null;
   if (!raw) return sendJson(res, 400, { ok: false, error: 'points required' });
@@ -200,14 +205,15 @@ async function handleIngestBatch(req, res) {
 
   if (!pts.length) return sendJson(res, 400, { ok: false, error: 'no valid points' });
 
+  const { id, deviceId } = await resolveTrackIdentity(serial, legacyId);
   appendPoints(id, pts);
 
   // 用最新一个点覆盖设备的「当前位置」（与单点上报语义一致）
   await updateStats((stats) => {
-    touchDevice(stats, id, {
+    touchDevice(stats, deviceId, {
       location: {
-        lon: newest.loc.lon,
         lat: newest.loc.lat,
+        lon: newest.loc.lon,
         accuracy: newest.loc.accuracy,
         provider: newest.loc.provider,
         time: newest.t,
@@ -220,23 +226,39 @@ async function handleIngestBatch(req, res) {
 }
 
 /* ============ GET /api/track?deviceId=|serial= &since=：取某设备轨迹（验口令） ============ */
+async function resolveTrackIdentity(serial, legacyId) {
+  let result;
+  await updateStats((stats) => {
+    // Serial wins: do not replace an existing AutoSlide deviceId with adbboot's ANDROID_ID.
+    const device = serial ? resolveDevice(stats, '', serial, '') :
+      (stats.devices || []).find((d) => d.deviceId === legacyId);
+    if (device) {
+      device.trackId = trackIdFor(device);
+      result = { id: device.trackId, deviceId: device.deviceId };
+    } else result = { id: legacyId, deviceId: legacyId };
+  });
+  return result;
+}
+
 function handleFetch(req, res, url) {
   if (!isAdmin(req)) return sendJson(res, 403, { ok: false, error: 'forbidden' });
-  // 支持两种寻址：deviceId（ANDROID_ID，看板用）或 serial（ro.serialno，Easycontrol 用）。
-  // Easycontrol 只握有 serial，这里内部按 ecSerial 解析成 deviceId，deviceId 不出服务端。
-  let id = safeId(url.searchParams.get('deviceId'));
-  if (!id) {
-    const serial = cleanSerial(url.searchParams.get('serial'));
-    if (serial) {
-      const device = (readStats().devices || []).find((d) => d.ecSerial === serial);
-      id = device ? safeId(device.deviceId) : null;
-      if (!id) return sendJson(res, 404, { ok: false, error: 'device not found for serial' });
-    }
-  }
-  if (!id) return sendJson(res, 400, { ok: false, error: 'deviceId or serial required' });
+  const requestedId = String(url.searchParams.get('deviceId') || '');
+  const serial = cleanSerial(url.searchParams.get('serial'));
+  const devices = readStats().devices || [];
+  const device = serial ? devices.find((d) => d.ecSerial === serial) :
+    devices.find((d) => d.deviceId === requestedId);
+  const id = device ? trackIdFor(device) : safeId(requestedId);
+  if (!id) return sendJson(res, serial ? 404 : 400, { ok: false, error: 'device not found or invalid id' });
   const since = Number(url.searchParams.get('since'));
-  const points = readPoints(id, since);
-  sendJson(res, 200, { ok: true, deviceId: id, count: points.length, points });
+  // A legacy deviceId file can coexist with a serial-first file after a rolling upgrade.
+  const ids = new Set([id, device && safeTrackId(device.deviceId)].filter(Boolean));
+  const seen = new Set();
+  const points = [...ids].flatMap((key) => readPoints(key, since)).sort((a,b) => a.t-b.t).filter((p) => {
+    const key = `${p.t}:${p.lat}:${p.lon}`;
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  }).slice(-TRACK_MAX_POINTS);
+  sendJson(res, 200, { ok: true, deviceId: device ? device.deviceId : id, count: points.length, points });
 }
 
 /* ============ GET /track?deviceId=：轨迹地图页（Basic Auth 由中间件把关） ============ */

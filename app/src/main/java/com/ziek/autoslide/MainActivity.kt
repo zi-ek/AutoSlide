@@ -70,7 +70,6 @@ import com.ziek.autoslide.service.AutoSlideService
 import com.ziek.autoslide.service.AutoSlideTileService
 import com.ziek.autoslide.service.FloatingWindowService
 import com.ziek.autoslide.service.StatusService
-import com.ziek.autoslide.service.TrackRecordService
 import java.util.Locale
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -108,7 +107,6 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_LOCATION_PERMISSION = 103
         // 行动轨迹：前台定位（精确/粗略）授权请求码。后台「始终允许」不走这里，
         // 而是引导用户去系统设置手动选（安卓 10+ 后台定位无法在运行时弹窗直接授予）
-        private const val REQUEST_TRACK_FG_LOCATION = 104
         /* 首次 resume 跳过自愈的时间窗（GKD 同款 2 秒） */
         private const val FIRST_RESUME_SKIP_MS = 2000L
         // 无障碍授权方式选项常量
@@ -168,27 +166,6 @@ class MainActivity : AppCompatActivity() {
             StatusService.stop(this)
         }
     }
-
-    /* 行动轨迹开关监听器：拨开走完整授权链（前台→后台→通知），关闭即停服务收进程 */
-    private val trackEnabledSwitchListener = CompoundButton.OnCheckedChangeListener { _, isChecked ->
-        if (isChecked) {
-            requestEnableTracking()
-        } else {
-            // 关闭：撤开关、停轨迹服务（onDestroy 杀 :trackrecord 进程；复活任务随 stop 自撤）
-            TrackState.setEnabled(this, false)
-            TrackRecordService.stop(this)
-        }
-    }
-
-    /* 用户点了「去设置」授权后台定位、正等他从系统设置返回时置 true；onResume 消费一次 */
-    private var trackPendingSettings = false
-    /* 当前会话用户是否已主动取消过后台定位引导弹窗，避免在 onResume 循环弹窗 */
-    private var trackGuideDismissed = false
-    /* 开启行动轨迹时正等用户授予通知权限（轨迹前台服务需要通知）置 true；
-       授权结果回来后再真正拉起 TrackRecordService */
-    private var trackPendingNotification = false
-
-
 
     /**
      * 更新权限开关状态
@@ -349,7 +326,6 @@ class MainActivity : AppCompatActivity() {
         // startForeground 会被后台限制拒绝；此刻界面在前台，正是允许启动前台服务的时机。
         StatusService.autoStart(this)
         // 行动轨迹开关跟随权限实况刷新；从系统设置授权返回也在这里收尾
-        syncTrackSwitchState()
         UpdateChecker.onHostResumed(this)
         // 打开 App 时主动检查更新（每次启动查一次，有新版本弹出不可取消的强制更新弹窗；
         // 断网或连不上服务器时只是查不到新版本，不影响正常使用）。
@@ -1069,119 +1045,6 @@ class MainActivity : AppCompatActivity() {
         StatusService.start(this)
     }
 
-    /**
-     * 用户打开「行动轨迹」开关后的授权流程：
-     * 1. 没有前台定位（精确/粗略）→ 先运行时申请，结果在 onRequestPermissionsResult 里续接；
-     * 2. 有前台定位但缺后台「始终允许」（安卓 10+）→ 弹说明引导去系统设置手动授予；
-     * 3. 两者齐全 → [finalizeTrackEnable] 真正开启。
-     * 任一步没走通，开关都回落到关闭态（开关点亮 = 意图开 && 已有后台定位）。
-     */
-    private fun requestEnableTracking() {
-        if (!LocationReporter.hasPermission(this)) {
-            requestPermissions(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                ),
-                REQUEST_TRACK_FG_LOCATION
-            )
-            return
-        }
-        if (!LocationTracker.hasBackgroundLocation(this)) {
-            showBackgroundLocationGuide()
-            return
-        }
-        finalizeTrackEnable()
-    }
-
-    /** 权限齐全后真正开启：置开关 + 启动独立进程的轨迹记录前台服务（对齐两只脚） */
-    private fun finalizeTrackEnable() {
-        // 仅在「关→开」的真正开启时重置静止自动关计时；打开 App 的例行同步（此时已是开）不重置，
-        // 否则用户每次打开 App 都会把 30 分钟计时清零，自动关几乎永远等不到。
-        val wasEnabled = TrackState.isEnabled(this)
-        TrackState.setEnabled(this, true)
-        if (!wasEnabled) LocationTracker.markUserEnabled(this)
-        // 轨迹记录服务自带记录通知（channel track_record），不再依附常驻状态通知；
-        // 通知权限没给时先申请，授权结果回来后再真正拉起（见 onRequestPermissionsResult）。
-        requestStartTrackService()
-    }
-
-    /**
-     * 开启行动轨迹记录服务（同 StatusService.requestStart 的流程）：
-     * 安卓 13+ 缺通知权限时先申请，授权结果回来后再启动 [TrackRecordService]。
-     */
-    private fun requestStartTrackService() {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            trackPendingNotification = true
-            requestPermissions(
-                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-                REQUEST_NOTIFICATION_PERMISSION
-            )
-            return
-        }
-        TrackRecordService.start(this)
-    }
-
-    /** 引导用户去系统设置把定位改成「始终允许」；返回后由 [syncTrackSwitchState] 收尾 */
-    private fun showBackgroundLocationGuide() {
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.track_bg_guide_title)
-            .setMessage(R.string.track_bg_guide_message)
-            .setPositiveButton(R.string.track_bg_guide_go) { _, _ ->
-                trackPendingSettings = true
-                openAppDetailsSettings()
-            }
-            .setNegativeButton(R.string.track_bg_guide_cancel) { _, _ ->
-                trackGuideDismissed = true
-            }
-            .show()
-    }
-
-    /** 打开本应用的系统设置页，供用户手动把定位授予「始终允许」 */
-    private fun openAppDetailsSettings() {
-        runCatching {
-            startActivity(
-                Intent(
-                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    "package:$packageName".toUri()
-                )
-            )
-        }.onFailure {
-            trackPendingSettings = false
-            Toast.makeText(this, R.string.track_need_location, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    /**
-     * 依当前权限刷新行动轨迹，并在缺少后台定位时默认自动申请。
-     */
-    private fun syncTrackSwitchState() {
-        if (!TermsAcceptDialog.isAccepted(this)) return
-        val hasBg = LocationTracker.hasBackgroundLocation(this)
-        if (trackPendingSettings) {
-            // 刚从系统设置返回：授到「始终允许」就真正开启
-            trackPendingSettings = false
-            if (hasBg) {
-                finalizeTrackEnable()
-                return
-            }
-        }
-        val enabled = TrackState.isEnabled(this)
-        // 开关 UI 跟随实际意图刷新（updateSwitchState 防回调循环）
-        updateSwitchState(binding.minePanel.trackEnabledSwitch, enabled, trackEnabledSwitchListener)
-        if (enabled) {
-            if (hasBg) {
-                finalizeTrackEnable()
-            } else if (!trackGuideDismissed) {
-                requestEnableTracking()
-            }
-        } else {
-            TrackRecordService.stop(this)
-        }
-    }
-
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
@@ -1196,40 +1059,13 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        if (requestCode == REQUEST_TRACK_FG_LOCATION) {
-            if (LocationReporter.hasPermission(this)) {
-                // 前台定位到手，续接第二步（后台「始终允许」引导或直接开启）
-                requestEnableTracking()
-            } else {
-                // 定位权限被拒：开关回滚关闭态，避免「看着开了其实没权限」
-                TrackState.setEnabled(this, false)
-                updateSwitchState(binding.minePanel.trackEnabledSwitch, false, trackEnabledSwitchListener)
-                Toast.makeText(this, R.string.track_need_location, Toast.LENGTH_SHORT).show()
-            }
-            return
-        }
         if (requestCode != REQUEST_NOTIFICATION_PERMISSION) return
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            if (trackPendingNotification) {
-                // 刚才在开启行动轨迹：授权到手，真正拉起轨迹记录服务
-                trackPendingNotification = false
-                TrackRecordService.start(this)
-            } else {
-                StatusService.start(this)
-            }
+            StatusService.start(this)
         } else {
-            if (trackPendingNotification) {
-                // 开轨迹时通知权限被拒：轨迹前台服务没有通知兜底，退回关闭态
-                trackPendingNotification = false
-                TrackState.setEnabled(this, false)
-                TrackRecordService.stop(this)
-                updateSwitchState(binding.minePanel.trackEnabledSwitch, false, trackEnabledSwitchListener)
-            } else {
-                // 没给通知权限就起不了前台服务，把开关退回关闭状态，避免显示成开着但没通知
-                StatusService.setEnabled(this, false)
-                updateStatusServiceSwitchState(false)
-                Toast.makeText(this, R.string.status_service_need_notification, Toast.LENGTH_SHORT).show()
-            }
+            StatusService.setEnabled(this, false)
+            updateStatusServiceSwitchState(false)
+            Toast.makeText(this, R.string.status_service_need_notification, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1260,7 +1096,6 @@ class MainActivity : AppCompatActivity() {
         }
         mine.mineScriptLibRow.setOnClickListener { showScriptLibraryDialog() }
         mine.mineLicenseRow.setOnClickListener { LicenseDialog.showShareDialog(this) }
-        mine.trackEnabledSwitch.setOnCheckedChangeListener(trackEnabledSwitchListener)
         // 长按打赏二维码存到相册：微信不能直接识别屏幕上的码，得先存下来再从相册选
         mine.wxImageView.setOnLongClickListener {
             requestSaveDonateQrCode()

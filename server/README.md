@@ -1,6 +1,12 @@
+# 共享后台（AutoSlide / Easycontrol / adbboot）
+
+> 联动能力已迁入 adbboot。轨迹上传同时支持新助手的 serial 与旧 AutoSlide 的 deviceId；旧缓存可以继续补传。部署和迁移说明见相邻项目 [adbboot-migration.md](../../Easycontrol-master/docs/adbboot-migration.md)。
+>
+> 本服务依赖 ws：部署包含 package-lock.json，执行 npm ci --omit=dev 后启动。升级只替换代码，保留 data/ 和已有环境变量。
+
 # AutoSlide 统计后台（PVE 部署）
 
-零依赖的 Node.js 统计服务：接收 App 上报的安装/更新事件和设备信息，提供统计看板。
+Node.js 统计服务（中转使用 ws）：接收 App 上报的安装/更新事件和设备信息，提供统计看板。
 
 ## 接口
 

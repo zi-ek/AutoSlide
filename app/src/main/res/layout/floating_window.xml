@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 悬浮窗布局：
      根布局为可拖拽的 DraggableLinearLayout；
-     展开时显示控制面板（上/下/左/右方向键 + 设置 + 关闭），
+     展开时显示控制面板：
+        [占位]  ↑        ✕关闭
+               ←   ⚙   →
+                ↓
+        ⟳回放   ●录制   ↘收起
      收起时只显示一个小圆球（floating_expand_button），点击重新展开 -->
 <com.ziek.autoslide.service.DraggableLinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -23,20 +27,64 @@
         android:orientation="vertical"
         android:padding="4dp">
 
-        <!-- 向上滑动按钮（点击启动上滑，长按录制/管理上滑轨迹） -->
-        <com.google.android.material.floatingactionbutton.FloatingActionButton
-            android:id="@+id/floating_up_button"
+        <!-- 第一行：中间是上滑键，右侧是关闭悬浮球。左侧补一个与按钮等宽的不可见占位，
+             否则整行会往左偏、上滑键不再居中。 -->
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:layout_margin="3dp"
-            android:contentDescription="@string/desc_slide_up"
-            android:src="@drawable/ic_floating_arrow_up"
-            app:backgroundTint="@color/floating_btn_bg"
-            app:elevation="6dp"
-            app:fabSize="mini"
-            app:tint="@color/floating_btn_icon"
-            tools:ignore="ClassNameCheck" />
+            android:orientation="horizontal">
+
+            <!-- 占位：用一个不可见的同款 FAB 撑出与真实按钮完全一致的宽度。
+                 不能用 Space + 固定 dp —— FAB 的实际布局尺寸会撑到最小触摸目标，
+                 和 fabSize 写的值并不相等，写死会差几个像素、导致整行左偏。 -->
+            <com.google.android.material.floatingactionbutton.FloatingActionButton
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_margin="3dp"
+                android:importantForAccessibility="no"
+                android:visibility="invisible"
+                app:backgroundTint="@color/floating_btn_bg"
+                app:elevation="6dp"
+                app:fabSize="mini"
+                tools:ignore="ClassNameCheck,ContentDescription" />
+
+            <!-- 向上滑动按钮（点击启动上滑，长按录制/管理上滑轨迹） -->
+            <com.google.android.material.floatingactionbutton.FloatingActionButton
+                android:id="@+id/floating_up_button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_margin="3dp"
+                android:contentDescription="@string/desc_slide_up"
+                android:src="@drawable/ic_floating_arrow_up"
+                app:backgroundTint="@color/floating_btn_bg"
+                app:elevation="6dp"
+                app:fabSize="mini"
+                app:tint="@color/floating_btn_icon"
+                tools:ignore="ClassNameCheck" />
+
+            <!-- 关闭悬浮球：图标 + 下方文字标签。彻底关掉悬浮球（不是收成小圆球） -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
+
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/floating_close_button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    android:contentDescription="@string/desc_close"
+                    android:src="@drawable/ic_floating_close"
+                    app:backgroundTint="@color/floating_btn_play_bg"
+                    app:elevation="4dp"
+                    app:fabSize="mini"
+                    app:tint="@color/floating_btn_close_icon"
+                    tools:ignore="ClassNameCheck" />
+
+            </LinearLayout>
+        </LinearLayout>
 
         <LinearLayout
             android:layout_width="wrap_content"
@@ -103,7 +151,7 @@
             app:tint="@color/floating_btn_icon"
             tools:ignore="ClassNameCheck" />
 
-        <!-- 底部按钮行：回放键 + 关闭（X）键 + 录制键 -->
+        <!-- 底部按钮行：回放 + 录制 + 收起（都是图标 + 下方文字标签） -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -139,35 +187,6 @@
                     android:textSize="10sp" />
             </LinearLayout>
 
-            <!-- 关闭：图标 + 下方文字标签 -->
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:orientation="vertical">
-
-                <com.google.android.material.floatingactionbutton.FloatingActionButton
-                    android:id="@+id/floating_close_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_margin="3dp"
-                    android:contentDescription="@string/desc_close"
-                    android:src="@drawable/ic_floating_close"
-                    app:backgroundTint="@color/floating_btn_play_bg"
-                    app:elevation="4dp"
-                    app:fabSize="mini"
-                    app:tint="@color/floating_btn_close_icon"
-                    tools:ignore="ClassNameCheck" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="2dp"
-                    android:text="@string/label_close"
-                    android:textColor="#FFFFFF"
-                    android:textSize="10sp" />
-            </LinearLayout>
-
             <!-- 录制：图标 + 下方文字标签 -->
             <LinearLayout
                 android:layout_width="wrap_content"
@@ -193,6 +212,35 @@
                     android:layout_height="wrap_content"
                     android:layout_marginBottom="2dp"
                     android:text="@string/label_record"
+                    android:textColor="#FFFFFF"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
+            <!-- 收起：把面板收成小圆球（不退出悬浮窗） -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
+
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/floating_collapse_button"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_margin="3dp"
+                    android:contentDescription="@string/desc_collapse"
+                    android:src="@drawable/ic_floating_collapse"
+                    app:backgroundTint="@color/floating_btn_play_bg"
+                    app:elevation="4dp"
+                    app:fabSize="mini"
+                    app:tint="@color/floating_btn_settings_icon"
+                    tools:ignore="ClassNameCheck" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="2dp"
+                    android:text="@string/label_collapse"
                     android:textColor="#FFFFFF"
                     android:textSize="10sp" />
             </LinearLayout>

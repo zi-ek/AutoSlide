@@ -38,3 +38,6 @@ server/.preview-stats.json
 
 # 后台看板本地预览脚本导出的快照（运行时生成）
 server/preview_real.html
+
+# Local Node.js dependencies
+server/node_modules/

@@ -18,6 +18,8 @@ const crypto = require('crypto');
 const { REPORT_TOKEN, ADMIN_TOKEN } = require('./config');
 const { sendJson } = require('./http');
 
+const { readStats } = require('./stats');
+
 const AGENTS = new Map();    // serial -> 控制 ws
 const SESSIONS = new Map();  // session -> { client, agent, queue:{client:[],agent:[]}, timer }
 const SESSION_TTL_MS = 60 * 1000;
@@ -47,7 +49,13 @@ function onSocket(ws, path, q) {
   if (path === '/relay/control') {
     if (!REPORT_TOKEN || q.get('token') !== REPORT_TOKEN) return ws.close(4003, 'bad token');
     const serial = String(q.get('serial') || '');
-    if (!serial) return ws.close(4000, 'no serial');
+    if (!/^[A-Za-z0-9._:-]{1,64}$/.test(serial)) return ws.close(4000, 'bad serial');
+    const role = q.get('agent') === 'adbboot' ? 'adbboot' : 'legacy';
+    const device = (readStats().devices || []).find((d) => d.ecSerial === serial);
+    if (role !== 'adbboot' && (device?.agentOwner === 'adbboot' || AGENTS.get(serial)?.agentRole === 'adbboot')) {
+      return ws.close(4009, 'moved to adbboot');
+    }
+    ws.agentRole = role;
     const prev = AGENTS.get(serial);
     if (prev && prev !== ws) { try { prev.close(); } catch (e) {} }
     AGENTS.set(serial, ws);

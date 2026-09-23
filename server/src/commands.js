@@ -88,53 +88,7 @@ function cleanAddresses(raw) {
  *
  * @returns {object|null} 命中的设备记录
  */
-function resolveDevice(stats, deviceId, serial, name) {
-  const devices = stats.devices || (stats.devices = []);
-  const shadowId = serial ? 'serial:' + serial : '';
-
-  if (serial) {
-    const bySerial = devices.find((d) => d.ecSerial === serial);
-    // 影子记录 + 这次带了真 deviceId：说明真身出现了，合并过去
-    if (bySerial && deviceId && bySerial.deviceId === shadowId) {
-      const real = devices.find((d) => d.deviceId === deviceId);
-      if (real) {
-        real.ecSerial = serial;
-        if (!real.adbPort) real.adbPort = bySerial.adbPort;
-        devices.splice(devices.indexOf(bySerial), 1);
-        return real;
-      }
-      // 真身还没建档，把影子记录直接改名认领，省得再造一条
-      bySerial.deviceId = deviceId;
-      return bySerial;
-    }
-    if (bySerial) return bySerial;
-  }
-
-  if (deviceId) {
-    const byId = devices.find((d) => d.deviceId === deviceId);
-    if (byId) {
-      if (serial) byId.ecSerial = serial;
-      return byId;
-    }
-  }
-
-  if (!serial) {
-    // 只有 deviceId 又没建过档：不凭空造设备，让它先走安装上报
-    return null;
-  }
-
-  const created = {
-    deviceId: deviceId || shadowId,
-    ecSerial: serial,
-    brand: String(name || '').split(' ')[0] || '',
-    model: String(name || '').slice(0, 64),
-    firstInstall: nowCN(),
-    installs: 0,
-    deviceInfo: {},
-  };
-  devices.push(created);
-  return created;
-}
+const { resolveDevice } = require('./identity');
 
 /**
  * POST /api/report/network
@@ -180,6 +134,9 @@ async function handleNetworkReport(req, res) {
     const device = resolveDevice(stats, deviceId, serial, name);
     if (!device) return;
     ok = true;
+    const agent = String(field('agent') || '');
+    if (device.agentOwner === 'adbboot' && agent !== 'adbboot') return;
+    if (agent === 'adbboot') device.agentOwner = 'adbboot';
     device.deviceInfo = device.deviceInfo || {};
     device.deviceInfo.network = { ...(device.deviceInfo.network || {}), addresses };
     // 旧字段留着会和 addresses 打架：看板优先读 addresses，读到就不该再看这两个
@@ -280,6 +237,9 @@ async function handleCommandPush(req, res) {
     const device = (stats.devices || []).find((d) => d.ecSerial === serial);
     if (!device) return;
     ok = true;
+    const agent = String(field('agent') || '');
+    if (device.agentOwner === 'adbboot' && agent !== 'adbboot') return;
+    if (agent === 'adbboot') device.agentOwner = 'adbboot';
     device.command = { cmd, at: nowCN() };
   });
   if (!ok) return sendJson(res, 404, { ok: false, error: 'device not found' });

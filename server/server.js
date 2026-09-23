@@ -35,6 +35,10 @@
 //   GET  /invite?code= 分享落地页；GET /invites 邀请榜
 //   POST /api/report/network      设备上报当前可连地址（需 AUTOSLIDE_REPORT_TOKEN）
 //   GET  /api/device/address?serial=..  Easycontrol 按序列号查地址（公开）
+//   POST /api/pair/offer          远程引导壳上报配对载荷（需 AUTOSLIDE_REPORT_TOKEN）
+//   GET  /api/pair/fetch?sid=..   Easycontrol 凭会话号取配对载荷（公开）
+//   POST /api/pair/result         Easycontrol 回报配对结果
+//   GET  /api/pair/status         引导壳轮询配对状态（需 AUTOSLIDE_REPORT_TOKEN）
 //   GET  /             统计看板页面
 
 const http = require('http');
@@ -51,6 +55,7 @@ require('./src/update').register(router);
 require('./src/commands').register(router);
 require('./src/track').register(router);
 require('./src/relay').register(router);
+require('./src/pair').register(router);
 
 // 首页看板锁：给人看的页面挂 Basic Auth，密码即 AUTOSLIDE_ADMIN_TOKEN。
 // 只锁「浏览器打开的看板」，机器调用的接口（上报、授权、更新、地址、聊天）与

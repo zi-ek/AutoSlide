@@ -328,7 +328,7 @@ function ipCell(d) {
     // 高德接受 lon,lat 顺序；坐标本身用 5 位小数（约 1 米级）即可
     // 库里存的是 GPS 原始 WGS-84（真值、与谷歌地球一致），直接展示这一份坐标；
     // 但高德按 GCJ-02 展示，标点前必须做「火星坐标」偏移转换，否则会偏出上百米
-    const coord = `${lat.toFixed(6)},${lon.toFixed(6)}`;
+    const coord = `${lon.toFixed(6)},${lat.toFixed(6)}`;
     const g = wgs84ToGcj02(lat, lon);
     const mapUrl = `https://uri.amap.com/marker?position=${g.lon.toFixed(6)},${g.lat.toFixed(6)}&coordinate=gaode`;
     const acc = Number.isFinite(Number(loc.accuracy))

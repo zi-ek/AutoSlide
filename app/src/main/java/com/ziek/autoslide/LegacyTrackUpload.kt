@@ -1,37 +1,21 @@
 package com.ziek.autoslide
 
-/**
- * 行动轨迹本地缓冲队列：先落地、有网再冲刷。
- *
- * 采集与上报解耦——[LocationTracker] 每采到一个点只调 [append] 写本地（离线也不丢），
- * 上报由 [flush] 独立完成：有网就把攒下的点整批 POST 到 /api/track/batch，
- * **上报成功才从队首删掉**（先发后删，宁可极小概率重发也不丢点；服务端按时间戳去重）。
- *
- * 本地只保留最近 [RETENTION_MS]（1 天）的点：离线超过一天的更旧的点直接丢弃，
- * 防止长期离线把文件撑大。服务端另有 7 天 retention 与批量口。
- *
- * 存储：filesDir/track_queue.jsonl，一行一个点，字段与批量口一致：
- *   {lat, lon, accuracy?, provider?, time, moving?}
- * deviceId 是设备级常量，不逐点存，冲刷时统一放进批量载荷顶层。
- *
- * 调用方是单条采集协程（[LocationTracker.loop]），本类方法再加 @Synchronized 兜底，
- * 保证同一时刻只有一个读改写文件。
- */
+/** Upgrade-only uploader for the existing track_queue.jsonl. No sampling or new points. */
 
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import com.ziek.autoslide.chat.ChatStorage
-import com.ziek.autoslide.ec.EcRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-object TrackBuffer {
+object LegacyTrackUpload {
 
-    private const val TAG = "TrackBuffer"
+    private const val TAG = "LegacyTrackUpload"
+    private const val LEGACY_REPORT_TOKEN = "z2RFXWsLtwLaZH4IphLasxYJ9Skn1KGbNxkgWFf8"
     private const val FILE_NAME = "track_queue.jsonl"
 
     /* 本地只留最近 1 天：离线更久的旧点丢弃，够用又不撑爆存储 */
@@ -44,14 +28,6 @@ object TrackBuffer {
     private const val READ_TIMEOUT_MS = 20000
 
     private fun file(context: Context) = File(context.applicationContext.filesDir, FILE_NAME)
-
-    /** 追加一个采集点到本地队列；永不抛异常（离线也要稳稳落地） */
-    @Synchronized
-    fun append(context: Context, pt: JSONObject) {
-        runCatching {
-            file(context).appendText(pt.toString() + "\n")
-        }.onFailure { LogX.w(TAG, "本地队列追加失败：$it") }
-    }
 
     /**
      * 冲刷本地积压：读队列 → 丢弃超 1 天的旧点 → 无网则仅回写(落实剪枝)返回 →
@@ -68,7 +44,7 @@ object TrackBuffer {
         if (all.isEmpty()) return
 
         // 剪枝：只保留最近 1 天。解析不出 time 的坏行一并丢弃。
-        val cutoff = System.currentTimeMillis() - RETENTION_MS
+        val cutoff = 0L
         val fresh = all.filter { line ->
             runCatching { JSONObject(line).optLong("time", 0L) >= cutoff }.getOrDefault(false)
         }
@@ -118,7 +94,7 @@ object TrackBuffer {
                 readTimeout = READ_TIMEOUT_MS
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("X-Report-Token", EcRegistry.TOKEN)
+                setRequestProperty("X-Report-Token", LEGACY_REPORT_TOKEN)
                 // 低频请求不复用连接，避免池里的死连接抛 "unexpected end of stream"
                 setRequestProperty("Connection", "close")
             }
