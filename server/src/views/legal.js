@@ -30,11 +30,22 @@ const legalStyles = `
   .legal-sec { margin: 28px 0; }
   .legal-h2 { font-size: 17px; font-weight: 600; margin: 0 0 10px; }
   .legal-p { line-height: 1.85; margin: 8px 0; }
-  .legal-table-wrap { overflow-x: auto; margin: 12px 0; }
-  .legal-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  .legal-table-wrap { overflow-x: auto; margin: 12px 0; -webkit-overflow-scrolling: touch; }
+  .legal-table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 480px; }
   .legal-table th, .legal-table td { border: 1px solid rgba(128,128,128,.35); padding: 8px 10px; text-align: left; vertical-align: top; }
-  .legal-table th { font-weight: 600; }
+  .legal-table th { font-weight: 600; white-space: nowrap; }
+  .legal-table td { white-space: normal; }
   .legal-updated { font-size: 13px; opacity: .7; margin-bottom: 18px; }
+
+  @media (max-width: 640px) {
+    .legal-sec { margin: 20px 0; }
+    .legal-h2 { font-size: 15px; margin: 0 0 8px; }
+    .legal-p { font-size: 14px; line-height: 1.75; margin: 6px 0; }
+    .legal-table-wrap { margin: 8px -14px; border-radius: 0; }
+    .legal-table { font-size: 13px; min-width: 420px; }
+    .legal-table th, .legal-table td { padding: 6px 8px; }
+    .legal-updated { font-size: 12px; margin-bottom: 14px; }
+  }
 </style>`;
 
 const UPDATED = '2026 年 9 月 5 日';
