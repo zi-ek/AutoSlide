@@ -41,3 +41,10 @@ server/preview_real.html
 
 # Local Node.js dependencies
 server/node_modules/
+
+# AOCI 本地认知资产，不同步到 GitHub
+/.aoci/
+/aoci.txt
+/aoci.code.txt
+/aoci.meta.txt
+/aoci.database.txt
