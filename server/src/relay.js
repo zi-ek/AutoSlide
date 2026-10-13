@@ -37,6 +37,7 @@ function attach(server) {
       return;
     }
     const p = url.pathname;
+    if (p === '/api/pair/tunnel') return;
     if (p !== '/relay/control' && p !== '/relay/data') {
       socket.destroy(); // 本服务没有别的 WS，非中转的 upgrade 一律拒绝
       return;

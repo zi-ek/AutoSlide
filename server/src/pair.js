@@ -37,10 +37,11 @@ const TERMINAL_GRACE_MS = 2 * 60 * 1000; // 配对完成后多留 2 分钟，让
 const MAX_OFFERS = 2000; // 防内存刷爆，正常自用远远到不了
 
 const PAIR_APK_DIR = path.join(DATA_DIR, 'pair');
-const PAIR_APK_NAME = 'USBDebugGuide-v1.0.0.apk';
+const PAIR_APK_NAME = 'USBDebugGuide-v1.1.0.apk';
 
 /** @type {Map<string, object>} offerId -> 记录 */
 const offers = new Map();
+const tunnel = require('./pair-tunnel').createPairTunnel(sid => [...offers.values()].find(o => o.sid === sid), isExpired);
 
 function checkReportToken(req, res) {
   if (!REPORT_TOKEN) {
@@ -83,7 +84,7 @@ function isExpired(o, now) {
 
 function sweep() {
   const now = Date.now();
-  for (const [id, o] of offers) if (isExpired(o, now)) offers.delete(id);
+  for (const [id, o] of offers) if (isExpired(o, now)) { tunnel.revoke(id); offers.delete(id); }
 }
 setInterval(sweep, 60 * 1000).unref();
 
@@ -126,7 +127,9 @@ function cleanCode(value) {
  * 主控端预分配会话号。返回 sid + resultKey + offerId，被控端凭 sid 上报载荷。
  * 不需要 token（与 fetch 同级公开）：知道服务器地址才能调，sid 本身就是凭证。
  */
-function handleAlloc(req, res) {
+async function handleAlloc(req, res) {
+  const field = await readFields(req, LIMIT_JSON_BODY);
+  const protocol = field("protocol") === 2 ? 2 : 1;
   sweep();
   if (offers.size >= MAX_OFFERS) {
     return sendJson(res, 503, { ok: false, error: 'server busy, try again later' });
@@ -138,6 +141,7 @@ function handleAlloc(req, res) {
     offerId,
     sid,
     resultKey,
+    protocol,
     state: 'pending', // 等被控端上报载荷
     detail: '',
     fetched: false,
@@ -145,6 +149,7 @@ function handleAlloc(req, res) {
     updatedAt: Date.now(),
     expiresAt: Date.now() + ALLOC_TTL_MS,
   });
+  console.info('[pair]', offerId.slice(0,8), 'allocated');
   return sendJson(res, 200, { ok: true, sid, resultKey, offerId });
 }
 
@@ -211,6 +216,9 @@ async function handleOffer(req, res) {
     return sendJson(res, 400, { ok: false, error: 'sid or offerId required' });
   }
 
+  if (record.protocol === 2 && !record.agentKey) return sendJson(res, 409, {ok:false,error:'device must join first'});
+  if (record.agentKey && req.headers['x-pair-key'] !== record.agentKey) return sendJson(res, 401, {ok:false,error:'bad device key'});
+  console.info('[pair]', record.offerId.slice(0,8), 'payload received');
   record.host = host;
   record.pairPort = pairPort;
   record.connectPort = connectPort;
@@ -234,8 +242,9 @@ function handleFetch(req, res, url) {
   if (!record || isExpired(record, Date.now())) {
     return sendJson(res, 404, { ok: false, error: '会话不存在或已过期，请让对方重新发起' });
   }
+  if ((record.protocol === 2 || record.agentKey) && req.headers['x-pair-controller-key'] !== record.resultKey) return sendJson(res, 401, {ok:false,error:'bad controller key'});
   if (record.state === 'pending') {
-    return sendJson(res, 202, { ok: false, error: 'waiting for device' });
+    return sendJson(res, 202, { ok: false, error: 'waiting for device', stage: record.stage || '等待对方打开邀请链接', online: Date.now() - (record.agentSeenAt || 0) < 20000 });
   }
   if (isTerminal(record)) {
     return sendJson(res, 409, { ok: false, error: 'session already finished' });
@@ -245,12 +254,13 @@ function handleFetch(req, res, url) {
   return sendJson(res, 200, {
     ok: true,
     sid: record.sid,
-    resultKey: record.resultKey,
+    resultKey: (record.protocol === 2 || record.agentKey) ? undefined : record.resultKey,
     host: record.host,
     pairPort: record.pairPort,
     connectPort: record.connectPort,
     code: record.code,
     model: record.model,
+    relay: !!record.agentKey,
   });
 }
 
@@ -263,13 +273,17 @@ async function handleResult(req, res) {
   const sid = cleanSid(field('sid'));
   const resultKey = String(field('resultKey') || '').trim();
   const state = String(field('state') || '').trim();
-  if (!sid || !resultKey || (state !== 'paired' && state !== 'failed')) {
+  if (!sid || !resultKey || (state !== 'paired' && state !== 'failed' && state !== 'configuring')) {
     return sendJson(res, 400, { ok: false, error: 'sid, resultKey, state required' });
   }
   const record = [...offers.values()].find((o) => o.sid === sid);
   if (!record) return sendJson(res, 404, { ok: false, error: 'session not found' });
   if (record.resultKey !== resultKey) return sendJson(res, 401, { ok: false, error: 'bad result key' });
+  if (isTerminal(record)) return sendJson(res, 409, {ok:false,error:'session already finished'});
+  console.info('[pair]', record.offerId.slice(0,8), state);
   record.state = state;
+  if (state === 'configuring') record.expiresAt = Date.now() + 30 * 60 * 1000;
+  if (isTerminal(record)) tunnel.revoke(record.offerId);
   record.detail = String(field('detail') || '').trim().slice(0, 200);
   record.finishedAt = Date.now();
   return sendJson(res, 200, { ok: true });
@@ -338,7 +352,7 @@ h1{font-size:22px;margin-bottom:8px}
     <h1>远程协助配对</h1>
     <p>会话号</p>
     <div class="sid">${sid}</div>
-    <p style="font-size:13px;color:#999">把此页面交给帮你配对的人即可</p>
+    <p style="font-size:13px;color:#999">请在需要被协助的手机上打开本页</p>
   </div>
 
   <div class="card">
@@ -358,7 +372,7 @@ h1{font-size:22px;margin-bottom:8px}
       <div class="dot">2</div>
       <div class="step-body">
         <h3>开启配对</h3>
-        <p>安装完成后，点击下方按钮打开引导程序并自动带入会话号</p>
+        <p>安装完成后，点击下方按钮打开引导程序并自动带入会话号，再点击开始协助</p>
       </div>
     </div>
     <a class="btn btn-primary" href="${deepLink}">开启配对</a>
@@ -370,7 +384,7 @@ h1{font-size:22px;margin-bottom:8px}
       <div class="dot">3</div>
       <div class="step-body">
         <h3>按引导操作</h3>
-        <p>程序会引导你开启无线调试，之后自动完成配对，无需手动输入任何号码</p>
+        <p>点击开始协助，按步骤开启授权。连接成功后由主控端继续配置；悬浮提示可选，也可下拉通知查看进度。</p>
       </div>
     </div>
   </div>
@@ -384,8 +398,8 @@ h1{font-size:22px;margin-bottom:8px}
  * GET /api/pair/apk
  * devguide APK 下载。
  */
-function handleApkDownload(req, res) {
-  const filePath = path.join(PAIR_APK_DIR, PAIR_APK_NAME);
+function handleApkDownload(req, res, apkName = PAIR_APK_NAME) {
+  const filePath = path.join(PAIR_APK_DIR, apkName);
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
     return sendJson(res, 404, { ok: false, error: 'APK not found on server' });
   }
@@ -393,20 +407,51 @@ function handleApkDownload(req, res) {
   res.writeHead(200, {
     'Content-Type': 'application/vnd.android.package-archive',
     'Content-Length': stat.size,
-    'Content-Disposition': `attachment; filename="${PAIR_APK_NAME}"`,
-    'Cache-Control': 'public, max-age=3600',
+    'Content-Disposition': `attachment; filename="${apkName}"`,
+    'Cache-Control': 'no-cache',
   });
   return fs.createReadStream(filePath).pipe(res);
 }
 
 function register(router) {
+  tunnel.register(router);
+  router.on('POST', '/api/pair/join', async (req, res) => {
+    if (!checkReportToken(req, res)) return;
+    sweep();
+    const field = await readFields(req, LIMIT_JSON_BODY);
+    const record = [...offers.values()].find(o => o.sid === cleanSid(field('sid')));
+    if (!record || isTerminal(record)) return sendJson(res, 404, {ok:false,error:'邀请已失效，请让主控端生成新链接'});
+    if (record.agentKey && record.agentKey !== field('agentKey')) return sendJson(res, 409, {ok:false,error:'此邀请已被使用，请生成新链接'});
+    record.agentKey = record.agentKey || randomToken(24);
+    record.agentSeenAt = Date.now();
+    console.info('[pair]', record.offerId.slice(0,8), 'guide online');
+    record.stage = '对方已上线，正在准备授权';
+    return sendJson(res, 200, {ok:true, offerId:record.offerId, agentKey:record.agentKey});
+  });
+  router.on('GET', '/api/pair/controller-status', (req, res, url) => {
+    const record = [...offers.values()].find(o => o.sid === cleanSid(url.searchParams.get('sid')));
+    if (!record || req.headers['x-pair-controller-key'] !== record.resultKey) return sendJson(res, 403, {ok:false,error:'bad controller key'});
+    return sendJson(res, 200, {ok:true,state:record.state,detail:record.detail || ''});
+  });
+  router.on('POST', '/api/pair/agent', async (req, res) => {
+    const field = await readFields(req, LIMIT_JSON_BODY);
+    const record = offers.get(cleanOfferId(field('offerId')));
+    if (!record || isExpired(record, Date.now())) return sendJson(res, 404, {ok:false,error:'邀请已过期，请重新生成链接'});
+    if (!record.agentKey || req.headers['x-pair-key'] !== record.agentKey) return sendJson(res, 401, {ok:false,error:'bad device key'});
+    if (field('cancel') && !isTerminal(record)) {
+      record.state = 'failed'; record.detail = '被控端已停止协助'; record.finishedAt = Date.now(); tunnel.revoke(record.offerId);
+    }
+    record.stage = String(field('stage') || '').slice(0, 120);
+    return sendJson(res, 200, {ok:true, state:record.state, detail:record.detail || '', tunnels:isTerminal(record) ? [] : tunnel.poll(record)});
+  });
   router.on('POST', '/api/pair/alloc', handleAlloc);
   router.on('POST', '/api/pair/offer', handleOffer);
   router.on('GET', '/api/pair/fetch', handleFetch);
   router.on('POST', '/api/pair/result', handleResult);
   router.on('GET', '/api/pair/status', handleStatus);
   router.on('GET', '/pair', handleLandingPage);
-  router.on('GET', '/api/pair/apk', handleApkDownload);
+  router.on('GET', '/api/pair/apk', (req,res) => handleApkDownload(req,res));
+  router.on('GET', '/api/pair/controller-apk', (req,res) => handleApkDownload(req,res,'Easycontrol-v1.5.24-preview.apk'));
 }
 
-module.exports = { register };
+module.exports = { register, attach: tunnel.attach };

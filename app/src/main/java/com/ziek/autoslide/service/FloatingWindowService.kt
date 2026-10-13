@@ -13,6 +13,7 @@ import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -61,6 +62,8 @@ import com.ziek.autoslide.DEFAULT_MAX_PAUSE_TIME
 import com.ziek.autoslide.DEFAULT_MIN_PAUSE_TIME
 import com.ziek.autoslide.DEFAULT_PAUSE_TIME
 import com.ziek.autoslide.DEFAULT_SPEED
+import com.ziek.autoslide.DEFAULT_FLOATING_TRANSPARENCY
+import com.ziek.autoslide.KEY_FLOATING_TRANSPARENCY
 import com.ziek.autoslide.DIRECTION_DOWN
 import com.ziek.autoslide.DIRECTION_LEFT
 import com.ziek.autoslide.DIRECTION_RIGHT
@@ -124,6 +127,10 @@ class FloatingWindowService : Service() {
     private var playbackCountdownLabel: View? = null // 回放倒计时下方的「共 N 次」提示
     private var playbackCountdownJob: Job? = null   // 倒计时协程
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main) // 主线程协程作用域
+    private lateinit var preferences: SharedPreferences
+    private val transparencyListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == KEY_FLOATING_TRANSPARENCY || key == null) updatePanelTransparency()
+    }
     private var lastScreenWidth = 0 // 上次记录的屏幕宽度（旋转后用于判断保持左/右同一侧）
     private var isExpandButtonEnlarged = false // 悬浮球是否处于放大状态
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -151,6 +158,9 @@ class FloatingWindowService : Service() {
         // 创建悬浮窗根视图
         rootView = createRootView()
         controlPanel = rootView.findViewById(R.id.control_panel)
+        preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        preferences.registerOnSharedPreferenceChangeListener(transparencyListener)
+        updatePanelTransparency()
         expandButton = rootView.findViewById(R.id.floating_expand_button)
         pauseButton = rootView.findViewById(R.id.floating_pause_button)
         layoutParams = createLayoutParams()
@@ -201,6 +211,9 @@ class FloatingWindowService : Service() {
 
     /* 服务销毁时移除悬浮窗 */
     override fun onDestroy() {
+        if (::preferences.isInitialized) {
+            preferences.unregisterOnSharedPreferenceChangeListener(transparencyListener)
+        }
         instance = null
         isServiceRunning = false
         AutoSlideTileService.requestUpdate(this)
@@ -283,6 +296,13 @@ class FloatingWindowService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
         }
+    }
+
+    /* 只调底板背景，避免把按钮及录制/回放反馈层一起变透明 */
+    private fun updatePanelTransparency() {
+        val transparency = preferences.getInt(KEY_FLOATING_TRANSPARENCY, DEFAULT_FLOATING_TRANSPARENCY)
+            .coerceIn(0, 100)
+        controlPanel.background?.mutate()?.alpha = (100 - transparency) * 255 / 100
     }
 
     /* 设置拖拽事件处理 */

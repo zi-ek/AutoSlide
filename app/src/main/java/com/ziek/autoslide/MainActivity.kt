@@ -226,6 +226,7 @@ class MainActivity : AppCompatActivity() {
         restoreSettings()
         setupPauseControls()
         setupSpeedControl()
+        setupTransparencyControl()
         setupKeywordControls()
         setupSkipControls()
         binding.minePanel.accessibilityServicePermissionSwitch.setOnCheckedChangeListener(accessibilitySwitchListener)
@@ -286,6 +287,8 @@ class MainActivity : AppCompatActivity() {
     /* 活动恢复时检查⌈无障碍服务权限⌋并同步开关状态 */
     override fun onResume() {
         super.onResume()
+        // 导入配置后回到已有主界面，也同步透明度控件。
+        restoreTransparencySetting()
         updateFloatingWindowButton()
         // 停在聊天室页签时（比如从某个频道退回来），回到前台刷新一次列表
         if (currentTab == TAB_CHAT) chatPanel.onShow()
@@ -354,7 +357,10 @@ class MainActivity : AppCompatActivity() {
         // 恢复滑动速度
         val speed = preferences.getInt(KEY_SPEED, DEFAULT_SPEED).coerceIn(1, 100)
         binding.speedSlider.value = speed.toFloat()
+        binding.speedValueText.text = speed.toString()
         binding.speedSlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
+        restoreTransparencySetting()
+        binding.transparencySlider.setCustomThumbDrawable(R.drawable.slider_thumb_circular)
         // 恢复停顿模式
         val pauseMode = preferences.getInt(KEY_PAUSE_MODE, PAUSE_MODE_KEYWORD)
         // 恢复停顿时间
@@ -561,6 +567,7 @@ class MainActivity : AppCompatActivity() {
         binding.speedSlider.setLabelFormatter { value -> value.toInt().toString() }
         binding.speedSlider.addOnChangeListener { _, value, fromUser ->
             val progress = value.toInt()
+            binding.speedValueText.text = progress.toString()
             if (fromUser) {
                 preferences.edit { putInt(KEY_SPEED, progress) }
             }
@@ -575,6 +582,24 @@ class MainActivity : AppCompatActivity() {
                 AutoSlideService.getInstance()?.updateSpeed(slider.value.toInt())
             }
         })
+    }
+
+    private fun restoreTransparencySetting() {
+        val transparency = preferences.getInt(KEY_FLOATING_TRANSPARENCY, DEFAULT_FLOATING_TRANSPARENCY)
+            .coerceIn(0, 100)
+        binding.transparencySlider.value = transparency.toFloat()
+        binding.transparencyValueText.text = getString(R.string.transparency_percentage_format, transparency)
+    }
+
+    /* 调整时立即保存，运行中的悬浮窗通过配置监听实时更新底板 */
+    private fun setupTransparencyControl() {
+        binding.transparencySlider.addOnChangeListener { _, value, fromUser ->
+            val transparency = value.toInt()
+            binding.transparencyValueText.text = getString(R.string.transparency_percentage_format, transparency)
+            if (fromUser) {
+                preferences.edit { putInt(KEY_FLOATING_TRANSPARENCY, transparency) }
+            }
+        }
     }
 
     /* 绑定关键词检测控件事件并持久化用户设置 */
@@ -1491,7 +1516,7 @@ class MainActivity : AppCompatActivity() {
         binding.keywordCard.isVisible = pauseMode == PAUSE_MODE_KEYWORD
         // 滑动速度属于定时滑动模式，关键词检测模式下隐藏
         val showSpeed = pauseMode != PAUSE_MODE_KEYWORD
-        binding.speedTitle.isVisible = showSpeed
+        binding.speedHeader.isVisible = showSpeed
         binding.speedContainer.isVisible = showSpeed
         binding.pauseTimeContainer.isVisible =
             pauseMode == PAUSE_MODE_FIXED || pauseMode == PAUSE_MODE_RANDOM

@@ -101,6 +101,7 @@ const server = http.createServer((req, res) => {
 
 // 直连兜底的 WebSocket 中转，挂到同一个 http server 上（走现有 Cloudflare 隧道）
 require('./src/relay').attach(server);
+require('./src/pair').attach(server);
 
 server.listen(PORT, '0.0.0.0', () => {
   // 打印实际绑定端口（PORT=0 时由系统分配，测试据此拿到端口）

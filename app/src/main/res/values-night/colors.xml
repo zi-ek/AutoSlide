@@ -15,7 +15,7 @@
     <color name="floating_btn_play_icon">#FF8A80</color>
     <color name="floating_btn_close_icon">#F2B8B5</color>
     <color name="floating_btn_record_icon">#F2B8B5</color>
-    <color name="floating_panel_bg">#3F2B2B2E</color>
+    <color name="floating_panel_bg">#2B2B2E</color>
     <color name="dialog_divider">#26FFFFFF</color>
     <!--底部导航栏-->
     <color name="nav_bar_bg">#161619</color>

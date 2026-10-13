@@ -1,6 +1,6 @@
 {
-  "versionCode": 35,
-  "versionName": "3.4.0",
-  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v3.4.0/AutoSlide-v3.4.0.apk",
-  "updateLog": "1. 新增底部导航栏：首页 / 交流 / 我的，三个页签随时切换\n2. 首页精简，只留滑动设置和开始按钮；数据统计、必要权限移到「我的」\n3. 首页新增「回到桌面」按钮，开完悬浮窗直接去目标 App\n4. 动作列表新增「分享」：可把自己录的脚本上传到脚本库，不点就不上传\n5. 「我的」新增「脚本库」：一键导入别人分享的脚本，重名会自动加序号\n6. 悬浮窗启动位置改为贴右居中，不再从左上角闪一下再跳过去\n7. 推送通知弹窗支持多组关键词，「打开推送通知 / 开启推送提醒」都能自动关掉\n8. 修复「我的」页里检查更新、导入配置点了没反应的问题\n9. 更新检查改用自建服务器，不再依赖 GitHub 加速代理"
+  "versionCode": 45,
+  "versionName": "3.4.12",
+  "downloadUrl": "https://github.com/zi-ek/AutoSlide/releases/download/v3.4.12/AutoSlide-v3.4.12.apk",
+  "updateLog": "1. 优化自动点击跳过功能：优先扫描无障碍节点树，未能找到时平滑降级至 OCR 视觉识别\n2. 增强广告识别准度与稳定性，优化节点按钮尺寸判定与防误触过滤逻辑\n3. 优化算法处理流程与点击冷却机制，大幅提升开屏广告跳过响应速度"
 }

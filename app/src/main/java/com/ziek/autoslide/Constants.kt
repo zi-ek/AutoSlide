@@ -13,6 +13,7 @@ const val PREFS_NAME = "slide_settings"
 
 // ---- 配置键名（保存在 SharedPreferences 中的 key）----
 const val KEY_SPEED = "speed"                       // 滑动速度（1~100）
+const val KEY_FLOATING_TRANSPARENCY = "floatingTransparency" // 悬浮窗底板透明度（0~100%）
 const val KEY_PAUSE_MODE = "pauseMode"              // 当前选择的滑动模式编号
 const val KEY_PAUSE_TIME = "pauseTime"              // 固定时间模式的停顿秒数
 const val KEY_MIN_PAUSE_TIME = "minPauseTime"       // 随机时间模式的最小停顿秒数
@@ -77,6 +78,7 @@ val URL_INVITE_PREFIX: String = "$SERVER_BASE_URL/invite?code="
 
 // ==================== 默认值 ====================
 const val DEFAULT_SPEED = 50                        // 默认滑动速度（中等）
+const val DEFAULT_FLOATING_TRANSPARENCY = 40         // 默认底板透明度，与上游一致
 const val DEFAULT_PAUSE_TIME = 15                    // 默认固定停顿 15 秒
 const val DEFAULT_MIN_PAUSE_TIME = 5                // 默认随机停顿下限 5 秒
 const val DEFAULT_MAX_PAUSE_TIME = 30                // 默认随机停顿上限 30 秒
